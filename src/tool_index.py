@@ -42,6 +42,19 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Local fork addition (Oisela): the RAG tool selector is embedding-based and
+    # English-leaning; German requests ("leg einen Ordner an", "Todo erstellen",
+    # "trag in den Kalender ein") often miss the organisational and workspace
+    # tools entirely. These are the daily-driver tools for this single-admin
+    # deployment, so they ride along on every turn. Permission checks
+    # (NON_ADMIN_BLOCKED_TOOLS) still apply independently of availability.
+    "manage_notes",
+    "manage_tasks",
+    "manage_calendar",
+    "ls",
+    "read_file",
+    "write_file",
+    "bash",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
