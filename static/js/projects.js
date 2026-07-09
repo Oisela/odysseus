@@ -68,8 +68,8 @@ async function _newChatInProject(project) {
   }
   fd.append('skip_validation', 'true');
   try {
-    const res = await _json('/session', { method: 'POST', body: fd });
-    const sid = res.id || res.session_id;
+    const res = await _json('/api/session', { method: 'POST', body: fd });
+    const sid = res.id;
     await _json(`/api/projects/${project.id}/sessions/${sid}`, { method: 'POST' });
     await loadSessions();
     await loadProjects();
