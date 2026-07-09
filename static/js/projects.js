@@ -242,7 +242,10 @@ async function _openModal(project) {
         ${isNew ? '' : `
         <label class="pm-label">Files</label>
         <div id="pm-files" class="workspace-body" style="max-height:180px;overflow:auto;font-size:13px;">loading …</div>
-        <input id="pm-upload" type="file" multiple style="margin-top:6px;font-size:12px;">`}
+        <button type="button" id="pm-upload-btn" class="confirm-btn confirm-btn-secondary" style="margin-top:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload files
+        </button>
+        <input id="pm-upload" type="file" multiple style="display:none;">`}
       </div>
       <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;">
         <span>${isNew ? '' : '<button id="pm-delete" class="confirm-btn confirm-btn-secondary" style="color:var(--accent-error,#c66);">Remove project</button>'}</span>
@@ -356,6 +359,7 @@ async function _openModal(project) {
       }
     };
     renderFiles();
+    q('#pm-upload-btn')?.addEventListener('click', () => q('#pm-upload')?.click());
     q('#pm-upload')?.addEventListener('change', async (ev) => {
       for (const file of ev.target.files) {
         const fd = new FormData();
