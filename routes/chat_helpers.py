@@ -658,6 +658,8 @@ async def build_chat_context(
         # client-selected preset. The project defines the persona, so a stale
         # client-side selection can't leak a different voice into the project.
         preset.system_prompt = project_prompt
+        logger.info("[project] persona+instructions applied to system prompt "
+                    f"({len(project_prompt)} chars): {project_prompt[:120]!r}")
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side

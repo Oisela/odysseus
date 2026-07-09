@@ -407,11 +407,12 @@ function render() {
       '<div style="font-size:12px;opacity:.55;padding:2px 8px 6px;">No projects yet</div>');
   }
 
+  // Flat structure — every row is a direct sibling (like the other sections),
+  // so the section domino animation staggers via :nth-child exactly like in
+  // Chats/Tools. No wrapper divs.
   let _missingSessions = false;
   for (const p of _projects) {
     const open = !!_expanded[p.id];
-    const block = document.createElement('div');
-    block.className = 'project-block';
 
     const row = document.createElement('div');
     row.className = 'list-item project-row';
@@ -432,19 +433,18 @@ function render() {
       ev.stopPropagation();
       _openModal(p);
     });
-    block.appendChild(row);
+    frag.appendChild(row);
 
     if (open) {
       for (const ps of (p.sessions || [])) {
         const full = bySid.get(String(ps.id));
         if (full) {
           // The exact same row as the Chats list — icons, favorite, full
-          // actions dropdown (rename/copy/move/archive/delete). Indented via
-          // wrapper so it reads as a child of the project.
-          const wrap = document.createElement('div');
-          wrap.style.marginLeft = '14px';
-          wrap.appendChild(createSessionItem(full));
-          block.appendChild(wrap);
+          // actions dropdown (rename/copy/move/archive/delete). Indent on the
+          // row itself so it stays a direct sibling (animation stagger).
+          const item = createSessionItem(full);
+          item.style.marginLeft = '14px';
+          frag.appendChild(item);
         } else {
           _missingSessions = true;
         }
@@ -454,9 +454,8 @@ function render() {
       add.style.cssText = 'padding-left:26px;font-size:12px;opacity:.75;';
       add.textContent = '+ New chat';
       add.addEventListener('click', () => _newChatInProject(p));
-      block.appendChild(add);
+      frag.appendChild(add);
     }
-    frag.appendChild(block);
   }
 
   // Swap only on real change (see note above — avoids re-render flicker).
