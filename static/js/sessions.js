@@ -1014,8 +1014,10 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
-  // Project chats render under their project (js/projects.js), not here.
-  let orderedSessions = sessions.filter(s => !s.archived && !s.project_id && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  // Project chats appear here like any other chat (full native row UX) AND
+  // under their project in js/projects.js — the project section is a view,
+  // not a silo.
+  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
 
   if (savedOrder) {
     try {
