@@ -383,6 +383,7 @@ function render() {
     const chats = (p.sessions || []).map(s => `
       <div class="list-item project-chat-row" data-sid="${_esc(s.id)}" data-pid="${_esc(p.id)}" style="padding-left:26px;font-size:13px;" title="${_esc(s.name)}">
         <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.name) || '(untitled)'}</span>
+        <button class="section-header-btn project-chat-del" data-sid="${_esc(s.id)}" title="Delete chat" style="opacity:.55;font-size:11px;padding:0 4px;">✕</button>
       </div>`).join('');
     return `
       <div class="project-block" data-pid="${_esc(p.id)}">
@@ -415,9 +416,20 @@ function render() {
     ev.stopPropagation();
     _openModal(_projects.find(x => x.id === el.dataset.pid));
   }));
-  host.querySelectorAll('.project-chat-row').forEach(el => el.addEventListener('click', () => {
+  host.querySelectorAll('.project-chat-row').forEach(el => el.addEventListener('click', (ev) => {
+    if (ev.target.closest('.project-chat-del')) return;
     const proj = _projects.find(x => x.id === el.dataset.pid);
     _openProjectChat(proj || {}, el.dataset.sid);
+  }));
+  host.querySelectorAll('.project-chat-del').forEach(el => el.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    if (!confirm('Delete this chat? This cannot be undone.')) return;
+    try {
+      await fetch(`${API}/api/session/${el.dataset.sid}`, { method: 'DELETE', credentials: 'same-origin' });
+      await Promise.all([loadSessions(), loadProjects()]);
+    } catch (e) {
+      if (uiModule.showError) uiModule.showError('Delete failed: ' + e.message);
+    }
   }));
   host.querySelectorAll('.project-newchat').forEach(el => el.addEventListener('click', () => {
     const proj = _projects.find(x => x.id === el.dataset.pid);
