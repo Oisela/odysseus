@@ -480,6 +480,15 @@ export function createSessionItem(s) {
   div.setAttribute('role', 'option');
   div.setAttribute('tabindex', '-1');
   div.setAttribute('data-session-id', s.id);
+  // HTML5 drag: lets a chat be dropped onto a project (js/projects.js) or
+  // back onto the Chats section to detach. The mouse-based rearrange mode
+  // (item-drag-handle) keeps priority — no HTML5 drag while it is active.
+  div.draggable = true;
+  div.addEventListener('dragstart', (ev) => {
+    if (document.body.classList.contains('rearrange-mode')) { ev.preventDefault(); return; }
+    ev.dataTransfer.setData('application/x-odysseus-session', String(s.id));
+    ev.dataTransfer.effectAllowed = 'move';
+  });
   // Special-session sentinel — true for the legacy OpenClaw row, which
   // skips the normal provider dot / name / action chrome. Was
   // previously detected here but the declaration got removed while

@@ -433,6 +433,29 @@ function render() {
       ev.stopPropagation();
       _openModal(p);
     });
+    // Drop target: drag a chat row (Chats list or another project) onto the
+    // project to move it here.
+    row.addEventListener('dragover', (ev) => {
+      if (![...ev.dataTransfer.types].includes('application/x-odysseus-session')) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+    row.addEventListener('drop', async (ev) => {
+      row.classList.remove('drag-over');
+      const sid = ev.dataTransfer.getData('application/x-odysseus-session');
+      if (!sid) return;
+      ev.preventDefault();
+      try {
+        await _json(`/api/projects/${p.id}/sessions/${sid}`, { method: 'POST' });
+        _expanded[p.id] = true;
+        _saveExpanded();
+        await Promise.all([loadSessions(), loadProjects()]);
+      } catch (e) {
+        if (uiModule.showError) uiModule.showError('Move failed: ' + e.message);
+      }
+    });
     frag.appendChild(row);
 
     if (open) {
@@ -477,6 +500,29 @@ function render() {
 // Self-init: module scripts run after DOM parse. The add button is part of
 // the static header, so it is bound exactly once here.
 document.getElementById('project-add-btn')?.addEventListener('click', () => _openModal(null));
+
+// Dropping a chat onto the Chats section detaches it from its project.
+const _chatsSection = document.getElementById('sessions-section');
+if (_chatsSection) {
+  _chatsSection.addEventListener('dragover', (ev) => {
+    if (![...ev.dataTransfer.types].includes('application/x-odysseus-session')) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+  });
+  _chatsSection.addEventListener('drop', async (ev) => {
+    const sid = ev.dataTransfer.getData('application/x-odysseus-session');
+    if (!sid) return;
+    ev.preventDefault();
+    const s = (getSessions() || []).find(x => String(x.id) === String(sid));
+    if (!s || !s.project_id) return; // already a plain chat — nothing to do
+    try {
+      await _json(`/api/projects/sessions/${sid}`, { method: 'DELETE' });
+      await Promise.all([loadSessions(), loadProjects()]);
+    } catch (e) {
+      if (uiModule.showError) uiModule.showError('Move failed: ' + e.message);
+    }
+  });
+}
 
 // Stay in sync with the native chats list: whenever it re-renders (delete/
 // archive/rename/auto-name), refresh the project tree from the server so the

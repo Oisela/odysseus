@@ -1601,6 +1601,10 @@ body.bg-pattern-sparkles {
     .session-folder-header.drag-over {
       outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); opacity: 1;
     }
+    /* Same affordance when dragging a chat onto a project (js/projects.js). */
+    .project-row.drag-over {
+      outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); opacity: 1;
+    }
     .session-folder.dragging-folder { opacity: 0.4; }
     .folder-toggle { font-size: 0.7em; width: 10px; text-align: center; }
     .folder-name { font-weight: inherit; flex: 1; }
