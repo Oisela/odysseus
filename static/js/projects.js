@@ -61,7 +61,9 @@ async function _newChatInProject(project) {
   const all = getSessions() || [];
   const donor = all.find(s => s.model && s.endpoint_url) || all[0];
   const fd = new FormData();
-  fd.append('name', project.name + ' – chat');
+  // Neutral name — the auto-namer then titles it from the conversation,
+  // exactly like regular chats.
+  fd.append('name', 'New Chat');
   if (donor) {
     fd.append('model', donor.model || '');
     fd.append('endpoint_url', donor.endpoint_url || '');

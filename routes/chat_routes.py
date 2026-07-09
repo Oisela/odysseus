@@ -203,8 +203,10 @@ def _project_context_for_session(session_id, chat_handler):
                         tpl = builtin
                 if tpl and tpl.get("system_prompt"):
                     parts.append(str(tpl["system_prompt"]).strip())
+                else:
+                    logger.warning(f"[project] template '{proj.template_id}' not found or empty for project {proj.id}")
             except Exception:
-                logger.debug("project template lookup failed", exc_info=True)
+                logger.warning("[project] template lookup failed", exc_info=True)
         extra = [f"=== PROJEKT: {proj.name} ==="]
         if proj.workspace:
             extra.append(f"Projekt-Ordner (Workspace): {proj.workspace}")
@@ -219,7 +221,7 @@ def _project_context_for_session(session_id, chat_handler):
         prompt = "\n\n".join(p for p in parts if p)
         return (proj.workspace or None), prompt, proj.name
     except Exception:
-        logger.debug("project context resolution failed", exc_info=True)
+        logger.warning("[project] context resolution failed", exc_info=True)
         return None, None, None
 
 
