@@ -6,6 +6,8 @@
 //
 // Deliberately self-contained: renders into #projects-section and touches the
 // rest of the app only via sessions.js exports, to keep upstream merges easy.
+// The modal reuses the app's native modal / modal-content / close-btn classes
+// so it inherits every theme.
 
 import Storage, { KEYS } from './storage.js';
 import { selectSession, loadSessions, getSessions } from './sessions.js';
@@ -20,6 +22,9 @@ async function _json(url, opts = {}) {
   if (!res.ok) throw new Error((await res.text().catch(() => '')) || res.statusText);
   return res.json();
 }
+
+const _esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export async function loadProjects() {
   try {
@@ -70,11 +75,11 @@ async function _newChatInProject(project) {
 }
 
 // ---------------------------------------------------------------------------
-// Modal (create / edit / files)
+// Modal (create / edit / files) — native .modal markup so themes apply
 // ---------------------------------------------------------------------------
 
 function _closeModal() {
-  document.getElementById('project-modal-overlay')?.remove();
+  document.getElementById('project-modal')?.remove();
 }
 
 async function _openModal(project) {
@@ -82,62 +87,145 @@ async function _openModal(project) {
   const isNew = !project;
   const p = project || { name: '', instructions: '', template_id: '', pinned_skills: [], workspace: '' };
 
-  let templates = [];
+  // Personas: own templates + built-in presets, one dropdown with groups.
+  let userTemplates = [];
+  let builtinPresets = [];
   try {
     const t = await _json('/api/presets/templates');
-    templates = Array.isArray(t) ? t : (t.templates || []);
-  } catch (e) { /* dropdown stays empty */ }
+    userTemplates = Array.isArray(t) ? t : (t.templates || []);
+  } catch (e) { /* group stays empty */ }
+  try {
+    const all = await _json('/api/presets');
+    const presets = all.presets || all;
+    builtinPresets = Object.entries(presets)
+      .filter(([k, v]) => v && typeof v === 'object' && v.system_prompt && k !== 'custom')
+      .map(([k, v]) => ({ id: k, name: v.name || k }));
+  } catch (e) { /* group stays empty */ }
 
-  const overlay = document.createElement('div');
-  overlay.id = 'project-modal-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
-  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) _closeModal(); });
+  // Skills for the pin picker (checkboxes, max 4).
+  let skills = [];
+  try {
+    const s = await _json('/api/skills');
+    skills = (s.skills || []).map(x => ({
+      name: x.name,
+      description: String(x.description || '').slice(0, 90),
+    }));
+  } catch (e) { /* section hidden */ }
 
-  const tplOptions = ['<option value="">(keine – Standard)</option>']
-    .concat(templates.map(t =>
-      `<option value="${t.id}" ${t.id === p.template_id ? 'selected' : ''}>${t.name}</option>`))
-    .join('');
+  const grp = (label, items, sel) => items.length
+    ? `<optgroup label="${label}">` + items.map(t =>
+        `<option value="${_esc(t.id)}" ${t.id === sel ? 'selected' : ''}>${_esc(t.name)}</option>`).join('') + '</optgroup>'
+    : '';
+  const tplOptions = `<option value="">(keine – Standard)</option>`
+    + grp('Eigene Templates', userTemplates, p.template_id)
+    + grp('Presets', builtinPresets, p.template_id);
 
-  const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--sidebar-bg,#1c1c22);color:inherit;border:1px solid var(--bubble-border,#333);border-radius:10px;width:min(560px,92vw);max-height:88vh;overflow:auto;padding:18px;';
-  panel.innerHTML = `
-    <h3 style="margin:0 0 12px;">${isNew ? 'Neues Projekt' : 'Projekt: ' + p.name}</h3>
-    <label style="display:block;font-size:12px;opacity:.75;margin-top:8px;">Name</label>
-    <input id="pm-name" type="text" value="${(p.name || '').replace(/"/g, '&quot;')}" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--input-border,#333);background:var(--input-bg,#111);color:inherit;">
-    <label style="display:block;font-size:12px;opacity:.75;margin-top:10px;">Persona / Template</label>
-    <select id="pm-template" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--input-border,#333);background:var(--input-bg,#111);color:inherit;">${tplOptions}</select>
-    <label style="display:block;font-size:12px;opacity:.75;margin-top:10px;">Projekt-Anweisungen (zusätzlich zur Persona)</label>
-    <textarea id="pm-instructions" rows="6" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--input-border,#333);background:var(--input-bg,#111);color:inherit;resize:vertical;">${p.instructions || ''}</textarea>
-    <label style="display:block;font-size:12px;opacity:.75;margin-top:10px;">Ordner (leer = automatisch; sonst Pfad unter data/, z. B. vorlesungen/tiii)</label>
-    <input id="pm-workspace" type="text" value="${(p.workspace || '').replace(/"/g, '&quot;')}" placeholder="automatisch" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--input-border,#333);background:var(--input-bg,#111);color:inherit;">
-    <label style="display:block;font-size:12px;opacity:.75;margin-top:10px;">Angepinnte Skills (optional, kommagetrennt, max. 4)</label>
-    <input id="pm-skills" type="text" value="${(p.pinned_skills || []).join(', ')}" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--input-border,#333);background:var(--input-bg,#111);color:inherit;">
-    ${isNew ? '' : `
-      <div style="margin-top:14px;">
-        <div style="font-size:12px;opacity:.75;margin-bottom:4px;">Dateien</div>
-        <div id="pm-files" style="border:1px solid var(--bubble-border,#333);border-radius:6px;padding:6px;max-height:180px;overflow:auto;font-size:13px;">lade …</div>
-        <input id="pm-upload" type="file" multiple style="margin-top:6px;font-size:12px;">
-      </div>`}
-    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px;">
-      <span>${isNew ? '' : '<button id="pm-delete" style="background:none;border:1px solid #a33;color:#c66;border-radius:6px;padding:6px 10px;cursor:pointer;">Projekt entfernen</button>'}</span>
-      <span style="display:flex;gap:8px;">
-        <button id="pm-cancel" style="background:none;border:1px solid var(--bubble-border,#444);color:inherit;border-radius:6px;padding:6px 12px;cursor:pointer;">Abbrechen</button>
-        <button id="pm-save" style="background:var(--send-btn-bg,#c0392b);border:none;color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;">Speichern</button>
-      </span>
-    </div>`;
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
+  const pinned = new Set(p.pinned_skills || []);
+  const skillRows = skills.map(s => `
+    <label class="project-skill-row" title="${_esc(s.description)}" style="display:flex;gap:6px;align-items:baseline;font-size:12.5px;padding:1px 0;cursor:pointer;">
+      <input type="checkbox" class="pm-skill" value="${_esc(s.name)}" ${pinned.has(s.name) ? 'checked' : ''}>
+      <span><strong>${_esc(s.name)}</strong> <span style="opacity:.6;">– ${_esc(s.description)}</span></span>
+    </label>`).join('');
 
-  panel.querySelector('#pm-cancel').addEventListener('click', _closeModal);
-  panel.querySelector('#pm-save').addEventListener('click', async () => {
+  const modal = document.createElement('div');
+  modal.id = 'project-modal';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" role="dialog" aria-label="Projekt" style="max-width:580px;width:min(580px,94vw);">
+      <div class="modal-header">
+        <h4>${isNew ? 'Neues Projekt' : 'Projekt: ' + _esc(p.name)}</h4>
+        <button class="close-btn" aria-label="Schließen">✖</button>
+      </div>
+      <div style="padding:14px 16px;max-height:74vh;overflow:auto;">
+        <label class="pm-label">Name</label>
+        <input id="pm-name" type="text" value="${_esc(p.name)}">
+        <label class="pm-label">Persona / Template</label>
+        <select id="pm-template">${tplOptions}</select>
+        <label class="pm-label">Projekt-Anweisungen (zusätzlich zur Persona)</label>
+        <textarea id="pm-instructions" rows="6">${_esc(p.instructions)}</textarea>
+        <label class="pm-label">Ordner</label>
+        <div style="display:flex;gap:6px;">
+          <input id="pm-workspace" type="text" value="${_esc(p.workspace)}" placeholder="automatisch" style="flex:1;">
+          <button type="button" id="pm-browse" class="section-header-btn" style="padding:4px 10px;">Durchsuchen…</button>
+        </div>
+        <div id="pm-browser" style="display:none;border:1px solid var(--bubble-border,#3333);border-radius:6px;margin-top:6px;padding:6px;font-size:13px;max-height:180px;overflow:auto;"></div>
+        ${skills.length ? `
+        <label class="pm-label">Angepinnte Skills (optional, max. 4 — werden in Projekt-Chats bevorzugt)</label>
+        <div style="border:1px solid var(--bubble-border,#3333);border-radius:6px;padding:6px 8px;max-height:130px;overflow:auto;">${skillRows}</div>` : ''}
+        ${isNew ? '' : `
+        <label class="pm-label">Dateien</label>
+        <div id="pm-files" style="border:1px solid var(--bubble-border,#3333);border-radius:6px;padding:6px 8px;max-height:180px;overflow:auto;font-size:13px;">lade …</div>
+        <input id="pm-upload" type="file" multiple style="margin-top:6px;font-size:12px;">`}
+        <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px;">
+          <span>${isNew ? '' : '<button id="pm-delete" class="section-header-btn" style="color:var(--accent-error,#c66);border-color:var(--accent-error,#c66);padding:5px 10px;">Projekt entfernen</button>'}</span>
+          <span style="display:flex;gap:8px;">
+            <button id="pm-cancel" class="section-header-btn" style="padding:5px 12px;">Abbrechen</button>
+            <button id="pm-save" class="section-header-btn" style="padding:5px 14px;font-weight:600;">Speichern</button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <style>
+      #project-modal .pm-label { display:block; font-size:12px; opacity:.7; margin:10px 0 3px; }
+      #project-modal input[type=text], #project-modal select, #project-modal textarea {
+        width:100%; box-sizing:border-box; resize:vertical;
+      }
+      #project-modal .modal-content { }
+    </style>`;
+  document.body.appendChild(modal);
+
+  const q = (sel) => modal.querySelector(sel);
+  q('.close-btn').addEventListener('click', _closeModal);
+  q('#pm-cancel').addEventListener('click', _closeModal);
+  modal.addEventListener('click', (ev) => { if (ev.target === modal) _closeModal(); });
+
+  // --- folder browser (uses the same server API as the workspace picker) ---
+  const browser = q('#pm-browser');
+  let _browsePath = '';
+  async function _renderBrowser(path) {
+    browser.style.display = 'block';
+    browser.innerHTML = '<em style="opacity:.6;">lade …</em>';
+    try {
+      const data = await _json('/api/workspace/browse?path=' + encodeURIComponent(path || ''));
+      _browsePath = data.path;
+      const rows = (data.dirs || []).map(d =>
+        `<div class="list-item pm-dir" data-path="${_esc(d.path)}" style="padding:2px 6px;">📁 ${_esc(d.name)}</div>`).join('');
+      browser.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;">
+          <code style="font-size:11px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(data.path)}</code>
+          <button type="button" id="pm-usefolder" class="section-header-btn" style="padding:2px 8px;white-space:nowrap;">Diesen Ordner wählen</button>
+        </div>
+        ${data.parent ? `<div class="list-item pm-dir" data-path="${_esc(data.parent)}" style="padding:2px 6px;opacity:.7;">↑ ..</div>` : ''}
+        ${rows || '<div style="opacity:.5;padding:2px 6px;">keine Unterordner</div>'}`;
+      browser.querySelectorAll('.pm-dir').forEach(el =>
+        el.addEventListener('click', () => _renderBrowser(el.dataset.path)));
+      browser.querySelector('#pm-usefolder')?.addEventListener('click', () => {
+        q('#pm-workspace').value = _browsePath;
+        browser.style.display = 'none';
+      });
+    } catch (e) {
+      browser.innerHTML = '<em style="opacity:.6;">Durchsuchen nicht verfügbar (' + _esc(e.message) + ')</em>';
+    }
+  }
+  q('#pm-browse').addEventListener('click', () => {
+    if (browser.style.display === 'block') { browser.style.display = 'none'; return; }
+    _renderBrowser(q('#pm-workspace').value.trim() || p.workspace || '');
+  });
+
+  // --- max 4 pinned skills ---
+  modal.querySelectorAll('.pm-skill').forEach(cb => cb.addEventListener('change', () => {
+    const checked = modal.querySelectorAll('.pm-skill:checked');
+    if (checked.length > 4) { cb.checked = false; alert('Maximal 4 angepinnte Skills.'); }
+  }));
+
+  q('#pm-save').addEventListener('click', async () => {
     const body = {
-      name: panel.querySelector('#pm-name').value.trim(),
-      template_id: panel.querySelector('#pm-template').value,
-      instructions: panel.querySelector('#pm-instructions').value,
-      pinned_skills: panel.querySelector('#pm-skills').value
-        .split(',').map(s => s.trim()).filter(Boolean).slice(0, 4),
+      name: q('#pm-name').value.trim(),
+      template_id: q('#pm-template').value,
+      instructions: q('#pm-instructions').value,
+      pinned_skills: [...modal.querySelectorAll('.pm-skill:checked')].map(cb => cb.value).slice(0, 4),
     };
-    const ws = panel.querySelector('#pm-workspace').value.trim();
+    const ws = q('#pm-workspace').value.trim();
     if (ws) body.workspace = ws;
     if (!body.name) { alert('Name fehlt'); return; }
     try {
@@ -156,23 +244,23 @@ async function _openModal(project) {
   });
 
   if (!isNew) {
-    panel.querySelector('#pm-delete')?.addEventListener('click', async () => {
+    q('#pm-delete')?.addEventListener('click', async () => {
       if (!confirm(`Projekt "${p.name}" entfernen? Chats und Dateien bleiben erhalten.`)) return;
       await _json(`/api/projects/${p.id}`, { method: 'DELETE' });
       _closeModal();
       await Promise.all([loadProjects(), loadSessions()]);
     });
 
-    const filesBox = panel.querySelector('#pm-files');
+    const filesBox = q('#pm-files');
     const renderFiles = async () => {
       try {
         const data = await _json(`/api/projects/${p.id}/files`);
         if (!data.files.length) { filesBox.innerHTML = '<em style="opacity:.6;">noch keine Dateien</em>'; return; }
         filesBox.innerHTML = data.files.map(f => `
           <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">
-            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${f.path}</a>
+            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${_esc(f.path)}</a>
             <span style="white-space:nowrap;opacity:.6;">${(f.size / 1024).toFixed(0)} KB
-              <a href="#" data-del="${f.path}" style="color:#c66;text-decoration:none;margin-left:6px;">✕</a></span>
+              <a href="#" data-del="${_esc(f.path)}" style="color:var(--accent-error,#c66);text-decoration:none;margin-left:6px;">✕</a></span>
           </div>`).join('');
         filesBox.querySelectorAll('[data-del]').forEach(a => a.addEventListener('click', async (ev) => {
           ev.preventDefault();
@@ -184,7 +272,7 @@ async function _openModal(project) {
       }
     };
     renderFiles();
-    panel.querySelector('#pm-upload')?.addEventListener('change', async (ev) => {
+    q('#pm-upload')?.addEventListener('change', async (ev) => {
       for (const file of ev.target.files) {
         const fd = new FormData();
         fd.append('file', file);
@@ -210,18 +298,18 @@ function render() {
   const rows = _projects.map(p => {
     const open = !!_expanded[p.id];
     const chats = (p.sessions || []).map(s => `
-      <div class="list-item project-chat-row" data-sid="${s.id}" data-pid="${p.id}" style="padding-left:26px;font-size:13px;" title="${(s.name || '').replace(/"/g, '&quot;')}">
-        <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.name || '(unbenannt)'}</span>
+      <div class="list-item project-chat-row" data-sid="${_esc(s.id)}" data-pid="${_esc(p.id)}" style="padding-left:26px;font-size:13px;" title="${_esc(s.name)}">
+        <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.name) || '(unbenannt)'}</span>
       </div>`).join('');
     return `
-      <div class="project-block" data-pid="${p.id}">
-        <div class="list-item project-row" data-pid="${p.id}" style="font-weight:600;">
+      <div class="project-block" data-pid="${_esc(p.id)}">
+        <div class="list-item project-row" data-pid="${_esc(p.id)}" style="font-weight:600;">
           <span style="width:14px;display:inline-block;opacity:.7;">${open ? '▾' : '▸'}</span>
-          <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</span>
-          <button class="section-header-btn project-gear" data-pid="${p.id}" title="Projekt-Einstellungen" style="opacity:.7;">⚙</button>
+          <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.name)}</span>
+          <button class="section-header-btn project-gear" data-pid="${_esc(p.id)}" title="Projekt-Einstellungen" style="opacity:.7;">⚙</button>
         </div>
         ${open ? chats + `
-        <div class="list-item project-newchat" data-pid="${p.id}" style="padding-left:26px;font-size:12px;opacity:.75;">+ Neuer Chat</div>` : ''}
+        <div class="list-item project-newchat" data-pid="${_esc(p.id)}" style="padding-left:26px;font-size:12px;opacity:.75;">+ Neuer Chat</div>` : ''}
       </div>`;
   }).join('');
 

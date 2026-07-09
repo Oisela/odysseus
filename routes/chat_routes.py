@@ -193,8 +193,14 @@ def _project_context_for_session(session_id, chat_handler):
         parts = []
         if proj.template_id:
             try:
+                # User templates first, then built-in presets (code_analyze,
+                # brainstorm, …) — the project persona dropdown offers both.
                 templates = chat_handler.preset_manager.get_user_templates()
                 tpl = next((t for t in templates if t.get("id") == proj.template_id), None)
+                if not tpl:
+                    builtin = chat_handler.preset_manager.presets.get(proj.template_id)
+                    if isinstance(builtin, dict):
+                        tpl = builtin
                 if tpl and tpl.get("system_prompt"):
                     parts.append(str(tpl["system_prompt"]).strip())
             except Exception:
