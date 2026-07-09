@@ -218,9 +218,9 @@ async function _openModal(project) {
         <label class="pm-label">Project instructions (added on top of the persona)</label>
         <textarea id="pm-instructions" rows="6">${_esc(p.instructions)}</textarea>
         <label class="pm-label">Folder</label>
-        <div style="display:flex;gap:6px;align-items:stretch;">
-          <input id="pm-workspace" type="text" class="styled-prompt-input" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;margin:0;height:auto;">
-          <button type="button" id="pm-browse" class="confirm-btn confirm-btn-secondary" style="white-space:nowrap;margin:0;align-self:stretch;">Browse…</button>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input id="pm-workspace" type="text" class="styled-prompt-input" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;margin:0;height:38px;box-sizing:border-box;">
+          <button type="button" id="pm-browse" class="confirm-btn confirm-btn-secondary" style="white-space:nowrap;margin:0;height:38px;box-sizing:border-box;padding:0 14px;display:inline-flex;align-items:center;">Browse…</button>
         </div>
         ${skills.length ? `
         <label class="pm-label">Pinned skills (optional, max. 4 — preferred in project chats)</label>
@@ -292,8 +292,9 @@ async function _openModal(project) {
       }
       _syncSkillsBtn();
     }));
-    document.addEventListener('click', function _outside(ev) {
-      if (!modal.contains(ev.target)) return;
+    // Listener on the modal (not document): it dies with the modal, so
+    // repeated open/close cycles don't stack handlers.
+    modal.addEventListener('click', (ev) => {
       if (!skillsDd.contains(ev.target) && ev.target !== skillsBtn) skillsDd.style.display = 'none';
     });
   }
