@@ -379,18 +379,14 @@ async function _openModal(project) {
 let _renderRetries = 0;
 
 function render() {
-  const host = document.getElementById('projects-section');
+  // Header lives statically in index.html (so section collapse/reorder wire
+  // up like every other section) — we only ever render the item list.
+  const host = document.getElementById('projects-list');
   if (!host) return;
   const all = getSessions() || [];
   const bySid = new Map(all.map(s => [String(s.id), s]));
 
-  host.innerHTML = `
-    <div class="section-header-flex">
-      <span class="section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="section-title-label">Projects</span></span>
-      <button type="button" class="section-header-btn list-item-plus-btn" id="project-add-btn" title="New project">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-    </div>`;
+  host.innerHTML = '';
 
   if (!_projects.length) {
     host.insertAdjacentHTML('beforeend',
@@ -449,8 +445,6 @@ function render() {
     host.appendChild(block);
   }
 
-  host.querySelector('#project-add-btn')?.addEventListener('click', () => _openModal(null));
-
   // On first load the sessions module may not have fetched yet — retry a few
   // times until the full session objects are available for the native rows.
   if (_missingSessions && _renderRetries < 6) {
@@ -461,7 +455,9 @@ function render() {
   }
 }
 
-// Self-init: module scripts run after DOM parse.
+// Self-init: module scripts run after DOM parse. The add button is part of
+// the static header, so it is bound exactly once here.
+document.getElementById('project-add-btn')?.addEventListener('click', () => _openModal(null));
 loadProjects();
 
 export default { loadProjects };
