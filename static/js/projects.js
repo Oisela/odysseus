@@ -5,14 +5,19 @@
 // (routes/chat_routes._project_context_for_session); this module is "just" UI.
 //
 // Deliberately self-contained: renders into #projects-section and touches the
-// rest of the app only via sessions.js exports, to keep upstream merges easy.
-// The modal reuses the app's native modal / modal-content / close-btn classes
-// so it inherits every theme.
+// rest of the app only via sessions.js / storage.js / windowDrag.js exports,
+// to keep upstream merges easy. Modals reuse the app's native modal markup
+// (modal / modal-content / modal-header / confirm-btn / workspace-row) so
+// every theme applies, and are draggable like the other windows.
 
 import Storage, { KEYS } from './storage.js';
+import uiModule from './ui.js';
+import { makeWindowDraggable } from './windowDrag.js';
 import { selectSession, loadSessions, getSessions } from './sessions.js';
 
 const API = window.location.origin;
+// Same folder glyph as the workspace picker (not an emoji).
+const _FOLDER_SVG = '<svg class="workspace-row-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
 let _projects = [];
 let _expanded = JSON.parse(localStorage.getItem('ody-projects-expanded') || '{}');
@@ -23,7 +28,7 @@ async function _json(url, opts = {}) {
   return res.json();
 }
 
-const _esc = (s) => String(s ?? '')
+const _esc = (s) => uiModule.esc ? uiModule.esc(String(s ?? '')) : String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export async function loadProjects() {
@@ -43,7 +48,7 @@ function _saveExpanded() {
 
 function _openProjectChat(project, sessionId) {
   // Server enforces workspace/template anyway; mirror the workspace into the
-  // client picker so the UI badge shows the right folder.
+  // client picker so the UI pill shows the right folder.
   if (project.workspace) {
     try { Storage.set(KEYS.WORKSPACE, project.workspace); } catch (e) { /* ignore */ }
   }
@@ -70,12 +75,86 @@ async function _newChatInProject(project) {
     await loadProjects();
     _openProjectChat(project, sid);
   } catch (e) {
-    alert('Could not create chat: ' + e.message);
+    if (uiModule.showError) uiModule.showError('Could not create chat: ' + e.message);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Modal (create / edit / files) — native .modal markup so themes apply
+// Folder picker — same markup/classes as the workspace picker, but with an
+// onPick callback instead of binding the global workspace.
+// ---------------------------------------------------------------------------
+
+function _openFolderPicker(initialPath, onPick) {
+  document.getElementById('project-folder-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'project-folder-modal';
+  modal.className = 'modal';
+  modal.style.zIndex = '260'; // above the project modal
+  let curPath = '';
+  modal.innerHTML = `
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4>${_FOLDER_SVG}<span style="margin-left:6px;">Select folder</span></h4>
+        <button class="close-btn" aria-label="Close">✖</button>
+      </div>
+      <input type="text" class="styled-prompt-input workspace-cur" id="pfp-path"
+             spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
+             placeholder="Type or paste a folder path, then press Enter" />
+      <p class="muted workspace-note">This folder holds the project's files and is the agent's workspace in project chats.</p>
+      <div class="modal-body workspace-body" id="pfp-body"></div>
+      <div class="modal-footer workspace-footer">
+        <button type="button" class="confirm-btn confirm-btn-secondary" id="pfp-cancel">Cancel</button>
+        <button type="button" class="confirm-btn confirm-btn-primary" id="pfp-use">Use this folder</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('.close-btn').addEventListener('click', close);
+  modal.querySelector('#pfp-cancel').addEventListener('click', close);
+  modal.querySelector('#pfp-use').addEventListener('click', () => { onPick(curPath); close(); });
+  modal.querySelector('#pfp-path').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = e.target.value.trim();
+      if (v) nav(v);
+    }
+  });
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) makeWindowDraggable(modal, { content, header });
+
+  async function nav(path) {
+    try {
+      const data = await _json('/api/workspace/browse?path=' + encodeURIComponent(path || ''));
+      curPath = data.path;
+      const pathEl = modal.querySelector('#pfp-path');
+      pathEl.value = data.path;
+      pathEl.title = data.path;
+      let rows = '';
+      if (data.parent) {
+        rows += `<div class="workspace-row workspace-up" data-path="${encodeURIComponent(data.parent)}">↑ ..</div>`;
+      }
+      for (const d of (data.dirs || [])) {
+        rows += `<div class="workspace-row" data-path="${encodeURIComponent(d.path)}">${_FOLDER_SVG}<span>${_esc(d.name)}</span></div>`;
+      }
+      if (!(data.dirs || []).length && !data.parent) rows = '<div class="workspace-empty">No subfolders</div>';
+      const body = modal.querySelector('#pfp-body');
+      body.innerHTML = rows || '<div class="workspace-empty">No subfolders</div>';
+      body.querySelectorAll('.workspace-row').forEach((row) => {
+        row.addEventListener('click', () => nav(decodeURIComponent(row.dataset.path)));
+      });
+      const useBtn = modal.querySelector('#pfp-use');
+      useBtn.disabled = data.selectable === false;
+      useBtn.title = data.selectable === false ? 'This folder cannot be used' : '';
+    } catch (e) {
+      if (uiModule.showError) uiModule.showError('Could not browse folders');
+    }
+  }
+  nav(initialPath || '');
+}
+
+// ---------------------------------------------------------------------------
+// Project modal (create / edit / files)
 // ---------------------------------------------------------------------------
 
 function _closeModal() {
@@ -102,7 +181,7 @@ async function _openModal(project) {
       .map(([k, v]) => ({ id: k, name: v.name || k }));
   } catch (e) { /* group stays empty */ }
 
-  // Skills for the pin picker (checkboxes, max 4).
+  // Skills for the pin dropdown.
   let skills = [];
   try {
     const s = await _json('/api/skills');
@@ -121,11 +200,6 @@ async function _openModal(project) {
     + grp('Presets', builtinPresets, p.template_id);
 
   const pinned = new Set(p.pinned_skills || []);
-  const skillRows = skills.map(s => `
-    <label class="project-skill-row" title="${_esc(s.description)}" style="display:flex;gap:6px;align-items:baseline;font-size:12.5px;padding:1px 0;cursor:pointer;">
-      <input type="checkbox" class="pm-skill" value="${_esc(s.name)}" ${pinned.has(s.name) ? 'checked' : ''}>
-      <span><strong>${_esc(s.name)}</strong> <span style="opacity:.6;">– ${_esc(s.description)}</span></span>
-    </label>`).join('');
 
   const modal = document.createElement('div');
   modal.id = 'project-modal';
@@ -133,36 +207,44 @@ async function _openModal(project) {
   modal.innerHTML = `
     <div class="modal-content" role="dialog" aria-label="Project" style="max-width:580px;width:min(580px,94vw);">
       <div class="modal-header">
-        <h4>${isNew ? 'New Project' : 'Project: ' + _esc(p.name)}</h4>
+        <h4>${isNew ? 'New project' : 'Project: ' + _esc(p.name)}</h4>
         <button class="close-btn" aria-label="Close">✖</button>
       </div>
       <div style="padding:14px 16px;max-height:74vh;overflow:auto;">
         <label class="pm-label">Name</label>
-        <input id="pm-name" type="text" value="${_esc(p.name)}">
+        <input id="pm-name" type="text" class="styled-prompt-input" value="${_esc(p.name)}">
         <label class="pm-label">Persona / template</label>
         <select id="pm-template">${tplOptions}</select>
         <label class="pm-label">Project instructions (added on top of the persona)</label>
         <textarea id="pm-instructions" rows="6">${_esc(p.instructions)}</textarea>
         <label class="pm-label">Folder</label>
         <div style="display:flex;gap:6px;">
-          <input id="pm-workspace" type="text" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;">
-          <button type="button" id="pm-browse" class="section-header-btn" style="padding:4px 10px;">Browse…</button>
+          <input id="pm-workspace" type="text" class="styled-prompt-input" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;">
+          <button type="button" id="pm-browse" class="confirm-btn confirm-btn-secondary" style="white-space:nowrap;">Browse…</button>
         </div>
-        <div id="pm-browser" style="display:none;border:1px solid var(--bubble-border,#3333);border-radius:6px;margin-top:6px;padding:6px;font-size:13px;max-height:180px;overflow:auto;"></div>
         ${skills.length ? `
         <label class="pm-label">Pinned skills (optional, max. 4 — preferred in project chats)</label>
-        <div style="border:1px solid var(--bubble-border,#3333);border-radius:6px;padding:6px 8px;max-height:130px;overflow:auto;">${skillRows}</div>` : ''}
+        <div style="position:relative;">
+          <button type="button" id="pm-skills-btn" class="confirm-btn confirm-btn-secondary" style="width:100%;text-align:left;"></button>
+          <div id="pm-skills-dd" class="dropdown" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:170px;overflow:auto;z-index:5;">
+            ${skills.map(s => `
+              <label class="dropdown-item" title="${_esc(s.description)}" style="display:flex;gap:7px;align-items:baseline;cursor:pointer;">
+                <input type="checkbox" class="pm-skill" value="${_esc(s.name)}" ${pinned.has(s.name) ? 'checked' : ''}>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><strong>${_esc(s.name)}</strong> <span style="opacity:.6;">– ${_esc(s.description)}</span></span>
+              </label>`).join('')}
+          </div>
+        </div>` : ''}
         ${isNew ? '' : `
         <label class="pm-label">Files</label>
-        <div id="pm-files" style="border:1px solid var(--bubble-border,#3333);border-radius:6px;padding:6px 8px;max-height:180px;overflow:auto;font-size:13px;">loading …</div>
+        <div id="pm-files" class="workspace-body" style="max-height:180px;overflow:auto;font-size:13px;">loading …</div>
         <input id="pm-upload" type="file" multiple style="margin-top:6px;font-size:12px;">`}
-        <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px;">
-          <span>${isNew ? '' : '<button id="pm-delete" class="section-header-btn" style="color:var(--accent-error,#c66);border-color:var(--accent-error,#c66);padding:5px 10px;">Remove project</button>'}</span>
-          <span style="display:flex;gap:8px;">
-            <button id="pm-cancel" class="section-header-btn" style="padding:5px 12px;">Cancel</button>
-            <button id="pm-save" class="section-header-btn" style="padding:5px 14px;font-weight:600;">Save</button>
-          </span>
-        </div>
+      </div>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;">
+        <span>${isNew ? '' : '<button id="pm-delete" class="confirm-btn confirm-btn-secondary" style="color:var(--accent-error,#c66);">Remove project</button>'}</span>
+        <span style="display:flex;gap:8px;">
+          <button id="pm-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>
+          <button id="pm-save" class="confirm-btn confirm-btn-primary">Save</button>
+        </span>
       </div>
     </div>
     <style>
@@ -176,46 +258,43 @@ async function _openModal(project) {
   const q = (sel) => modal.querySelector(sel);
   q('.close-btn').addEventListener('click', _closeModal);
   q('#pm-cancel').addEventListener('click', _closeModal);
-  modal.addEventListener('click', (ev) => { if (ev.target === modal) _closeModal(); });
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) makeWindowDraggable(modal, { content, header });
 
-  // --- folder browser (uses the same server API as the workspace picker) ---
-  const browser = q('#pm-browser');
-  let _browsePath = '';
-  async function _renderBrowser(path) {
-    browser.style.display = 'block';
-    browser.innerHTML = '<em style="opacity:.6;">loading …</em>';
-    try {
-      const data = await _json('/api/workspace/browse?path=' + encodeURIComponent(path || ''));
-      _browsePath = data.path;
-      const rows = (data.dirs || []).map(d =>
-        `<div class="list-item pm-dir" data-path="${_esc(d.path)}" style="padding:2px 6px;">📁 ${_esc(d.name)}</div>`).join('');
-      browser.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;">
-          <code style="font-size:11px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(data.path)}</code>
-          <button type="button" id="pm-usefolder" class="section-header-btn" style="padding:2px 8px;white-space:nowrap;">Use this folder</button>
-        </div>
-        ${data.parent ? `<div class="list-item pm-dir" data-path="${_esc(data.parent)}" style="padding:2px 6px;opacity:.7;">↑ ..</div>` : ''}
-        ${rows || '<div style="opacity:.5;padding:2px 6px;">no subfolders</div>'}`;
-      browser.querySelectorAll('.pm-dir').forEach(el =>
-        el.addEventListener('click', () => _renderBrowser(el.dataset.path)));
-      browser.querySelector('#pm-usefolder')?.addEventListener('click', () => {
-        q('#pm-workspace').value = _browsePath;
-        browser.style.display = 'none';
-      });
-    } catch (e) {
-      browser.innerHTML = '<em style="opacity:.6;">Browsing unavailable (' + _esc(e.message) + ')</em>';
-    }
-  }
+  // Folder picker (native look, callback into the form field).
   q('#pm-browse').addEventListener('click', () => {
-    if (browser.style.display === 'block') { browser.style.display = 'none'; return; }
-    _renderBrowser(q('#pm-workspace').value.trim() || p.workspace || '');
+    _openFolderPicker(q('#pm-workspace').value.trim() || p.workspace || '', (picked) => {
+      q('#pm-workspace').value = picked;
+    });
   });
 
-  // --- max 4 pinned skills ---
-  modal.querySelectorAll('.pm-skill').forEach(cb => cb.addEventListener('change', () => {
-    const checked = modal.querySelectorAll('.pm-skill:checked');
-    if (checked.length > 4) { cb.checked = false; alert('At most 4 pinned skills.'); }
-  }));
+  // Skills dropdown: button shows the selection, panel holds checkboxes.
+  const skillsBtn = q('#pm-skills-btn');
+  const skillsDd = q('#pm-skills-dd');
+  const _syncSkillsBtn = () => {
+    if (!skillsBtn) return;
+    const sel = [...modal.querySelectorAll('.pm-skill:checked')].map(cb => cb.value);
+    skillsBtn.textContent = sel.length ? sel.join(', ') : 'Select skills…';
+  };
+  if (skillsBtn && skillsDd) {
+    _syncSkillsBtn();
+    skillsBtn.addEventListener('click', () => {
+      skillsDd.style.display = skillsDd.style.display === 'none' ? 'block' : 'none';
+    });
+    modal.querySelectorAll('.pm-skill').forEach(cb => cb.addEventListener('change', () => {
+      const checked = modal.querySelectorAll('.pm-skill:checked');
+      if (checked.length > 4) {
+        cb.checked = false;
+        if (uiModule.showToast) uiModule.showToast('At most 4 pinned skills.');
+      }
+      _syncSkillsBtn();
+    }));
+    document.addEventListener('click', function _outside(ev) {
+      if (!modal.contains(ev.target)) return;
+      if (!skillsDd.contains(ev.target) && ev.target !== skillsBtn) skillsDd.style.display = 'none';
+    });
+  }
 
   q('#pm-save').addEventListener('click', async () => {
     const body = {
@@ -226,7 +305,7 @@ async function _openModal(project) {
     };
     const ws = q('#pm-workspace').value.trim();
     if (ws) body.workspace = ws;
-    if (!body.name) { alert('Name is required'); return; }
+    if (!body.name) { if (uiModule.showToast) uiModule.showToast('Name is required'); return; }
     try {
       if (isNew) {
         await _json('/api/projects', { method: 'POST',
@@ -238,7 +317,7 @@ async function _openModal(project) {
       _closeModal();
       await loadProjects();
     } catch (e) {
-      alert('Saving failed: ' + e.message);
+      if (uiModule.showError) uiModule.showError('Saving failed: ' + e.message);
     }
   });
 
@@ -254,12 +333,12 @@ async function _openModal(project) {
     const renderFiles = async () => {
       try {
         const data = await _json(`/api/projects/${p.id}/files`);
-        if (!data.files.length) { filesBox.innerHTML = '<em style="opacity:.6;">no files yet</em>'; return; }
+        if (!data.files.length) { filesBox.innerHTML = '<div class="workspace-empty">no files yet</div>'; return; }
         filesBox.innerHTML = data.files.map(f => `
-          <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">
-            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${_esc(f.path)}</a>
+          <div class="workspace-row" style="display:flex;justify-content:space-between;gap:8px;cursor:default;">
+            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_FOLDER_SVG.replace('workspace-row-icon', 'workspace-row-icon file')} ${_esc(f.path)}</a>
             <span style="white-space:nowrap;opacity:.6;">${(f.size / 1024).toFixed(0)} KB
-              <a href="#" data-del="${_esc(f.path)}" style="color:var(--accent-error,#c66);text-decoration:none;margin-left:6px;">✕</a></span>
+              <a href="#" data-del="${_esc(f.path)}" style="color:var(--accent-error,#c66);text-decoration:none;margin-left:6px;" title="Delete">✕</a></span>
           </div>`).join('');
         filesBox.querySelectorAll('[data-del]').forEach(a => a.addEventListener('click', async (ev) => {
           ev.preventDefault();
@@ -267,7 +346,7 @@ async function _openModal(project) {
           renderFiles();
         }));
       } catch (e) {
-        filesBox.textContent = 'Loading files failed';
+        filesBox.innerHTML = '<div class="workspace-empty">Loading files failed</div>';
       }
     };
     renderFiles();
@@ -278,7 +357,7 @@ async function _openModal(project) {
         try {
           await _json(`/api/projects/${p.id}/files`, { method: 'POST', body: fd });
         } catch (e) {
-          alert(`Upload ${file.name} failed: ` + e.message);
+          if (uiModule.showError) uiModule.showError(`Upload ${file.name} failed: ` + e.message);
         }
       }
       ev.target.value = '';
