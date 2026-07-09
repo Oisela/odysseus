@@ -472,7 +472,9 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
 }
 
 /** Create a single session list-item element. */
-function createSessionItem(s) {
+// Exported: js/projects.js renders project chats with the exact same row
+// (icons, favorite, full actions dropdown) so both lists behave identically.
+export function createSessionItem(s) {
   const div = document.createElement('div');
   div.className = 'list-item session-item';
   div.setAttribute('role', 'option');

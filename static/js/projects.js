@@ -13,7 +13,7 @@
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { selectSession, loadSessions, getSessions } from './sessions.js';
+import { selectSession, loadSessions, getSessions, createSessionItem } from './sessions.js';
 
 const API = window.location.origin;
 // Same folder glyph as the workspace picker (not an emoji).
@@ -375,66 +375,85 @@ async function _openModal(project) {
 // Sidebar rendering
 // ---------------------------------------------------------------------------
 
+let _renderRetries = 0;
+
 function render() {
   const host = document.getElementById('projects-section');
   if (!host) return;
-  const rows = _projects.map(p => {
-    const open = !!_expanded[p.id];
-    const chats = (p.sessions || []).map(s => `
-      <div class="list-item project-chat-row" data-sid="${_esc(s.id)}" data-pid="${_esc(p.id)}" style="padding-left:26px;font-size:13px;" title="${_esc(s.name)}">
-        <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.name) || '(untitled)'}</span>
-        <button class="section-header-btn project-chat-del" data-sid="${_esc(s.id)}" title="Delete chat" style="opacity:.55;font-size:11px;padding:0 4px;">✕</button>
-      </div>`).join('');
-    return `
-      <div class="project-block" data-pid="${_esc(p.id)}">
-        <div class="list-item project-row" data-pid="${_esc(p.id)}" style="font-weight:600;">
-          <span style="width:14px;display:inline-block;opacity:.7;">${open ? '▾' : '▸'}</span>
-          <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.name)}</span>
-          <button class="section-header-btn project-gear" data-pid="${_esc(p.id)}" title="Project settings" style="opacity:.7;">⚙</button>
-        </div>
-        ${open ? chats + `
-        <div class="list-item project-newchat" data-pid="${_esc(p.id)}" style="padding-left:26px;font-size:12px;opacity:.75;">+ New chat</div>` : ''}
-      </div>`;
-  }).join('');
+  const all = getSessions() || [];
+  const bySid = new Map(all.map(s => [String(s.id), s]));
 
   host.innerHTML = `
     <div class="section-header-flex">
       <span class="section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="section-title-label">Projects</span></span>
       <button type="button" class="section-header-btn" id="project-add-btn" title="New project" style="font-size:15px;line-height:1;">+</button>
-    </div>
-    ${rows || '<div style="font-size:12px;opacity:.55;padding:2px 8px 6px;">No projects yet</div>'}`;
+    </div>`;
+
+  if (!_projects.length) {
+    host.insertAdjacentHTML('beforeend',
+      '<div style="font-size:12px;opacity:.55;padding:2px 8px 6px;">No projects yet</div>');
+  }
+
+  let _missingSessions = false;
+  for (const p of _projects) {
+    const open = !!_expanded[p.id];
+    const block = document.createElement('div');
+    block.className = 'project-block';
+
+    const row = document.createElement('div');
+    row.className = 'list-item project-row';
+    row.style.fontWeight = '600';
+    row.innerHTML = `
+      <span style="width:14px;display:inline-block;opacity:.7;">${open ? '▾' : '▸'}</span>
+      <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.name)}</span>
+      <button class="section-header-btn project-gear" title="Project settings" style="opacity:.7;">⚙</button>`;
+    row.addEventListener('click', (ev) => {
+      if (ev.target.closest('.project-gear')) return;
+      _expanded[p.id] = !_expanded[p.id];
+      _saveExpanded();
+      render();
+    });
+    row.querySelector('.project-gear').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _openModal(p);
+    });
+    block.appendChild(row);
+
+    if (open) {
+      for (const ps of (p.sessions || [])) {
+        const full = bySid.get(String(ps.id));
+        if (full) {
+          // The exact same row as the Chats list — icons, favorite, full
+          // actions dropdown (rename/copy/move/archive/delete). Indented via
+          // wrapper so it reads as a child of the project.
+          const wrap = document.createElement('div');
+          wrap.style.marginLeft = '14px';
+          wrap.appendChild(createSessionItem(full));
+          block.appendChild(wrap);
+        } else {
+          _missingSessions = true;
+        }
+      }
+      const add = document.createElement('div');
+      add.className = 'list-item project-newchat';
+      add.style.cssText = 'padding-left:26px;font-size:12px;opacity:.75;';
+      add.textContent = '+ New chat';
+      add.addEventListener('click', () => _newChatInProject(p));
+      block.appendChild(add);
+    }
+    host.appendChild(block);
+  }
 
   host.querySelector('#project-add-btn')?.addEventListener('click', () => _openModal(null));
-  host.querySelectorAll('.project-row').forEach(el => el.addEventListener('click', (ev) => {
-    if (ev.target.closest('.project-gear')) return;
-    const pid = el.dataset.pid;
-    _expanded[pid] = !_expanded[pid];
-    _saveExpanded();
-    render();
-  }));
-  host.querySelectorAll('.project-gear').forEach(el => el.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    _openModal(_projects.find(x => x.id === el.dataset.pid));
-  }));
-  host.querySelectorAll('.project-chat-row').forEach(el => el.addEventListener('click', (ev) => {
-    if (ev.target.closest('.project-chat-del')) return;
-    const proj = _projects.find(x => x.id === el.dataset.pid);
-    _openProjectChat(proj || {}, el.dataset.sid);
-  }));
-  host.querySelectorAll('.project-chat-del').forEach(el => el.addEventListener('click', async (ev) => {
-    ev.stopPropagation();
-    if (!confirm('Delete this chat? This cannot be undone.')) return;
-    try {
-      await fetch(`${API}/api/session/${el.dataset.sid}`, { method: 'DELETE', credentials: 'same-origin' });
-      await Promise.all([loadSessions(), loadProjects()]);
-    } catch (e) {
-      if (uiModule.showError) uiModule.showError('Delete failed: ' + e.message);
-    }
-  }));
-  host.querySelectorAll('.project-newchat').forEach(el => el.addEventListener('click', () => {
-    const proj = _projects.find(x => x.id === el.dataset.pid);
-    if (proj) _newChatInProject(proj);
-  }));
+
+  // On first load the sessions module may not have fetched yet — retry a few
+  // times until the full session objects are available for the native rows.
+  if (_missingSessions && _renderRetries < 6) {
+    _renderRetries += 1;
+    setTimeout(render, 700);
+  } else if (!_missingSessions) {
+    _renderRetries = 0;
+  }
 }
 
 // Self-init: module scripts run after DOM parse.
