@@ -1006,7 +1006,12 @@ let _renderRAF = null;
 export function renderSessionList() {
   // Debounce rapid re-renders within the same frame
   if (_renderRAF) cancelAnimationFrame(_renderRAF);
-  _renderRAF = requestAnimationFrame(_renderSessionListImpl);
+  _renderRAF = requestAnimationFrame(() => {
+    _renderSessionListImpl();
+    // Notify dependent views (js/projects.js mirrors sessions under their
+    // projects) so they stay in sync after delete/archive/rename here.
+    try { window.dispatchEvent(new CustomEvent('odysseus-sessions-rendered')); } catch (_) {}
+  });
 }
 
 function _renderSessionListImpl() {

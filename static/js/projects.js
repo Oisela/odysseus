@@ -47,6 +47,13 @@ function _saveExpanded() {
 }
 
 function _openProjectChat(project, sessionId) {
+  // Stale guard: the chat may have been deleted via the native row menu —
+  // opening it then dies on an empty response. Resync instead.
+  const exists = (getSessions() || []).some(s => String(s.id) === String(sessionId));
+  if (!exists) {
+    Promise.all([loadSessions(), loadProjects()]).catch(() => {});
+    return;
+  }
   // Server enforces workspace/template anyway; mirror the workspace into the
   // client picker so the UI pill shows the right folder.
   if (project.workspace) {
@@ -390,10 +397,13 @@ function render() {
   const all = getSessions() || [];
   const bySid = new Map(all.map(s => [String(s.id), s]));
 
-  host.innerHTML = '';
+  // Build into a detached container first; swap only when the markup really
+  // changed. renderSessionList fires often (streams, renames) and re-drawing
+  // an identical tree every time reads as flicker.
+  const frag = document.createElement('div');
 
   if (!_projects.length) {
-    host.insertAdjacentHTML('beforeend',
+    frag.insertAdjacentHTML('beforeend',
       '<div style="font-size:12px;opacity:.55;padding:2px 8px 6px;">No projects yet</div>');
   }
 
@@ -446,7 +456,13 @@ function render() {
       add.addEventListener('click', () => _newChatInProject(p));
       block.appendChild(add);
     }
-    host.appendChild(block);
+    frag.appendChild(block);
+  }
+
+  // Swap only on real change (see note above — avoids re-render flicker).
+  if (frag.innerHTML !== host.innerHTML) {
+    host.innerHTML = '';
+    while (frag.firstChild) host.appendChild(frag.firstChild);
   }
 
   // On first load the sessions module may not have fetched yet — retry a few
@@ -462,6 +478,16 @@ function render() {
 // Self-init: module scripts run after DOM parse. The add button is part of
 // the static header, so it is bound exactly once here.
 document.getElementById('project-add-btn')?.addEventListener('click', () => _openModal(null));
+
+// Stay in sync with the native chats list: whenever it re-renders (delete/
+// archive/rename/auto-name), refresh the project tree from the server so the
+// mirrored rows never go stale. Debounced — renderSessionList fires often.
+let _syncTimer = null;
+window.addEventListener('odysseus-sessions-rendered', () => {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(loadProjects, 400);
+});
+
 loadProjects();
 
 export default { loadProjects };
