@@ -352,7 +352,7 @@ async function _openModal(project) {
         if (!data.files.length) { filesBox.innerHTML = '<div class="workspace-empty">no files yet</div>'; return; }
         filesBox.innerHTML = data.files.map(f => `
           <div class="workspace-row" style="display:flex;justify-content:space-between;gap:8px;cursor:default;">
-            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_FOLDER_SVG.replace('workspace-row-icon', 'workspace-row-icon file')} ${_esc(f.path)}</a>
+            <a href="${API}/api/projects/${p.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><svg class="workspace-row-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> ${_esc(f.path)}</a>
             <span style="white-space:nowrap;opacity:.6;">${(f.size / 1024).toFixed(0)} KB
               <a href="#" data-del="${_esc(f.path)}" style="color:var(--accent-error,#c66);text-decoration:none;margin-left:6px;" title="Delete">✕</a></span>
           </div>`).join('');
