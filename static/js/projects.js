@@ -61,9 +61,10 @@ async function _newChatInProject(project) {
   const all = getSessions() || [];
   const donor = all.find(s => s.model && s.endpoint_url) || all[0];
   const fd = new FormData();
-  // Neutral name — the auto-namer then titles it from the conversation,
-  // exactly like regular chats.
-  fd.append('name', 'New Chat');
+  // "Chat" is one of the placeholder names needs_auto_name() recognizes, so
+  // the auto-namer titles the session from the first exchange — exactly like
+  // regular chats.
+  fd.append('name', 'Chat');
   if (donor) {
     fd.append('model', donor.model || '');
     fd.append('endpoint_url', donor.endpoint_url || '');
