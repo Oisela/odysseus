@@ -218,15 +218,17 @@ async function _openModal(project) {
         <label class="pm-label">Project instructions (added on top of the persona)</label>
         <textarea id="pm-instructions" rows="6">${_esc(p.instructions)}</textarea>
         <label class="pm-label">Folder</label>
-        <div style="display:flex;gap:6px;">
-          <input id="pm-workspace" type="text" class="styled-prompt-input" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;">
-          <button type="button" id="pm-browse" class="confirm-btn confirm-btn-secondary" style="white-space:nowrap;">Browse…</button>
+        <div style="display:flex;gap:6px;align-items:stretch;">
+          <input id="pm-workspace" type="text" class="styled-prompt-input" value="${_esc(p.workspace)}" placeholder="automatic" style="flex:1;margin:0;height:auto;">
+          <button type="button" id="pm-browse" class="confirm-btn confirm-btn-secondary" style="white-space:nowrap;margin:0;align-self:stretch;">Browse…</button>
         </div>
         ${skills.length ? `
         <label class="pm-label">Pinned skills (optional, max. 4 — preferred in project chats)</label>
-        <div style="position:relative;">
-          <button type="button" id="pm-skills-btn" class="confirm-btn confirm-btn-secondary" style="width:100%;text-align:left;"></button>
-          <div id="pm-skills-dd" class="dropdown" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:170px;overflow:auto;z-index:5;">
+        <div>
+          <button type="button" id="pm-skills-btn" class="confirm-btn confirm-btn-secondary" style="width:100%;text-align:left;margin:0;"></button>
+          <!-- In-flow (accordion) instead of absolute: the modal body scrolls,
+               and an absolutely positioned panel gets clipped by overflow. -->
+          <div id="pm-skills-dd" class="dropdown" style="display:none;position:static;width:100%;box-sizing:border-box;margin-top:2px;max-height:170px;overflow:auto;">
             ${skills.map(s => `
               <label class="dropdown-item" title="${_esc(s.description)}" style="display:flex;gap:7px;align-items:baseline;cursor:pointer;">
                 <input type="checkbox" class="pm-skill" value="${_esc(s.name)}" ${pinned.has(s.name) ? 'checked' : ''}>
