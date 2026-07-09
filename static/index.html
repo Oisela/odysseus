@@ -723,6 +723,10 @@
            assistant session is still maintained for log_to_assistant()
            writes from scheduled tasks. -->
 
+      <!-- Projects: chats grouped around a topic (workspace + persona +
+           instructions applied server-side). Rendered by js/projects.js. -->
+      <div class="section" id="projects-section"></div>
+
       <div class="section" id="sessions-section">
         <div class="section-header-flex">
           <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
@@ -2457,6 +2461,7 @@
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
+<script type="module" src="/static/js/projects.js"></script>
 <script type="module" src="/static/js/memory.js"></script>
 <script type="module" src="/static/js/skills.js"></script>
 <script type="module" src="/static/js/tourHints.js"></script>
