@@ -149,6 +149,32 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    project_id = Column(String, nullable=True, index=True)  # links to projects.id
+
+
+class Project(TimestampMixin, Base):
+    """A project bundles chats around one topic (a lecture, an exam, a build):
+    a workspace folder (its files), extra instructions layered on top of the
+    selected template/persona, and optionally a few pinned skills. Sessions
+    reference it via sessions.project_id; opening a project chat applies the
+    project's workspace + template server-side, so the client needs no manual
+    setup per chat."""
+    __tablename__ = "projects"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    # Absolute folder (inside the data dir) holding the project's files; also
+    # used as the agent workspace for every chat in the project.
+    workspace = Column(String, nullable=True)
+    # Extra system-prompt text appended after the template/persona prompt.
+    instructions = Column(Text, nullable=True)
+    # User-template id (presets.json user_templates) applied in project chats.
+    template_id = Column(String, nullable=True)
+    # Skill names that get priority injection in project chats (keep small).
+    pinned_skills = Column(JSON, default=list)
+    sort_order = Column(Integer, default=0)
+    archived = Column(Boolean, default=False)
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -705,6 +731,34 @@ class Memory(Base):
         Index('ix_memories_lookup', 'category', 'timestamp'),  # Composite for category-based queries
         Index('ix_memories_session', 'session_id', 'timestamp'),  # Composite for session-based queries
     )
+
+def _migrate_add_session_project_id_column():
+    """Add project_id to sessions (links a chat to a project). Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "project_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN project_id VARCHAR")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_sessions_project_id "
+                "ON sessions(project_id)"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'project_id' to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"sessions.project_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def _migrate_add_last_message_at_column():
     """Add last_message_at to sessions + backfill from the latest message
@@ -1832,6 +1886,7 @@ def init_db():
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
+    _migrate_add_session_project_id_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
