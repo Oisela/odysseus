@@ -151,31 +151,6 @@ class Session(TimestampMixin, Base):
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
     project_id = Column(String, nullable=True, index=True)  # links to projects.id
 
-
-class Project(TimestampMixin, Base):
-    """A project bundles chats around one topic (a lecture, an exam, a build):
-    a workspace folder (its files), extra instructions layered on top of the
-    selected template/persona, and optionally a few pinned skills. Sessions
-    reference it via sessions.project_id; opening a project chat applies the
-    project's workspace + template server-side, so the client needs no manual
-    setup per chat."""
-    __tablename__ = "projects"
-
-    id = Column(String, primary_key=True, index=True)
-    owner = Column(String, nullable=True, index=True)
-    name = Column(String, nullable=False)
-    # Absolute folder (inside the data dir) holding the project's files; also
-    # used as the agent workspace for every chat in the project.
-    workspace = Column(String, nullable=True)
-    # Extra system-prompt text appended after the template/persona prompt.
-    instructions = Column(Text, nullable=True)
-    # User-template id (presets.json user_templates) applied in project chats.
-    template_id = Column(String, nullable=True)
-    # Skill names that get priority injection in project chats (keep small).
-    pinned_skills = Column(JSON, default=list)
-    sort_order = Column(Integer, default=0)
-    archived = Column(Boolean, default=False)
-
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     
@@ -204,6 +179,31 @@ class Project(TimestampMixin, Base):
             'total_output_tokens': self.total_output_tokens or 0,
             'crew_member_id': self.crew_member_id,
         }
+
+class Project(TimestampMixin, Base):
+    """A project bundles chats around one topic (a lecture, an exam, a build):
+    a workspace folder (its files), extra instructions layered on top of the
+    selected template/persona, and optionally a few pinned skills. Sessions
+    reference it via sessions.project_id; opening a project chat applies the
+    project's workspace + template server-side, so the client needs no manual
+    setup per chat."""
+    __tablename__ = "projects"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    # Absolute folder (inside the data dir) holding the project's files; also
+    # used as the agent workspace for every chat in the project.
+    workspace = Column(String, nullable=True)
+    # Extra system-prompt text appended after the template/persona prompt.
+    instructions = Column(Text, nullable=True)
+    # User-template id (presets.json user_templates) applied in project chats.
+    template_id = Column(String, nullable=True)
+    # Skill names that get priority injection in project chats (keep small).
+    pinned_skills = Column(JSON, default=list)
+    sort_order = Column(Integer, default=0)
+    archived = Column(Boolean, default=False)
+
 
 class ChatMessage(Base):
     """
