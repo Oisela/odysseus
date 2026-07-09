@@ -472,7 +472,9 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
 }
 
 /** Create a single session list-item element. */
-function createSessionItem(s) {
+// Exported: js/projects.js renders project chats with the exact same row
+// (icons, favorite, full actions dropdown) so both lists behave identically.
+export function createSessionItem(s) {
   const div = document.createElement('div');
   div.className = 'list-item session-item';
   div.setAttribute('role', 'option');
@@ -1004,7 +1006,12 @@ let _renderRAF = null;
 export function renderSessionList() {
   // Debounce rapid re-renders within the same frame
   if (_renderRAF) cancelAnimationFrame(_renderRAF);
-  _renderRAF = requestAnimationFrame(_renderSessionListImpl);
+  _renderRAF = requestAnimationFrame(() => {
+    _renderSessionListImpl();
+    // Notify dependent views (js/projects.js mirrors sessions under their
+    // projects) so they stay in sync after delete/archive/rename here.
+    try { window.dispatchEvent(new CustomEvent('odysseus-sessions-rendered')); } catch (_) {}
+  });
 }
 
 function _renderSessionListImpl() {
@@ -1014,6 +1021,9 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
+  // Project chats appear here like any other chat (full native row UX) AND
+  // under their project in js/projects.js — the project section is a view,
+  // not a silo.
   let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
 
   if (savedOrder) {

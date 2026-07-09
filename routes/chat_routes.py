@@ -168,6 +168,63 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     return workspace, (requested if not workspace else "")
 
 
+def _project_context_for_session(session_id, chat_handler):
+    """If the session belongs to a project, return (workspace, prompt, name).
+
+    The project defines workspace + persona template + extra instructions for
+    ALL its chats server-side: a fresh client (new browser, phone) needs no
+    per-chat setup, and a stale client-side preset/workspace can't leak into
+    project chats. Returns (None, None, None) for project-less sessions.
+    """
+    if not session_id:
+        return None, None, None
+    try:
+        from core.database import Project as DbProject, Session as DbSess
+        db = SessionLocal()
+        try:
+            row = db.query(DbSess.project_id).filter(DbSess.id == session_id).first()
+            if not row or not row.project_id:
+                return None, None, None
+            proj = db.query(DbProject).filter(DbProject.id == row.project_id).first()
+        finally:
+            db.close()
+        if not proj or proj.archived:
+            return None, None, None
+        parts = []
+        if proj.template_id:
+            try:
+                # User templates first, then built-in presets (code_analyze,
+                # brainstorm, …) — the project persona dropdown offers both.
+                templates = chat_handler.preset_manager.get_user_templates()
+                tpl = next((t for t in templates if t.get("id") == proj.template_id), None)
+                if not tpl:
+                    builtin = chat_handler.preset_manager.presets.get(proj.template_id)
+                    if isinstance(builtin, dict):
+                        tpl = builtin
+                if tpl and tpl.get("system_prompt"):
+                    parts.append(str(tpl["system_prompt"]).strip())
+                else:
+                    logger.warning(f"[project] template '{proj.template_id}' not found or empty for project {proj.id}")
+            except Exception:
+                logger.warning("[project] template lookup failed", exc_info=True)
+        extra = [f"=== PROJEKT: {proj.name} ==="]
+        if proj.workspace:
+            extra.append(f"Projekt-Ordner (Workspace): {proj.workspace}")
+        if (proj.instructions or "").strip():
+            extra.append("PROJEKT-ANWEISUNGEN:\n" + proj.instructions.strip())
+        if proj.pinned_skills:
+            extra.append(
+                "Bevorzugte Skills in diesem Projekt (bei passenden Aufgaben deren Regeln anwenden): "
+                + ", ".join(str(s) for s in proj.pinned_skills)
+            )
+        parts.append("\n".join(extra))
+        prompt = "\n\n".join(p for p in parts if p)
+        return (proj.workspace or None), prompt, proj.name
+    except Exception:
+        logger.warning("[project] context resolution failed", exc_info=True)
+        return None, None, None
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -471,6 +528,7 @@ def setup_chat_routes(
             return {"response": memory_response}
 
         # Build shared context (preset, preprocess, preface, compact)
+        _, _json_project_prompt, _ = _project_context_for_session(session, chat_handler)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
             message=message,
@@ -481,6 +539,7 @@ def setup_chat_routes(
             time_filter=time_filter,
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
+            project_prompt=_json_project_prompt,
         )
 
         # Research injection
@@ -573,6 +632,16 @@ def setup_chat_routes(
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
         )
+        # Project chats: the project's workspace wins over whatever the client
+        # last had selected — switching to a project chat must never require
+        # manual workspace fiddling (that's the feature's whole point).
+        _proj_ws, project_prompt, _proj_name = _project_context_for_session(session, chat_handler)
+        if _proj_ws:
+            _pws, _prej = _resolve_request_workspace(request, _proj_ws)
+            if _pws:
+                workspace, workspace_rejected = _pws, ""
+        if _proj_name:
+            logger.info(f"[project] session {session} runs in project '{_proj_name}'")
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -777,6 +846,7 @@ def setup_chat_routes(
             # index would be useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
+            project_prompt=project_prompt,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
