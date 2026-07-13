@@ -10,6 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
+import fileHandlerModule from './fileHandler.js';
 import codeRunnerModule from './codeRunner.js';
 import { langIcon } from './langIcons.js';
 import spinnerModule from './spinner.js';
@@ -2060,7 +2061,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const data = await res.json();
       const v = data.compiled_at || _latexStampByDoc.get(activeDocId) || 0;
       pane.innerHTML = (data.pages || []).map(p =>
-        `<img class="doc-latex-page" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">`
+        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">`
       ).join('');
     } catch (e) {
       pane.innerHTML = '<div class="doc-latex-hint">Could not load the compiled PDF.</div>';
@@ -2099,6 +2100,103 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (btn) { btn.disabled = false; btn.classList.remove('compiling'); }
     }
     _setLatexViewActive(true);
+  }
+
+  // ── LaTeX: mark a region of the compiled PDF → attach it to the chat ──
+  // Drag a rectangle over a rendered page; the crop lands in the composer's
+  // attachment strip so the user can add an instruction ("change this") and
+  // send it — the vision model sees exactly the marked spot.
+
+  let _latexMarkMode = false;
+
+  function _setLatexMarkMode(on) {
+    _latexMarkMode = on;
+    document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
+    document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
+  }
+
+  function _wireLatexMarking() {
+    const pane = document.getElementById('doc-latex-view');
+    if (!pane || pane._markWired) return;
+    pane._markWired = true;
+
+    let drag = null;  // { x0, y0, box } in pane-content coordinates
+
+    const contentXY = (e) => {
+      const r = pane.getBoundingClientRect();
+      return { x: e.clientX - r.left + pane.scrollLeft, y: e.clientY - r.top + pane.scrollTop };
+    };
+    const cancelDrag = () => {
+      if (drag) { drag.box.remove(); drag = null; }
+      _setLatexMarkMode(false);
+    };
+
+    pane.addEventListener('pointerdown', (e) => {
+      if (!_latexMarkMode || e.button !== 0) return;
+      e.preventDefault();
+      const { x, y } = contentXY(e);
+      const box = document.createElement('div');
+      box.className = 'doc-latex-marquee';
+      box.style.left = `${x}px`;
+      box.style.top = `${y}px`;
+      pane.appendChild(box);
+      drag = { x0: x, y0: y, box };
+      try { pane.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+
+    pane.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const { x, y } = contentXY(e);
+      drag.box.style.left = `${Math.min(x, drag.x0)}px`;
+      drag.box.style.top = `${Math.min(y, drag.y0)}px`;
+      drag.box.style.width = `${Math.abs(x - drag.x0)}px`;
+      drag.box.style.height = `${Math.abs(y - drag.y0)}px`;
+    });
+
+    pane.addEventListener('pointerup', () => {
+      if (!drag) return;
+      const sel = drag.box.getBoundingClientRect();  // viewport coords
+      cancelDrag();
+      if (sel.width < 8 || sel.height < 8) return;   // bare click = cancel
+
+      // Crop from the page image with the largest overlap. The PNGs are
+      // same-origin, so the canvas stays untainted.
+      let best = null, bestArea = 0;
+      pane.querySelectorAll('img.doc-latex-page').forEach((img) => {
+        const r = img.getBoundingClientRect();
+        const w = Math.min(sel.right, r.right) - Math.max(sel.left, r.left);
+        const h = Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top);
+        if (w > 0 && h > 0 && w * h > bestArea) { bestArea = w * h; best = { img, r }; }
+      });
+      if (!best) return;
+      const { img, r } = best;
+      const scale = img.naturalWidth / r.width;
+      const sx = Math.max(0, (Math.max(sel.left, r.left) - r.left) * scale);
+      const sy = Math.max(0, (Math.max(sel.top, r.top) - r.top) * scale);
+      const sw = Math.min(img.naturalWidth - sx,
+        (Math.min(sel.right, r.right) - Math.max(sel.left, r.left)) * scale);
+      const sh = Math.min(img.naturalHeight - sy,
+        (Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top)) * scale);
+      if (sw < 4 || sh < 4) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(sw);
+      canvas.height = Math.round(sh);
+      canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const page = img.dataset.page || '?';
+        const file = new File([blob], `pdf-mark-p${page}-${Date.now()}.png`, { type: 'image/png' });
+        await fileHandlerModule.addFiles([file]);
+        if (uiModule && uiModule.showToast) uiModule.showToast(`Marked region (page ${page}) attached to chat`);
+        document.getElementById('message')?.focus();
+      }, 'image/png');
+    });
+
+    pane.addEventListener('pointercancel', cancelDrag);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _latexMarkMode) cancelDrag();
+    });
   }
 
   // Hide the top header bar when nothing in it is visible. With Undo + the type
@@ -5032,6 +5130,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <button type="button" id="doc-pdf-add-sign-btn" class="md-toolbar-pdf-only" title="Add signature (then click on PDF)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3l6 6-9 9-3-3z"/><path d="M9 15l-3 1 1-3"/><path d="M4 18l3-3"/><path d="M3 20l3-3"/><path d="M5 22l3-3"/></svg><span class="doc-pdf-sign-label">sign</span></button>
           <button type="button" id="doc-pdf-refresh-btn" class="md-toolbar-pdf-only" title="Reload PDF view" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
           <button type="button" id="doc-latex-compile-btn" class="md-toolbar-latex-only" title="Compile LaTeX to PDF (tectonic)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></svg><span style="font-size:11px;">Compile</span></button>
+          <button type="button" id="doc-latex-mark-btn" class="md-toolbar-latex-only" title="Mark a region of the PDF and attach it to the chat" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg><span style="font-size:11px;">Mark</span></button>
         </div>
         <div class="md-toolbar-overflow-wrapper" id="md-toolbar-overflow-wrapper" style="display:none">
           <button class="md-toolbar-overflow-toggle" id="md-toolbar-overflow-toggle" title="More formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
@@ -5842,6 +5941,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-pdf-add-sign-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'signature' ? null : 'signature'));
     document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
     document.getElementById('doc-latex-compile-btn')?.addEventListener('click', _compileLatex);
+    document.getElementById('doc-latex-mark-btn')?.addEventListener('click', () => {
+      _wireLatexMarking();
+      _setLatexMarkMode(!_latexMarkMode);
+    });
 
     // Markdown formatting toolbar
     initMdToolbar();

@@ -12979,6 +12979,21 @@ textarea.memory-add-input {
   font-size: 13px;
 }
 #doc-latex-compile-btn.compiling svg { animation: spin 1s linear infinite; }
+
+/* Mark-region mode: drag a rectangle on a page → crop lands in the chat */
+#doc-latex-view.latex-marking,
+#doc-latex-view.latex-marking .doc-latex-page { cursor: crosshair; }
+.doc-latex-marquee {
+  position: absolute;
+  border: 1.5px dashed var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  pointer-events: none;
+  z-index: 6;
+}
+#doc-latex-mark-btn.active {
+  color: var(--red);
+  opacity: 1;
+}
 .doc-md-toolbar {
   display: flex;
   align-items: center;
