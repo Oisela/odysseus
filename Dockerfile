@@ -33,8 +33,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
-    tectonic \
     && rm -rf /var/lib/apt/lists/*
+
+# LaTeX engine for the document editor's compile feature. tectonic is not
+# packaged in Debian trixie, so install the official static musl binary
+# (self-contained; TeX packages download on demand at compile time into
+# XDG_CACHE_HOME — the app points that at data/cache/xdg, which persists).
+ARG TECTONIC_VERSION=0.16.9
+RUN curl -fsSL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+    | tar -xz -C /usr/local/bin tectonic \
+    && tectonic --version
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
