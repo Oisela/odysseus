@@ -24,6 +24,7 @@ import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import calendarModule from './js/calendar.js';
+import pomodoroModule from './js/pomodoro.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
@@ -1081,6 +1082,19 @@ function initializeEventListeners() {
       if (!Modals.toggle('calendar-modal')) {
         if (calendarModule.isCalendarOpen()) calendarModule.closeCalendar();
         else calendarModule.openCalendar();
+      }
+    });
+  }
+
+  // Pomodoro tool button
+  const toolPomodoroBtn = el('tool-pomodoro-btn');
+  if (toolPomodoroBtn) {
+    toolPomodoroBtn.addEventListener('click', async () => {
+      if (!pomodoroModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('pomodoro-modal')) {
+        if (pomodoroModule.isPomodoroOpen()) pomodoroModule.closePomodoro();
+        else pomodoroModule.openPomodoro();
       }
     });
   }
@@ -2613,6 +2627,7 @@ function initializeEventListeners() {
     // Per-tool visibility — fine-grained control over which entries show
     // inside the Tools section in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
+    'tool-pomodoro':       '#tool-pomodoro-btn',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
     'tool-research':       '#tool-research-btn',

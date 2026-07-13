@@ -40482,3 +40482,83 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* ── Pomodoro tool window ─────────────────────────────────────────────── */
+.pomo-modal-content { width: min(320px, 92vw); }
+.pomo-body { padding: 14px 16px 16px; text-align: center; }
+.pomo-phase {
+  font-size: 12px;
+  opacity: 0.7;
+  letter-spacing: 0.4px;
+  min-height: 16px;
+}
+.pomo-time {
+  font-size: 44px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0 10px;
+}
+.pomo-progress {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  margin-bottom: 14px;
+}
+.pomo-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, var(--red));
+  transition: width 0.4s linear;
+}
+.pomo-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.pomo-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.pomo-btn:hover { border-color: color-mix(in srgb, var(--fg) 40%, transparent); }
+.pomo-btn.pomo-primary {
+  background: var(--accent, var(--red));
+  border-color: transparent;
+  color: #fff;
+}
+.pomo-btn.pomo-primary:hover { opacity: 0.9; }
+.pomo-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.pomo-settings label { display: flex; flex-direction: column; gap: 3px; }
+.pomo-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pomo-ntfy-row {
+  grid-column: 1 / -1;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  cursor: pointer;
+  font-size: 12px;
+}
