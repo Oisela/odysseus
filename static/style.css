@@ -40585,13 +40585,22 @@ body.theme-frosted .modal {
 .pomo-stats span { display: flex; flex-direction: column; gap: 1px; }
 .pomo-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .pomo-manual-row {
+  /* Mirrors the two-column settings grid above so the row lines up
+     symmetrically: input under the left column, button under the right. */
   grid-column: 1 / -1;
-  display: flex;
-  gap: 6px;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  align-items: end;
 }
-.pomo-manual-row .pomo-input { width: 64px; flex-shrink: 0; }
-.pomo-manual-row .pomo-btn { padding: 4px 10px; font-size: 12px; }
+.pomo-manual-row label { display: flex; flex-direction: column; gap: 3px; }
+.pomo-manual-row .pomo-input { width: 100%; }
+.pomo-manual-row .pomo-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  height: 27px;
+  box-sizing: border-box;
+}
 .pomo-controls {
   display: flex;
   gap: 8px;

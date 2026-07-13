@@ -263,7 +263,7 @@ function _getModal() {
           <label>Long break (min)<input type="number" class="pomo-input" id="pomo-cfg-long" min="1" max="120"></label>
           <label class="pomo-ntfy-row"><input type="checkbox" id="pomo-cfg-ntfy"><span>Notify phone (ntfy)</span></label>
           <div class="pomo-manual-row">
-            <input type="number" class="pomo-input" id="pomo-manual-mins" min="1" max="600" placeholder="min">
+            <label>Add focus time (min)<input type="number" class="pomo-input" id="pomo-manual-mins" min="1" max="600" placeholder="25"></label>
             <button type="button" class="pomo-btn" id="pomo-manual-add" title="Add focus time you forgot to track (today)">Log manually</button>
           </div>
         </div>
