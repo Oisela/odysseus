@@ -1133,6 +1133,20 @@ def _uses_max_completion_tokens(model: str) -> bool:
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _MAX_COMPLETION_TOKENS_MODELS)
 
+# Some OpenAI reasoning models (the gpt-5.6-terra family) reject function tools
+# on /v1/chat/completions unless reasoning_effort is explicitly "none" (the
+# Responses API is their intended tools path). The refusal is a 400 naming
+# reasoning_effort, so learn affected models at runtime from that response and
+# retry once — a hardcoded model list would break on every new release.
+_TOOLS_NEED_REASONING_EFFORT_NONE: set = set()
+
+def _tools_rejected_without_reasoning_effort_none(status: int, body: str) -> bool:
+    """True for the OpenAI 400 that demands reasoning_effort='none' for tools."""
+    if status != 400 or not body:
+        return False
+    b = body.lower()
+    return "reasoning_effort" in b and "function tools" in b
+
 # OpenAI reasoning models (o1, o3, o4, gpt-5 families) only accept the default
 # temperature. Sending any explicit value — even 0.0 — returns HTTP 400
 # ("Only the default (1) value is supported"). That otherwise breaks chat when a
@@ -2174,6 +2188,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
+            if model in _TOOLS_NEED_REASONING_EFFORT_NONE:
+                payload["reasoning_effort"] = "none"
         elif tool_choice_none:
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
@@ -2487,6 +2503,22 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             _clear_host_dead(target_url)
             if r.status_code != 200:
                 raw = (await r.aread()).decode(errors="replace")
+                if (payload.get("tools") and payload.get("reasoning_effort") != "none"
+                        and _tools_rejected_without_reasoning_effort_none(r.status_code, raw)):
+                    # Learn the model, then re-enter once — the rebuilt payload
+                    # now carries reasoning_effort="none", so a second refusal
+                    # cannot recurse again.
+                    _TOOLS_NEED_REASONING_EFFORT_NONE.add(model)
+                    logger.warning(
+                        f"{model} rejects function tools without reasoning_effort='none'; retrying with it set"
+                    )
+                    async for chunk in _stream_llm_inner(
+                        url, model, messages, temperature=temperature, max_tokens=max_tokens,
+                        headers=headers, timeout=timeout, prompt_type=prompt_type,
+                        tools=tools, session_id=session_id, tool_choice_none=tool_choice_none,
+                    ):
+                        yield chunk
+                    return
                 friendly = _format_upstream_error(r.status_code, raw, target_url)
                 yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                 return
