@@ -10,6 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
+import fileHandlerModule from './fileHandler.js';
 import codeRunnerModule from './codeRunner.js';
 import { langIcon } from './langIcons.js';
 import spinnerModule from './spinner.js';
@@ -66,6 +67,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
   // covers the doc being explicitly typed svg/xml.)
   const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
+  // LaTeX docs get the same segmented toggle; their "view" side shows the PDF
+  // compiled server-side by tectonic (see _setLatexViewActive/_compileLatex).
+  const _isLatexLang = (l) => ['latex', 'tex'].includes((l || '').toLowerCase());
   // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
@@ -78,7 +82,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       'c', 'cpp', 'c++', 'csharp', 'c#',
       'yaml', 'json', 'css',
       'ini', 'toml',
-    ].includes(lang) || _isRenderLang(lang);
+    ].includes(lang) || _isRenderLang(lang) || _isLatexLang(lang);
   };
 
   async function _getEmailAccountsCached() {
@@ -2017,6 +2021,184 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
   }
 
+  // ── LaTeX: compiled-PDF preview (tectonic compiles server-side) ──
+
+  const _latexErrorByDoc = new Map();   // docId → last failed compile log
+  const _latexStampByDoc = new Map();   // docId → compiled_at (PNG cache-buster)
+
+  function _setLatexViewActive(active) {
+    const pane = document.getElementById('doc-latex-view');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!pane || !wrap) return;
+    if (active) {
+      wrap.style.display = 'none';
+      pane.style.display = '';
+      _renderLatexPane();
+    } else {
+      pane.style.display = 'none';
+      pane.innerHTML = '';
+      wrap.style.display = '';
+    }
+    _syncHeaderActions();
+  }
+
+  async function _renderLatexPane() {
+    const pane = document.getElementById('doc-latex-view');
+    if (!pane || !activeDocId) return;
+    const err = _latexErrorByDoc.get(activeDocId);
+    if (err) {
+      pane.innerHTML = '<div class="doc-latex-error"></div>';
+      pane.firstChild.textContent = err;
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/latex-pdf-pages`, { credentials: 'same-origin' });
+      if (res.status === 404) {
+        pane.innerHTML = '<div class="doc-latex-hint">No PDF yet — press Compile.</div>';
+        return;
+      }
+      if (!res.ok) throw new Error('latex-pdf-pages failed');
+      const data = await res.json();
+      const v = data.compiled_at || _latexStampByDoc.get(activeDocId) || 0;
+      pane.innerHTML = (data.pages || []).map(p =>
+        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">`
+      ).join('');
+    } catch (e) {
+      pane.innerHTML = '<div class="doc-latex-hint">Could not load the compiled PDF.</div>';
+    }
+  }
+
+  async function _compileLatex() {
+    if (!activeDocId) return;
+    const btn = document.getElementById('doc-latex-compile-btn');
+    const ta = document.getElementById('doc-editor-textarea');
+    // Compile what's on screen — never races the debounced autosave.
+    const content = ta ? ta.value : '';
+    if (btn) { btn.disabled = true; btn.classList.add('compiling'); }
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/compile-latex`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        _latexErrorByDoc.delete(activeDocId);
+        _latexStampByDoc.set(activeDocId, data.compiled_at || Date.now());
+      } else {
+        let log = 'LaTeX compile failed';
+        try {
+          const err = await res.json();
+          log = err?.detail?.log || err?.detail?.message || log;
+        } catch (e) { /* keep default */ }
+        _latexErrorByDoc.set(activeDocId, log);
+      }
+    } catch (e) {
+      _latexErrorByDoc.set(activeDocId, 'Compile request failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.classList.remove('compiling'); }
+    }
+    _setLatexViewActive(true);
+  }
+
+  // ── LaTeX: mark a region of the compiled PDF → attach it to the chat ──
+  // Drag a rectangle over a rendered page; the crop lands in the composer's
+  // attachment strip so the user can add an instruction ("change this") and
+  // send it — the vision model sees exactly the marked spot.
+
+  let _latexMarkMode = false;
+
+  function _setLatexMarkMode(on) {
+    _latexMarkMode = on;
+    document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
+    document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
+  }
+
+  function _wireLatexMarking() {
+    const pane = document.getElementById('doc-latex-view');
+    if (!pane || pane._markWired) return;
+    pane._markWired = true;
+
+    let drag = null;  // { x0, y0, box } in pane-content coordinates
+
+    const contentXY = (e) => {
+      const r = pane.getBoundingClientRect();
+      return { x: e.clientX - r.left + pane.scrollLeft, y: e.clientY - r.top + pane.scrollTop };
+    };
+    const cancelDrag = () => {
+      if (drag) { drag.box.remove(); drag = null; }
+      _setLatexMarkMode(false);
+    };
+
+    pane.addEventListener('pointerdown', (e) => {
+      if (!_latexMarkMode || e.button !== 0) return;
+      e.preventDefault();
+      const { x, y } = contentXY(e);
+      const box = document.createElement('div');
+      box.className = 'doc-latex-marquee';
+      box.style.left = `${x}px`;
+      box.style.top = `${y}px`;
+      pane.appendChild(box);
+      drag = { x0: x, y0: y, box };
+      try { pane.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+
+    pane.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const { x, y } = contentXY(e);
+      drag.box.style.left = `${Math.min(x, drag.x0)}px`;
+      drag.box.style.top = `${Math.min(y, drag.y0)}px`;
+      drag.box.style.width = `${Math.abs(x - drag.x0)}px`;
+      drag.box.style.height = `${Math.abs(y - drag.y0)}px`;
+    });
+
+    pane.addEventListener('pointerup', () => {
+      if (!drag) return;
+      const sel = drag.box.getBoundingClientRect();  // viewport coords
+      cancelDrag();
+      if (sel.width < 8 || sel.height < 8) return;   // bare click = cancel
+
+      // Crop from the page image with the largest overlap. The PNGs are
+      // same-origin, so the canvas stays untainted.
+      let best = null, bestArea = 0;
+      pane.querySelectorAll('img.doc-latex-page').forEach((img) => {
+        const r = img.getBoundingClientRect();
+        const w = Math.min(sel.right, r.right) - Math.max(sel.left, r.left);
+        const h = Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top);
+        if (w > 0 && h > 0 && w * h > bestArea) { bestArea = w * h; best = { img, r }; }
+      });
+      if (!best) return;
+      const { img, r } = best;
+      const scale = img.naturalWidth / r.width;
+      const sx = Math.max(0, (Math.max(sel.left, r.left) - r.left) * scale);
+      const sy = Math.max(0, (Math.max(sel.top, r.top) - r.top) * scale);
+      const sw = Math.min(img.naturalWidth - sx,
+        (Math.min(sel.right, r.right) - Math.max(sel.left, r.left)) * scale);
+      const sh = Math.min(img.naturalHeight - sy,
+        (Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top)) * scale);
+      if (sw < 4 || sh < 4) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(sw);
+      canvas.height = Math.round(sh);
+      canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const page = img.dataset.page || '?';
+        const file = new File([blob], `pdf-mark-p${page}-${Date.now()}.png`, { type: 'image/png' });
+        await fileHandlerModule.addFiles([file]);
+        if (uiModule && uiModule.showToast) uiModule.showToast(`Marked region (page ${page}) attached to chat`);
+        document.getElementById('message')?.focus();
+      }, 'image/png');
+    });
+
+    pane.addEventListener('pointercancel', cancelDrag);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _latexMarkMode) cancelDrag();
+    });
+  }
+
   // Hide the top header bar when nothing in it is visible. With Undo + the type
   // picker moved to the footer, a plain doc on mobile would otherwise show an
   // empty bar (the "second footer"). Reflow-free (reads inline display only) so
@@ -2148,6 +2330,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         } else if (_isRenderLang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
           title = 'Preview';
+        } else if (_isLatexLang(lang)) {
+          icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          title = 'PDF preview';
         } else {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
           title = 'Run';
@@ -2179,9 +2364,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // For CSV the run side = table view; for HTML/SVG/XML = iframe preview;
       // for runnable langs = output panel open.
       let _viewActive = false;
+      const _latexPaneEl = document.getElementById('doc-latex-view');
+      const _latexActive = !!(_latexPaneEl && _latexPaneEl.style.display !== 'none');
       if (lang === 'csv') _viewActive = _csvActive;
       else if (_isRenderLang(lang)) _viewActive = _htmlActive;
+      else if (_isLatexLang(lang)) _viewActive = _latexActive;
       else _viewActive = _outputActive;
+      // Show the Compile button only for LaTeX docs; drop the pane if the
+      // user switched a latex doc to another language while previewing.
+      document.querySelectorAll('.md-toolbar-latex-only').forEach(el => {
+        el.style.display = _isLatexLang(lang) ? 'inline-flex' : 'none';
+      });
+      if (_latexActive && !_isLatexLang(lang)) _setLatexViewActive(false);
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
       _codeBtn2?.classList.toggle('active', !_viewActive);
@@ -4844,6 +5038,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <option value="html">html</option>
           <option value="css">css</option>
           <option value="markdown">markdown</option>
+          <option value="latex">latex</option>
           <option value="json">json</option>
           <option value="yaml">yaml</option>
           <option value="bash">bash</option>
@@ -4934,6 +5129,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <button type="button" id="doc-pdf-add-check-btn" class="md-toolbar-pdf-only" title="Add checkmark (then click on PDF)" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
           <button type="button" id="doc-pdf-add-sign-btn" class="md-toolbar-pdf-only" title="Add signature (then click on PDF)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3l6 6-9 9-3-3z"/><path d="M9 15l-3 1 1-3"/><path d="M4 18l3-3"/><path d="M3 20l3-3"/><path d="M5 22l3-3"/></svg><span class="doc-pdf-sign-label">sign</span></button>
           <button type="button" id="doc-pdf-refresh-btn" class="md-toolbar-pdf-only" title="Reload PDF view" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+          <button type="button" id="doc-latex-compile-btn" class="md-toolbar-latex-only" title="Compile LaTeX to PDF (tectonic)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></svg><span style="font-size:11px;">Compile</span></button>
+          <button type="button" id="doc-latex-mark-btn" class="md-toolbar-latex-only" title="Mark a region of the PDF and attach it to the chat" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg><span style="font-size:11px;">Mark</span></button>
         </div>
         <div class="md-toolbar-overflow-wrapper" id="md-toolbar-overflow-wrapper" style="display:none">
           <button class="md-toolbar-overflow-toggle" id="md-toolbar-overflow-toggle" title="More formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
@@ -4978,6 +5175,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
         <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
       </div>
+      <div id="doc-latex-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;"></div>
       <!-- Action footer sits AFTER all the content/preview panes so it stays
            pinned to the bottom no matter which pane (editor / md-preview /
            csv / html / pdf) is the one growing to fill. -->
@@ -5624,6 +5822,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const htmlPrev = document.getElementById('doc-html-preview');
         const isOn = htmlPrev && htmlPrev.style.display !== 'none';
         if (wantRun !== isOn) toggleHtmlPreview();
+      } else if (_isLatexLang(lang)) {
+        const latexPane = document.getElementById('doc-latex-view');
+        const isOn = latexPane && latexPane.style.display !== 'none';
+        if (wantRun !== isOn) _setLatexViewActive(wantRun);
       } else {
         // Runnable language (python / js / ts / bash …) — clicking Run is
         // a one-shot execute; clicking Code dismisses the output pane.
@@ -5738,6 +5940,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-pdf-add-check-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'check' ? null : 'check'));
     document.getElementById('doc-pdf-add-sign-btn')?.addEventListener('click', () => _setPdfDropMode(_pdfDropMode === 'signature' ? null : 'signature'));
     document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
+    document.getElementById('doc-latex-compile-btn')?.addEventListener('click', _compileLatex);
+    document.getElementById('doc-latex-mark-btn')?.addEventListener('click', () => {
+      _wireLatexMarking();
+      _setLatexMarkMode(!_latexMarkMode);
+    });
 
     // Markdown formatting toolbar
     initMdToolbar();
@@ -10127,11 +10334,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const renderable = ['svg', 'html', 'css', 'csv', 'python', 'javascript', 'typescript',
                         'json', 'xml', 'bash', 'sh', 'yaml', 'toml', 'sql'];
     const isCodeRenderable = renderable.includes(lang);
+    const isLatex = _isLatexLang(lang);
     const mt = document.getElementById('doc-md-toolbar');
     if (mt) {
-      const showToolbar = isMd || isPdf || isCodeRenderable;
+      const showToolbar = isMd || isPdf || isCodeRenderable || isLatex;
       mt.style.display = showToolbar ? '' : 'none';
-      mt.dataset.mode = isMd ? 'md' : (isPdf ? 'pdf' : (isCodeRenderable ? 'code' : ''));
+      mt.dataset.mode = isMd ? 'md' : (isPdf ? 'pdf' : (isLatex ? 'latex' : (isCodeRenderable ? 'code' : '')));
       if (showToolbar && mt._syncOverflow) requestAnimationFrame(mt._syncOverflow);
     }
     _syncHeaderActions();

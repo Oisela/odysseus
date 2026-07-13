@@ -29,6 +29,15 @@ from src.llm_core import _anthropic_rejects_temperature, _build_anthropic_payloa
         "anthropic/claude-opus-4-7",  # tolerate a provider-prefixed id
         "claude-opus-4-10",  # future minor still >= 4.7
         "claude-opus-5-0",  # future major
+        # Claude 5 generation: sampling params removed for the whole family.
+        # claude-sonnet-5 returned HTTP 400 in the skill-audit evaluator.
+        "claude-sonnet-5",
+        "claude-sonnet-5-20260301",  # dated snapshot suffix
+        "anthropic/claude-sonnet-5",  # provider-prefixed
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-haiku-5",
+        "claude-opus-5",  # bare major 5 (no minor) — gen rule catches it
     ],
 )
 def test_opus_47_plus_rejects_temperature(model):
@@ -48,8 +57,13 @@ def test_opus_47_plus_rejects_temperature(model):
         "claude-opus-4-6-20251201",  # dated 4.6 snapshot — older, still keeps temperature
         "claude-sonnet-4-6",
         "claude-3-5-sonnet",
+        "claude-3-5-sonnet-20241022",  # legacy naming: version BEFORE family + date after
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-haiku-latest",
         "claude-3-opus-20240229",  # legacy Claude 3 Opus — no opus-N-M pattern, kept
         "claude-haiku-4-5",
+        "claude-sonnet-4-20250514",  # Sonnet 4.0 dated id — date must not read as major
+        "claude-sonnet-4-5-20250929",  # Sonnet 4.5 dated id — accepts temperature
         "claude-x",
         "octopus-4-8",  # "opus" only as a substring of another word — must not match
         "myproxy/octopus-4-8",  # same, behind a provider prefix
@@ -77,6 +91,13 @@ def _payload(model, temperature=0.0):
 def test_payload_omits_temperature_for_opus_47_plus():
     # The endpoint probe sends temperature=0; on Opus 4.7+ that field must be gone.
     payload = _payload("claude-opus-4-8", 0.0)
+    assert "temperature" not in payload
+
+
+def test_payload_omits_temperature_for_claude_5_generation():
+    # The skill-audit evaluator sends temperature=0.1; on claude-sonnet-5 that
+    # returned HTTP 400 ("`temperature` is deprecated for this model").
+    payload = _payload("claude-sonnet-5", 0.1)
     assert "temperature" not in payload
 
 

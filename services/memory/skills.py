@@ -421,6 +421,14 @@ class SkillsManager:
         sk.category = cat
         sk.owner = owner
         sk.source = "imported"
+        # Imported skills must always enter the audit/approval queue: a bundle
+        # declaring `status: published` in its own frontmatter would otherwise
+        # skip the review gate and go straight into the model's skill index.
+        sk.status = "draft"
+        try:
+            sk.confidence = min(float(sk.confidence), 0.8)
+        except (TypeError, ValueError):
+            sk.confidence = 0.8
         if source_url:
             extra = (sk.body_extra or "").strip()
             note = f"Imported from {source_url}"

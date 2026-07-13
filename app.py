@@ -832,6 +832,10 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
+# Pomodoro (focus timer: ntfy pings + persistent learned-time stats)
+from routes.pomodoro_routes import setup_pomodoro_routes
+app.include_router(setup_pomodoro_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()

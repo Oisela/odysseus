@@ -91,6 +91,8 @@ def _sniff_doc_language(text: str) -> str:
     if _looks_like_email_document(s):
         return "email"
     # Markup (unambiguous)
+    if "\\documentclass" in hl or "\\begin{document}" in hl:
+        return "latex"
     if "<svg" in hl:
         return "svg"
     if hl.startswith("<?xml"):

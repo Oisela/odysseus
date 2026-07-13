@@ -32,6 +32,15 @@ APP_KEY_FILE = os.path.join(DATA_DIR, ".app_key")
 EMBEDDING_ENDPOINT_FILE = os.path.join(DATA_DIR, "embedding_endpoint.json")
 COOKBOOK_STATE_FILE = os.path.join(DATA_DIR, "cookbook_state.json")
 BG_JOBS_FILE = os.path.join(DATA_DIR, "bg_jobs.json")
+
+# LaTeX (tectonic). Compiled PDFs live under the cache dir — regenerable, so
+# backup tars exclude them. The XDG cache dir holds tectonic's downloaded
+# TeX packages: pointing it into DATA_DIR means an image rebuild doesn't
+# refetch hundreds of packages.
+LATEX_BUILD_DIR = os.path.join(DATA_DIR, "cache", "latex")
+LATEX_XDG_CACHE_DIR = os.path.join(DATA_DIR, "cache", "xdg")
+TECTONIC_BIN = os.getenv("ODYSSEUS_TECTONIC_BIN", "tectonic")
+LATEX_COMPILE_TIMEOUT_S = int(os.getenv("ODYSSEUS_LATEX_TIMEOUT_S", "120"))
 VAULT_FILE = os.path.join(DATA_DIR, "vault.json")
 TIDY_CALENDAR_STATE_FILE = os.path.join(DATA_DIR, "tidy_calendar_state.json")
 SKILLS_FILE = os.path.join(DATA_DIR, "skills.json")

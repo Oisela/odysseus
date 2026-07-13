@@ -12939,8 +12939,60 @@ textarea.memory-add-input {
 .doc-md-toolbar[data-mode="code"] #md-toolbar-attach-btn,
 .doc-md-toolbar[data-mode="code"] #md-toolbar-emoji-slot,
 .doc-md-toolbar[data-mode="code"] .md-toolbar-pdf-only,
-.doc-md-toolbar[data-mode="code"] .md-toolbar-sep {
+.doc-md-toolbar[data-mode="code"] .md-toolbar-sep,
+.doc-md-toolbar[data-mode="latex"] [data-md],
+.doc-md-toolbar[data-mode="latex"] .md-dd-toggle,
+.doc-md-toolbar[data-mode="latex"] #md-toolbar-attach-btn,
+.doc-md-toolbar[data-mode="latex"] #md-toolbar-emoji-slot,
+.doc-md-toolbar[data-mode="latex"] .md-toolbar-pdf-only,
+.doc-md-toolbar[data-mode="latex"] .md-toolbar-sep {
   display: none !important;
+}
+
+/* LaTeX compiled-PDF preview pane (tectonic → PNG pages, like the PDF view) */
+.doc-latex-page {
+  display: block;
+  margin: 0 auto 16px;
+  width: min(820px, calc(100% - 32px));
+  height: auto;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.doc-latex-error {
+  margin: 16px auto;
+  max-width: calc(100% - 32px);
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--red);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.doc-latex-hint {
+  text-align: center;
+  color: #ddd;
+  opacity: 0.85;
+  padding: 40px 16px;
+  font-size: 13px;
+}
+#doc-latex-compile-btn.compiling svg { animation: spin 1s linear infinite; }
+
+/* Mark-region mode: drag a rectangle on a page → crop lands in the chat */
+#doc-latex-view.latex-marking,
+#doc-latex-view.latex-marking .doc-latex-page { cursor: crosshair; }
+.doc-latex-marquee {
+  position: absolute;
+  border: 1.5px dashed var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  pointer-events: none;
+  z-index: 6;
+}
+#doc-latex-mark-btn.active {
+  color: var(--red);
+  opacity: 1;
 }
 .doc-md-toolbar {
   display: flex;
@@ -35721,6 +35773,36 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   word-break: break-word;
 }
 
+/* Rendered-markdown note content (.note-md rides on the card preview, the
+   goal description and the form reader overlay). The HTML brings its own
+   block layout, so pre-wrap must not double the spacing; block elements get
+   compact margins so cards stay tight. */
+.note-md { white-space: normal; }
+.note-md p { margin: 0 0 6px; }
+.note-md p:last-child { margin-bottom: 0; }
+.note-md h1, .note-md h2, .note-md h3, .note-md h4 {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+.note-md ul, .note-md ol { margin: 4px 0; padding-left: 18px; }
+.note-md li { margin: 2px 0; }
+.note-md blockquote {
+  margin: 4px 0;
+  padding: 2px 8px;
+  border-left: 2px solid var(--border);
+  opacity: 0.85;
+}
+.note-md pre {
+  margin: 6px 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: 4px;
+}
+.note-md table { display: block; overflow-x: auto; max-width: 100%; }
+.note-md img { max-width: 100%; }
+.note-md hr { margin: 8px 0; }
+
 .note-pin-btn {
   background: none;
   border: none;
@@ -40451,4 +40533,113 @@ body.theme-frosted .modal {
 @media (max-width: 768px) {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
+}
+
+/* ── Pomodoro tool window ─────────────────────────────────────────────── */
+.pomo-modal-content { width: min(320px, 92vw); }
+.pomo-body { padding: 14px 16px 16px; text-align: center; }
+.pomo-phase {
+  font-size: 12px;
+  opacity: 0.7;
+  letter-spacing: 0.4px;
+  min-height: 16px;
+}
+.pomo-time {
+  font-size: 44px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0 10px;
+}
+.pomo-ring-wrap {
+  position: relative;
+  width: 190px;
+  margin: 8px auto 12px;
+}
+.pomo-ring { display: block; width: 100%; height: auto; }
+.pomo-ring circle { fill: none; stroke-width: 5; }
+.pomo-ring-bg { stroke: color-mix(in srgb, var(--fg) 14%, transparent); }
+.pomo-ring-fg {
+  stroke: var(--accent, var(--red));
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 0.4s linear;
+}
+.pomo-ring-fg.overtime { stroke: color-mix(in srgb, var(--accent, var(--red)) 75%, #fff); }
+.pomo-ring-wrap .pomo-time {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+.pomo-stats {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 14px;
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+.pomo-stats span { display: flex; flex-direction: column; gap: 1px; }
+.pomo-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.pomo-manual-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pomo-manual-row .pomo-input { width: 64px; flex-shrink: 0; }
+.pomo-manual-row .pomo-btn { padding: 4px 10px; font-size: 12px; }
+.pomo-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.pomo-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.pomo-btn:hover { border-color: color-mix(in srgb, var(--fg) 40%, transparent); }
+.pomo-btn.pomo-primary {
+  background: var(--accent, var(--red));
+  border-color: transparent;
+  color: #fff;
+}
+.pomo-btn.pomo-primary:hover { opacity: 0.9; }
+.pomo-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.pomo-settings label { display: flex; flex-direction: column; gap: 3px; }
+.pomo-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pomo-ntfy-row {
+  grid-column: 1 / -1;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  cursor: pointer;
+  font-size: 12px;
 }

@@ -1,5 +1,8 @@
 """Document routes — CRUD for living documents with version history."""
 
+import asyncio
+import os
+import re
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -11,7 +14,13 @@ from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
-from src.constants import MAIL_ATTACHMENTS_DIR
+from src.constants import (
+    MAIL_ATTACHMENTS_DIR,
+    LATEX_BUILD_DIR,
+    LATEX_XDG_CACHE_DIR,
+    TECTONIC_BIN,
+    LATEX_COMPILE_TIMEOUT_S,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1219,6 +1228,142 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 content=png_bytes,
                 media_type="image/png",
                 headers={"Cache-Control": "public, max-age=3600"},
+            )
+        finally:
+            pdf_doc.close()
+
+    # ---- LaTeX: compile with tectonic, preview as PNG pages ----
+
+    def _latex_dir(doc_id: str) -> str:
+        # Doc ids are uuid-ish; sanitize defensively before path use.
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", doc_id)[:80]
+        return os.path.join(LATEX_BUILD_DIR, safe)
+
+    def _latex_pdf_path(doc_id: str) -> str:
+        return os.path.join(_latex_dir(doc_id), "main.pdf")
+
+    def _run_tectonic(doc_id: str, source: str) -> Dict[str, Any]:
+        """Blocking compile: write main.tex, run tectonic, return ok/log.
+
+        tectonic has no shell-escape, so the source can't execute commands;
+        it only needs network for its on-demand TeX package downloads, which
+        land in the persistent XDG cache under DATA_DIR.
+        """
+        import subprocess
+        build_dir = _latex_dir(doc_id)
+        os.makedirs(build_dir, exist_ok=True)
+        os.makedirs(LATEX_XDG_CACHE_DIR, exist_ok=True)
+        with open(os.path.join(build_dir, "main.tex"), "w", encoding="utf-8") as f:
+            f.write(source)
+        env = dict(os.environ)
+        env["XDG_CACHE_HOME"] = LATEX_XDG_CACHE_DIR
+        try:
+            proc = subprocess.run(
+                [TECTONIC_BIN, "--chatter", "minimal", "main.tex"],
+                cwd=build_dir, env=env,
+                capture_output=True, text=True, errors="replace",
+                timeout=LATEX_COMPILE_TIMEOUT_S,
+            )
+        except FileNotFoundError:
+            return {"ok": False, "log": "tectonic is not installed in this image — rebuild the container with the updated Dockerfile."}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "log": f"LaTeX compile timed out after {LATEX_COMPILE_TIMEOUT_S}s."}
+        if proc.returncode != 0 or not os.path.exists(_latex_pdf_path(doc_id)):
+            combined = ((proc.stderr or "") + "\n" + (proc.stdout or "")).strip()
+            tail = "\n".join(combined.splitlines()[-60:])
+            return {"ok": False, "log": tail or "tectonic failed without output"}
+        return {"ok": True}
+
+    def _get_owned_doc_content(doc_id: str, request: Request) -> str:
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            return doc.current_content or ""
+        finally:
+            db.close()
+
+    @router.post("/api/document/{doc_id}/compile-latex")
+    async def compile_latex(doc_id: str, request: Request) -> Dict[str, Any]:
+        """Compile the document's LaTeX source to a PDF.
+
+        The body may carry {"content": ...} — the editor sends what is on
+        screen so compiling never races the debounced autosave; falls back
+        to the stored document content.
+        """
+        stored = _get_owned_doc_content(doc_id, request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        source = body.get("content") if isinstance(body, dict) else None
+        if not isinstance(source, str) or not source.strip():
+            source = stored
+        if not source.strip():
+            raise HTTPException(400, "Document is empty")
+
+        result = await asyncio.to_thread(_run_tectonic, doc_id, source)
+        if not result["ok"]:
+            raise HTTPException(422, detail={"message": "LaTeX compile failed", "log": result["log"]})
+
+        pdf_path = _latex_pdf_path(doc_id)
+        fitz = _load_pdf_viewer_fitz()
+        pdf_doc = fitz.open(pdf_path)
+        try:
+            page_count = pdf_doc.page_count
+        finally:
+            pdf_doc.close()
+        return {"doc_id": doc_id, "pages": page_count,
+                "compiled_at": int(os.path.getmtime(pdf_path))}
+
+    @router.get("/api/document/{doc_id}/latex-pdf-pages")
+    async def latex_pdf_pages(doc_id: str, request: Request) -> Dict[str, Any]:
+        """Page dimensions of the last compiled PDF (404 if never compiled)."""
+        _get_owned_doc_content(doc_id, request)
+        pdf_path = _latex_pdf_path(doc_id)
+        if not os.path.exists(pdf_path):
+            raise HTTPException(404, "Not compiled yet")
+        fitz = _load_pdf_viewer_fitz()
+        scale = _PDF_RENDER_SCALE
+        pdf_doc = fitz.open(pdf_path)
+        try:
+            pages_out = [
+                {"page": i + 1,
+                 "width": int(pdf_doc[i].rect.width * scale),
+                 "height": int(pdf_doc[i].rect.height * scale)}
+                for i in range(pdf_doc.page_count)
+            ]
+        finally:
+            pdf_doc.close()
+        return {"doc_id": doc_id, "pages": pages_out,
+                "compiled_at": int(os.path.getmtime(pdf_path))}
+
+    @router.get("/api/document/{doc_id}/latex-page/{page_no}.png")
+    async def latex_page_png(doc_id: str, page_no: int, request: Request):
+        """One page of the compiled PDF as a PNG (mirrors /page/{n}.png).
+
+        Aggressively cacheable — the frontend appends ?v=<compiled_at>, so a
+        recompile busts the URL instead of the cache entry.
+        """
+        from fastapi.responses import Response
+        _get_owned_doc_content(doc_id, request)
+        pdf_path = _latex_pdf_path(doc_id)
+        if not os.path.exists(pdf_path):
+            raise HTTPException(404, "Not compiled yet")
+        fitz = _load_pdf_viewer_fitz()
+        pdf_doc = fitz.open(pdf_path)
+        try:
+            if page_no < 1 or page_no > pdf_doc.page_count:
+                raise HTTPException(404, "Page out of range")
+            mat = fitz.Matrix(_PDF_RENDER_SCALE, _PDF_RENDER_SCALE)
+            pix = pdf_doc[page_no - 1].get_pixmap(matrix=mat, alpha=False)
+            return Response(
+                content=pix.tobytes("png"),
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
             )
         finally:
             pdf_doc.close()
