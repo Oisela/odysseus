@@ -1172,22 +1172,36 @@ def _omit_temperature(provider: str, model: str) -> bool:
 
 
 # Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
-# with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
-# even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
-# Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
-# version-gated rather than applied to all `claude-*` models.
+# with Claude Opus 4.7, and the entire Claude 5 generation (sonnet-5, fable-5,
+# mythos-5, opus-5, ...) follows the same contract. On these models, sending
+# `temperature` at all — even 0.0 — returns HTTP 400. Earlier Claude models
+# (Opus 4.6 and below, Sonnet/Haiku 4.x and older) still accept temperature in
+# [0.0, 1.0], so the omission must be version-gated rather than applied to all
+# `claude-*` models.
 def _anthropic_rejects_temperature(model: str) -> bool:
-    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    """Check if a native-Anthropic model rejects the temperature field
+    (Opus 4.7+ and every Claude 5-generation model)."""
     if not isinstance(model, str) or not model:
         return False
-    # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
-    # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
-    # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
-    # dated id like `claude-opus-4-20250514` (Opus 4.0) parses as major-only (no
-    # minor match, kept) instead of reading the date `20250514` as a giant minor
-    # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
-    # 20260201`) keep their explicit minor and are still matched.
-    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
+    m = model.lower()
+    # Claude 5 generation: any family name followed by a major version >= 5
+    # (claude-sonnet-5, claude-fable-5-20260301, ...). `(?<![a-z])` word-anchors
+    # the family name; the 1-2 digit cap with no trailing digit keeps legacy ids
+    # like `claude-3-5-sonnet-20241022` (version BEFORE the family name, date
+    # after it) from matching — their family name is never followed by a short
+    # standalone number.
+    gen = re.search(
+        r"(?<![a-z])(?:opus|sonnet|haiku|fable|mythos)[-_]?(\d{1,2})(?!\d)", m
+    )
+    if gen and int(gen.group(1)) >= 5:
+        return True
+    # Opus 4.7+ within the Claude 4 generation. Cap the minor at 1-2 digits and
+    # forbid a trailing digit so a dated id like `claude-opus-4-20250514`
+    # (Opus 4.0) parses as major-only (no minor match, kept) instead of reading
+    # the date `20250514` as a giant minor that would falsely test >= 4.7.
+    # Dated 4.7+ snapshots (`claude-opus-4-7-20260201`) keep their explicit
+    # minor and are still matched. `octopus-4-8` must not be read as Opus.
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", m)
     if not match:
         return False
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
