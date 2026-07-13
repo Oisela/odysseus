@@ -875,32 +875,6 @@ def setup_note_routes(task_scheduler=None):
             settings_override=_override or None,
         )
 
-    # --- POMODORO PHONE PING ---
-    @router.post("/pomodoro-notify")
-    async def pomodoro_notify(request: Request):
-        """Push a pomodoro phase-change ping to the phone via ntfy.
-
-        The browser notification fires client-side in pomodoro.js; this
-        endpoint only covers the ntfy channel and forces it, independent of
-        the user's default reminder channel. Synthesis is disabled — a timer
-        ping has nothing to synthesize and must never burn tokens.
-        """
-        require_user(request)
-        body = await request.json()
-        title = (str(body.get("title") or "").strip() or "Pomodoro")[:100]
-        text = str(body.get("body") or "").strip()[:300]
-        return await dispatch_reminder(
-            title=title,
-            note_body=text,
-            note_id=f"pomodoro-{uuid.uuid4().hex[:8]}",
-            owner=_owner(request) or "",
-            queue_browser=False,
-            settings_override={
-                "reminder_channel": "ntfy",
-                "reminder_llm_synthesis": False,
-            },
-        )
-
     # --- REORDER NOTES ---
     @router.post("/reorder")
     async def reorder_notes(request: Request):
