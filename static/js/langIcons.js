@@ -141,6 +141,11 @@ const ICONS = {
     '<path d="M17 17v2 M7 17v3 M11 17v3"/>' +
     '<path d="M18 12c1 0 1.5-.7 1.5-1.5"/>' +
     '<circle cx="7" cy="11" r="0.6" fill="currentColor"/>',
+  // LaTeX — the math-mode $$ delimiters.
+  latex:
+    '<text x="12" y="17.5" text-anchor="middle" font-size="15" font-weight="700" ' +
+    'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" ' +
+    'fill="currentColor" stroke="none">$$</text>',
   // Generic code fallback (used by toml/ini already; left as-is)
   code:
     '<polyline points="8 6 2 12 8 18"/>' +
@@ -149,6 +154,7 @@ const ICONS = {
 
 const ALIASES = {
   md: 'markdown',
+  tex: 'latex',
   py: 'python',
   htm: 'html',
   js: 'javascript',
