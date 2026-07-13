@@ -4,6 +4,7 @@
  */
 
 import uiModule from './ui.js';
+import markdownModule from './markdown.js';
 import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js';
@@ -500,6 +501,17 @@ function _linkify(s) {
   });
 }
 function _uid() { return Math.random().toString(36).slice(2, 10); }
+
+// Render free-text note content as sanitized markdown (KaTeX-capable, bare
+// URLs autolinked by markdown.js). Falls back to the plain escape+autolink
+// path so a renderer hiccup can never blank out a note card.
+function _mdRender(s) {
+  try {
+    return markdownModule.mdToHtml(s || '', { shortcodes: false });
+  } catch (e) {
+    return _linkify(s || '');
+  }
+}
 
 // Mobile swipe-to-dismiss for the notes sheet. Mirrors the document panel
 // gesture (finger-following, velocity-based dismiss, rubber-band, snap-back)
@@ -1813,7 +1825,7 @@ function _renderNotes() {
       if (note.note_type === 'goal' && (note.content || '').trim()) {
         const fullText = note.content || '';
         const preview = fullText.length > 300 ? fullText.slice(0, 300) + '…' : fullText;
-        contentHtml += `<div class="note-goal-desc">${_esc(preview)}</div>`;
+        contentHtml += `<div class="note-goal-desc note-md">${_mdRender(preview)}</div>`;
       }
       contentHtml += '<div class="note-checklist-preview">';
       // Show ALL items — the preview container is scrollable (CSS caps
@@ -1847,9 +1859,9 @@ function _renderNotes() {
     } else {
       const fullText = note.content || '';
       const preview = fullText.length > 600 ? fullText.slice(0, 600) + '…' : fullText;
-      // _linkify already calls _esc internally, so URLs become clickable
-      // anchors (used by e.g. the "remind me to reply" email deep-link).
-      contentHtml = preview ? `<div class="note-content-preview">${_linkify(preview)}</div>` : '';
+      // Rendered markdown (sanitized, KaTeX-capable); bare URLs still become
+      // clickable anchors (used by e.g. the "remind me to reply" email deep-link).
+      contentHtml = preview ? `<div class="note-content-preview note-md">${_mdRender(preview)}</div>` : '';
     }
 
     const isBg = _isBgImage(note.color);
@@ -4914,15 +4926,15 @@ function _openMobileFullscreenEdit(id, fromCard) {
     }, { capture: true });
   }
 
-  // Read-mode overlay for plain notes: render the content as a div with
-  // clickable hyperlinks, layered above the textarea. Tapping anywhere
-  // in the overlay that ISN'T a link hides the overlay and focuses the
-  // textarea so the user can start editing. Tapping a link opens it.
+  // Read-mode overlay for plain notes: render the content as markdown,
+  // layered above the textarea. Tapping anywhere in the overlay that
+  // ISN'T a link hides the overlay and focuses the textarea so the user
+  // can edit the raw markdown. Tapping a link opens it.
   const ta = form.querySelector('.note-form-content');
   if (ta && (note.content || '').trim()) {
     const reader = document.createElement('div');
-    reader.className = 'note-form-content-reader';
-    reader.innerHTML = _linkify(note.content || '');
+    reader.className = 'note-form-content-reader note-md';
+    reader.innerHTML = _mdRender(note.content || '');
     ta.style.display = 'none';
     ta.insertAdjacentElement('beforebegin', reader);
     reader.addEventListener('click', (e) => {

@@ -35721,6 +35721,36 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   word-break: break-word;
 }
 
+/* Rendered-markdown note content (.note-md rides on the card preview, the
+   goal description and the form reader overlay). The HTML brings its own
+   block layout, so pre-wrap must not double the spacing; block elements get
+   compact margins so cards stay tight. */
+.note-md { white-space: normal; }
+.note-md p { margin: 0 0 6px; }
+.note-md p:last-child { margin-bottom: 0; }
+.note-md h1, .note-md h2, .note-md h3, .note-md h4 {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+.note-md ul, .note-md ol { margin: 4px 0; padding-left: 18px; }
+.note-md li { margin: 2px 0; }
+.note-md blockquote {
+  margin: 4px 0;
+  padding: 2px 8px;
+  border-left: 2px solid var(--border);
+  opacity: 0.85;
+}
+.note-md pre {
+  margin: 6px 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: 4px;
+}
+.note-md table { display: block; overflow-x: auto; max-width: 100%; }
+.note-md img { max-width: 100%; }
+.note-md hr { margin: 8px 0; }
+
 .note-pin-btn {
   background: none;
   border: none;
