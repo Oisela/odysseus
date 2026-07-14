@@ -50,12 +50,36 @@ let _run = null;
       _run = run;
       _catchUp();
       if (_isTicking()) _ensureTicking();
+      // A live session survives the reload — surface it as a dock chip right
+      // away instead of ticking invisibly until the window is opened.
+      if (_isLive()) {
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', _minimizeToChip);
+        } else {
+          _minimizeToChip();
+        }
+      }
     }
   }
 })();
 
+/** Register (idempotent) and park the timer as a live chip in the dock. */
+function _minimizeToChip() {
+  Modals.register('pomodoro-modal', {
+    sidebarBtnId: 'tool-pomodoro-btn',
+    closeFn: () => _doClosePomodoro(),
+    // The chip may exist before the modal DOM does (reload mid-session) —
+    // restore must build the window, not just unhide it.
+    restoreFn: () => { if (!_open) openPomodoro(); },
+  });
+  Modals.minimize('pomodoro-modal');
+  _updateChip();
+}
+
 function _save() {
   Storage.setJSON(Storage.KEYS.POMODORO, { cfg: _cfg, run: _run });
+  // Every state transition goes through _save — keep the dock chip in step.
+  _updateChip();
 }
 
 function _phaseMs(phase) {
@@ -79,6 +103,11 @@ function _fmtHours(seconds) {
 
 function _isTicking() {
   return !!(_run && (_run.phase === 'overtime' || (_run.endsAt && _run.remainingMs == null)));
+}
+
+/** A session worth keeping visible: running, paused or overtime — not 'ready'. */
+function _isLive() {
+  return !!(_run && _run.phase !== 'ready');
 }
 
 /** Reconcile a restored state with wall-clock time (tab was closed/reloaded). */
@@ -114,6 +143,31 @@ function _tick() {
     _notify('Break over', `Round ${nextRound} is ready — press Start.`);
   }
   if (_open) _render();
+  _updateChip();
+}
+
+/**
+ * Live label on the minimized dock chip — 'Focus 12:34', 'Break 3:10',
+ * '+2:11' (overtime), 'Paused 12:34'. The dock renderer rebuilds chips with
+ * the static label on dock changes; the next tick corrects it.
+ */
+function _updateChip() {
+  const lbl = document.querySelector('.minimized-dock-chip[data-modal-id="pomodoro-modal"] .minimized-dock-label');
+  if (!lbl) return;
+  let text = 'Pomodoro';
+  if (_run) {
+    if (_run.phase === 'overtime') {
+      text = '+' + _fmt(Date.now() - _run.since);
+    } else if (_run.phase === 'ready') {
+      text = 'Ready ' + _fmt(_phaseMs('work'));
+    } else {
+      const paused = _run.remainingMs != null;
+      const remaining = paused ? _run.remainingMs : Math.max(0, _run.endsAt - Date.now());
+      const word = paused ? 'Paused' : (_run.phase === 'work' ? 'Focus' : 'Break');
+      text = `${word} ${_fmt(remaining)}`;
+    }
+  }
+  if (lbl.textContent !== text) lbl.textContent = text;
 }
 
 /** Focus phase completed: bank the base minutes once, switch to overtime. */
@@ -387,7 +441,7 @@ function openPomodoro() {
   Modals.register('pomodoro-modal', {
     sidebarBtnId: 'tool-pomodoro-btn',
     closeFn: () => _doClosePomodoro(),
-    restoreFn: () => {},
+    restoreFn: () => { if (!_open) openPomodoro(); },
   });
   _catchUp();
   if (_isTicking()) _ensureTicking();
@@ -408,6 +462,14 @@ function _doClosePomodoro() {
 
 function closePomodoro() {
   if (!_open && !Modals.isMinimized('pomodoro-modal')) return;
+  // A live session (running, paused or overtime) minimizes to a dock chip
+  // instead of vanishing — the timer used to keep ticking invisibly. The
+  // chip's × still fully closes (timer keeps running by design, see
+  // _doClosePomodoro), and a 'ready'/idle window closes as before.
+  if (_isLive() && !Modals.isMinimized('pomodoro-modal')) {
+    _minimizeToChip();
+    return;
+  }
   if (Modals.isRegistered('pomodoro-modal')) Modals.close('pomodoro-modal');
   else _doClosePomodoro();
 }
@@ -418,6 +480,27 @@ function isPomodoroOpen() {
   return _open;
 }
 
-const pomodoroModule = { openPomodoro, closePomodoro, isPomodoroOpen };
-export { openPomodoro, closePomodoro, isPomodoroOpen };
+/**
+ * Snapshot of the running timer for external displays (dock chip, PiP).
+ * Returns null when idle, else { phase, round, paused, remainingMs|overtimeMs }.
+ */
+function getPomodoroState() {
+  if (!_run) return null;
+  if (_run.phase === 'overtime') {
+    return { phase: 'overtime', round: _run.round, paused: false, overtimeMs: Date.now() - _run.since };
+  }
+  if (_run.phase === 'ready') {
+    return { phase: 'ready', round: _run.round, paused: false, remainingMs: _phaseMs('work') };
+  }
+  const paused = _run.remainingMs != null;
+  return {
+    phase: _run.phase,
+    round: _run.round,
+    paused,
+    remainingMs: paused ? _run.remainingMs : Math.max(0, _run.endsAt - Date.now()),
+  };
+}
+
+const pomodoroModule = { openPomodoro, closePomodoro, isPomodoroOpen, getPomodoroState };
+export { openPomodoro, closePomodoro, isPomodoroOpen, getPomodoroState };
 export default pomodoroModule;
