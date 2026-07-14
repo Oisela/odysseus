@@ -30,6 +30,7 @@ const _RING_C = 2 * Math.PI * _RING_R;
 let _modal = null;
 let _open = false;
 let _interval = null;
+let _pip = null; // Document-PiP popout window (declared here — _save touches it during module init)
 
 let _cfg = { ...DEFAULTS };
 // Running state — one of:
@@ -50,12 +51,38 @@ let _run = null;
       _run = run;
       _catchUp();
       if (_isTicking()) _ensureTicking();
+      // A live session survives the reload — surface it as a dock chip right
+      // away instead of ticking invisibly until the window is opened.
+      if (_isLive()) {
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', _minimizeToChip);
+        } else {
+          _minimizeToChip();
+        }
+      }
     }
   }
 })();
 
+/** Register (idempotent) and park the timer as a live chip in the dock. */
+function _minimizeToChip() {
+  Modals.register('pomodoro-modal', {
+    sidebarBtnId: 'tool-pomodoro-btn',
+    closeFn: () => _doClosePomodoro(),
+    // The chip may exist before the modal DOM does (reload mid-session) —
+    // restore must build the window, not just unhide it.
+    restoreFn: () => { if (!_open) openPomodoro(); },
+  });
+  Modals.minimize('pomodoro-modal');
+  _updateChip();
+}
+
 function _save() {
   Storage.setJSON(Storage.KEYS.POMODORO, { cfg: _cfg, run: _run });
+  // Every state transition goes through _save — keep the external displays
+  // (dock chip, PiP popout) in step.
+  _updateChip();
+  _renderPiP();
 }
 
 function _phaseMs(phase) {
@@ -79,6 +106,11 @@ function _fmtHours(seconds) {
 
 function _isTicking() {
   return !!(_run && (_run.phase === 'overtime' || (_run.endsAt && _run.remainingMs == null)));
+}
+
+/** A session worth keeping visible: running, paused or overtime — not 'ready'. */
+function _isLive() {
+  return !!(_run && _run.phase !== 'ready');
 }
 
 /** Reconcile a restored state with wall-clock time (tab was closed/reloaded). */
@@ -114,6 +146,32 @@ function _tick() {
     _notify('Break over', `Round ${nextRound} is ready — press Start.`);
   }
   if (_open) _render();
+  _updateChip();
+  _renderPiP();
+}
+
+/**
+ * Live label on the minimized dock chip — 'Focus 12:34', 'Break 3:10',
+ * '+2:11' (overtime), 'Paused 12:34'. The dock renderer rebuilds chips with
+ * the static label on dock changes; the next tick corrects it.
+ */
+function _updateChip() {
+  const lbl = document.querySelector('.minimized-dock-chip[data-modal-id="pomodoro-modal"] .minimized-dock-label');
+  if (!lbl) return;
+  let text = 'Pomodoro';
+  if (_run) {
+    if (_run.phase === 'overtime') {
+      text = '+' + _fmt(Date.now() - _run.since);
+    } else if (_run.phase === 'ready') {
+      text = 'Ready ' + _fmt(_phaseMs('work'));
+    } else {
+      const paused = _run.remainingMs != null;
+      const remaining = paused ? _run.remainingMs : Math.max(0, _run.endsAt - Date.now());
+      const word = paused ? 'Paused' : (_run.phase === 'work' ? 'Focus' : 'Break');
+      text = `${word} ${_fmt(remaining)}`;
+    }
+  }
+  if (lbl.textContent !== text) lbl.textContent = text;
 }
 
 /** Focus phase completed: bank the base minutes once, switch to overtime. */
@@ -238,6 +296,7 @@ function _getModal() {
     <div class="modal-content pomo-modal-content">
       <div class="modal-header">
         <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>Pomodoro</h4>
+        <button class="pomo-pip-btn" id="pomo-pip" title="Pop out mini timer" style="display:none;margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
         <button class="close-btn" id="pomo-close">✖</button>
       </div>
       <div class="modal-body pomo-body">
@@ -272,6 +331,14 @@ function _getModal() {
   document.body.appendChild(_modal);
   _modal.querySelector('#pomo-close').addEventListener('click', closePomodoro);
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closePomodoro(); });
+
+  // TickTick-style popout: Document Picture-in-Picture floats the timer above
+  // other apps. Chromium-only — the button stays hidden elsewhere.
+  const pipBtn = _modal.querySelector('#pomo-pip');
+  if ('documentPictureInPicture' in window) {
+    pipBtn.style.display = '';
+    pipBtn.addEventListener('click', (e) => { e.stopPropagation(); _openPiP(); });
+  }
 
   // One delegated listener — the control buttons are re-rendered per state.
   _modal.querySelector('#pomo-controls').addEventListener('click', (e) => {
@@ -325,13 +392,9 @@ function _controlsHtml() {
        + btn('reset', 'Reset', false);
 }
 
-function _render() {
-  if (!_modal || !_open) return;
-  const phaseEl = _modal.querySelector('#pomo-phase');
-  const timeEl = _modal.querySelector('#pomo-time');
-  const ring = _modal.querySelector('#pomo-ring-fg');
+/** Shared display state for the modal and the PiP popout. */
+function _view() {
   const rounds = Math.max(1, _cfg.rounds);
-
   let label, timeText, frac, overtime = false;
   if (!_run) {
     label = 'Ready to focus';
@@ -353,6 +416,15 @@ function _render() {
     timeText = _fmt(remaining);
     frac = Math.min(1, 1 - remaining / _phaseMs(_run.phase));
   }
+  return { label, timeText, frac, overtime };
+}
+
+function _render() {
+  if (!_modal || !_open) return;
+  const phaseEl = _modal.querySelector('#pomo-phase');
+  const timeEl = _modal.querySelector('#pomo-time');
+  const ring = _modal.querySelector('#pomo-ring-fg');
+  const { label, timeText, frac, overtime } = _view();
 
   phaseEl.textContent = label;
   timeEl.textContent = timeText;
@@ -366,6 +438,90 @@ function _render() {
   if (controls._lastHtml !== html) {
     controls.innerHTML = html;
     controls._lastHtml = html;
+  }
+}
+
+// ── Picture-in-Picture popout (Document PiP, Chromium/PWA only) ──
+
+async function _openPiP() {
+  if (!('documentPictureInPicture' in window)) return;
+  if (_pip && !_pip.closed) { try { _pip.focus(); } catch (_) {} return; }
+  let win;
+  try {
+    win = await window.documentPictureInPicture.requestWindow({ width: 250, height: 290 });
+  } catch (e) {
+    console.warn('PiP request failed:', e);
+    return;
+  }
+  _pip = win;
+  // Copy the app's stylesheets so the ring/time/button classes render
+  // identically (incl. theme CSS variables). Standard Document-PiP pattern.
+  for (const sheet of document.styleSheets) {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join('');
+      const style = win.document.createElement('style');
+      style.textContent = css;
+      win.document.head.appendChild(style);
+    } catch (e) {
+      if (sheet.href) {
+        const link = win.document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = sheet.href;
+        win.document.head.appendChild(link);
+      }
+    }
+  }
+  // Theme state lives in classes/inline vars on <html>/<body> — mirror them.
+  try {
+    win.document.documentElement.className = document.documentElement.className;
+    win.document.documentElement.setAttribute('style', document.documentElement.getAttribute('style') || '');
+    win.document.body.className = document.body.className;
+  } catch (_) {}
+  win.document.body.style.background = 'var(--bg)';
+  win.document.body.style.color = 'var(--fg)';
+  win.document.body.innerHTML = `
+    <div class="pomo-pip-body">
+      <div class="pomo-phase" id="pip-phase"></div>
+      <div class="pomo-ring-wrap">
+        <svg class="pomo-ring" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="pomo-ring-bg" cx="100" cy="100" r="${_RING_R}"/>
+          <circle class="pomo-ring-fg" id="pip-ring-fg" cx="100" cy="100" r="${_RING_R}"
+            stroke-dasharray="${_RING_C.toFixed(2)}" stroke-dashoffset="${_RING_C.toFixed(2)}"/>
+        </svg>
+        <div class="pomo-time" id="pip-time"></div>
+      </div>
+      <div class="pomo-controls" id="pip-controls"></div>
+    </div>`;
+  // Same delegated control pattern as the modal — actions run in this module.
+  win.document.getElementById('pip-controls').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (btn) _handleAction(btn.dataset.action);
+  });
+  win.addEventListener('pagehide', () => { _pip = null; });
+  _renderPiP();
+}
+
+function _renderPiP() {
+  if (!_pip || _pip.closed) return;
+  const doc = _pip.document;
+  const phaseEl = doc.getElementById('pip-phase');
+  const timeEl = doc.getElementById('pip-time');
+  const ring = doc.getElementById('pip-ring-fg');
+  const controls = doc.getElementById('pip-controls');
+  if (!phaseEl || !timeEl) return;
+  const { label, timeText, frac, overtime } = _view();
+  phaseEl.textContent = label;
+  timeEl.textContent = timeText;
+  if (ring) {
+    ring.style.strokeDashoffset = (_RING_C * (1 - frac)).toFixed(2);
+    ring.classList.toggle('overtime', overtime);
+  }
+  if (controls) {
+    const html = _controlsHtml();
+    if (controls._lastHtml !== html) {
+      controls.innerHTML = html;
+      controls._lastHtml = html;
+    }
   }
 }
 
@@ -387,7 +543,7 @@ function openPomodoro() {
   Modals.register('pomodoro-modal', {
     sidebarBtnId: 'tool-pomodoro-btn',
     closeFn: () => _doClosePomodoro(),
-    restoreFn: () => {},
+    restoreFn: () => { if (!_open) openPomodoro(); },
   });
   _catchUp();
   if (_isTicking()) _ensureTicking();
@@ -408,6 +564,14 @@ function _doClosePomodoro() {
 
 function closePomodoro() {
   if (!_open && !Modals.isMinimized('pomodoro-modal')) return;
+  // A live session (running, paused or overtime) minimizes to a dock chip
+  // instead of vanishing — the timer used to keep ticking invisibly. The
+  // chip's × still fully closes (timer keeps running by design, see
+  // _doClosePomodoro), and a 'ready'/idle window closes as before.
+  if (_isLive() && !Modals.isMinimized('pomodoro-modal')) {
+    _minimizeToChip();
+    return;
+  }
   if (Modals.isRegistered('pomodoro-modal')) Modals.close('pomodoro-modal');
   else _doClosePomodoro();
 }
@@ -418,6 +582,27 @@ function isPomodoroOpen() {
   return _open;
 }
 
-const pomodoroModule = { openPomodoro, closePomodoro, isPomodoroOpen };
-export { openPomodoro, closePomodoro, isPomodoroOpen };
+/**
+ * Snapshot of the running timer for external displays (dock chip, PiP).
+ * Returns null when idle, else { phase, round, paused, remainingMs|overtimeMs }.
+ */
+function getPomodoroState() {
+  if (!_run) return null;
+  if (_run.phase === 'overtime') {
+    return { phase: 'overtime', round: _run.round, paused: false, overtimeMs: Date.now() - _run.since };
+  }
+  if (_run.phase === 'ready') {
+    return { phase: 'ready', round: _run.round, paused: false, remainingMs: _phaseMs('work') };
+  }
+  const paused = _run.remainingMs != null;
+  return {
+    phase: _run.phase,
+    round: _run.round,
+    paused,
+    remainingMs: paused ? _run.remainingMs : Math.max(0, _run.endsAt - Date.now()),
+  };
+}
+
+const pomodoroModule = { openPomodoro, closePomodoro, isPomodoroOpen, getPomodoroState };
+export { openPomodoro, closePomodoro, isPomodoroOpen, getPomodoroState };
 export default pomodoroModule;
