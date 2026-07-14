@@ -955,7 +955,27 @@ export function getInject() {
  */
 export function deactivateCharacter() {
   selectedPreset = null;
-  if (presets.custom) presets.custom.enabled = false;
+  // Persist enabled:false — the server copy otherwise keeps enabled:true and
+  // loadPresets() auto-reactivates the persona after any reload, leaking it
+  // into fresh non-project chats. Same payload shape as saveCustomPreset so
+  // re-enabling restores the full persona config. Fire-and-forget.
+  const custom = presets.custom;
+  if (custom && custom.enabled !== false) {
+    custom.enabled = false;
+    fetch(`${API_BASE}/api/presets/custom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: custom.character_name || custom.name || '',
+        enabled: false,
+        temperature: custom.temperature,
+        max_tokens: custom.max_tokens,
+        system_prompt: custom.system_prompt || '',
+        inject_prefix: custom.inject_prefix || '',
+        inject_suffix: custom.inject_suffix || '',
+      })
+    }).catch(() => {});
+  }
   const charInd = document.getElementById('character-indicator-btn');
   if (charInd) { charInd.style.display = 'none'; charInd.classList.remove('active'); }
   const miniBtn = document.getElementById('overflow-preset-btn');
