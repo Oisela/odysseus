@@ -30,6 +30,7 @@ const _RING_C = 2 * Math.PI * _RING_R;
 let _modal = null;
 let _open = false;
 let _interval = null;
+let _pip = null; // Document-PiP popout window (declared here — _save touches it during module init)
 
 let _cfg = { ...DEFAULTS };
 // Running state — one of:
@@ -78,8 +79,10 @@ function _minimizeToChip() {
 
 function _save() {
   Storage.setJSON(Storage.KEYS.POMODORO, { cfg: _cfg, run: _run });
-  // Every state transition goes through _save — keep the dock chip in step.
+  // Every state transition goes through _save — keep the external displays
+  // (dock chip, PiP popout) in step.
   _updateChip();
+  _renderPiP();
 }
 
 function _phaseMs(phase) {
@@ -144,6 +147,7 @@ function _tick() {
   }
   if (_open) _render();
   _updateChip();
+  _renderPiP();
 }
 
 /**
@@ -292,6 +296,7 @@ function _getModal() {
     <div class="modal-content pomo-modal-content">
       <div class="modal-header">
         <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>Pomodoro</h4>
+        <button class="pomo-pip-btn" id="pomo-pip" title="Pop out mini timer" style="display:none;margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
         <button class="close-btn" id="pomo-close">✖</button>
       </div>
       <div class="modal-body pomo-body">
@@ -326,6 +331,14 @@ function _getModal() {
   document.body.appendChild(_modal);
   _modal.querySelector('#pomo-close').addEventListener('click', closePomodoro);
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closePomodoro(); });
+
+  // TickTick-style popout: Document Picture-in-Picture floats the timer above
+  // other apps. Chromium-only — the button stays hidden elsewhere.
+  const pipBtn = _modal.querySelector('#pomo-pip');
+  if ('documentPictureInPicture' in window) {
+    pipBtn.style.display = '';
+    pipBtn.addEventListener('click', (e) => { e.stopPropagation(); _openPiP(); });
+  }
 
   // One delegated listener — the control buttons are re-rendered per state.
   _modal.querySelector('#pomo-controls').addEventListener('click', (e) => {
@@ -379,13 +392,9 @@ function _controlsHtml() {
        + btn('reset', 'Reset', false);
 }
 
-function _render() {
-  if (!_modal || !_open) return;
-  const phaseEl = _modal.querySelector('#pomo-phase');
-  const timeEl = _modal.querySelector('#pomo-time');
-  const ring = _modal.querySelector('#pomo-ring-fg');
+/** Shared display state for the modal and the PiP popout. */
+function _view() {
   const rounds = Math.max(1, _cfg.rounds);
-
   let label, timeText, frac, overtime = false;
   if (!_run) {
     label = 'Ready to focus';
@@ -407,6 +416,15 @@ function _render() {
     timeText = _fmt(remaining);
     frac = Math.min(1, 1 - remaining / _phaseMs(_run.phase));
   }
+  return { label, timeText, frac, overtime };
+}
+
+function _render() {
+  if (!_modal || !_open) return;
+  const phaseEl = _modal.querySelector('#pomo-phase');
+  const timeEl = _modal.querySelector('#pomo-time');
+  const ring = _modal.querySelector('#pomo-ring-fg');
+  const { label, timeText, frac, overtime } = _view();
 
   phaseEl.textContent = label;
   timeEl.textContent = timeText;
@@ -420,6 +438,90 @@ function _render() {
   if (controls._lastHtml !== html) {
     controls.innerHTML = html;
     controls._lastHtml = html;
+  }
+}
+
+// ── Picture-in-Picture popout (Document PiP, Chromium/PWA only) ──
+
+async function _openPiP() {
+  if (!('documentPictureInPicture' in window)) return;
+  if (_pip && !_pip.closed) { try { _pip.focus(); } catch (_) {} return; }
+  let win;
+  try {
+    win = await window.documentPictureInPicture.requestWindow({ width: 250, height: 290 });
+  } catch (e) {
+    console.warn('PiP request failed:', e);
+    return;
+  }
+  _pip = win;
+  // Copy the app's stylesheets so the ring/time/button classes render
+  // identically (incl. theme CSS variables). Standard Document-PiP pattern.
+  for (const sheet of document.styleSheets) {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join('');
+      const style = win.document.createElement('style');
+      style.textContent = css;
+      win.document.head.appendChild(style);
+    } catch (e) {
+      if (sheet.href) {
+        const link = win.document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = sheet.href;
+        win.document.head.appendChild(link);
+      }
+    }
+  }
+  // Theme state lives in classes/inline vars on <html>/<body> — mirror them.
+  try {
+    win.document.documentElement.className = document.documentElement.className;
+    win.document.documentElement.setAttribute('style', document.documentElement.getAttribute('style') || '');
+    win.document.body.className = document.body.className;
+  } catch (_) {}
+  win.document.body.style.background = 'var(--bg)';
+  win.document.body.style.color = 'var(--fg)';
+  win.document.body.innerHTML = `
+    <div class="pomo-pip-body">
+      <div class="pomo-phase" id="pip-phase"></div>
+      <div class="pomo-ring-wrap">
+        <svg class="pomo-ring" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="pomo-ring-bg" cx="100" cy="100" r="${_RING_R}"/>
+          <circle class="pomo-ring-fg" id="pip-ring-fg" cx="100" cy="100" r="${_RING_R}"
+            stroke-dasharray="${_RING_C.toFixed(2)}" stroke-dashoffset="${_RING_C.toFixed(2)}"/>
+        </svg>
+        <div class="pomo-time" id="pip-time"></div>
+      </div>
+      <div class="pomo-controls" id="pip-controls"></div>
+    </div>`;
+  // Same delegated control pattern as the modal — actions run in this module.
+  win.document.getElementById('pip-controls').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (btn) _handleAction(btn.dataset.action);
+  });
+  win.addEventListener('pagehide', () => { _pip = null; });
+  _renderPiP();
+}
+
+function _renderPiP() {
+  if (!_pip || _pip.closed) return;
+  const doc = _pip.document;
+  const phaseEl = doc.getElementById('pip-phase');
+  const timeEl = doc.getElementById('pip-time');
+  const ring = doc.getElementById('pip-ring-fg');
+  const controls = doc.getElementById('pip-controls');
+  if (!phaseEl || !timeEl) return;
+  const { label, timeText, frac, overtime } = _view();
+  phaseEl.textContent = label;
+  timeEl.textContent = timeText;
+  if (ring) {
+    ring.style.strokeDashoffset = (_RING_C * (1 - frac)).toFixed(2);
+    ring.classList.toggle('overtime', overtime);
+  }
+  if (controls) {
+    const html = _controlsHtml();
+    if (controls._lastHtml !== html) {
+      controls.innerHTML = html;
+      controls._lastHtml = html;
+    }
   }
 }
 

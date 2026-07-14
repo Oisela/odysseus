@@ -843,7 +843,8 @@ body.bg-pattern-sparkles {
        button's bordered square so the two read as a paired control. The
        header's h4 carries margin-right:auto, which groups minimize + close
        on the right; this button just needs a small gap before close. */
-    .modal-minimize-btn {
+    .modal-minimize-btn,
+    .pomo-pip-btn {
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--fg);
@@ -861,7 +862,8 @@ body.bg-pattern-sparkles {
       flex-shrink: 0;
       transition: background 0.15s, color 0.15s;
     }
-    .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
+    .modal-minimize-btn:hover,
+    .pomo-pip-btn:hover { background: var(--fg); color: var(--bg); }
     .modal.modal-minimized { display: none !important; }
     /* Window tile snap ghost (desktop only) */
     #tile-ghost {
@@ -40573,6 +40575,15 @@ body.theme-frosted .modal {
   align-items: center;
   justify-content: center;
   margin: 0;
+}
+/* Document-PiP popout — bare window reusing the ring/time/button classes. */
+.pomo-pip-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  text-align: center;
 }
 .pomo-stats {
   display: flex;
