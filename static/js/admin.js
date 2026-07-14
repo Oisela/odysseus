@@ -2753,6 +2753,67 @@ function initCalDAV() {
   });
 }
 
+/* ── System status + promotion ── */
+async function _loadSystemStatus() {
+  const vEl = el('sys-version'), cEl = el('sys-commit'), bEl = el('sys-beta');
+  const btn = el('sys-promoteBtn'), msg = el('sys-statusMsg');
+  if (!vEl) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/system/status`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const d = await res.json();
+    vEl.textContent = d.version || 'unknown';
+    cEl.textContent = d.commit || 'unknown';
+    if (d.beta_active) {
+      bEl.textContent = `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}`;
+    } else {
+      bEl.textContent = 'not running';
+    }
+    btn.disabled = !d.promotable;
+    if (!d.beta_active) {
+      btn.title = 'No beta running on :7001';
+    } else if (!d.beta_in_dev) {
+      btn.title = 'Beta commit is not in origin/dev — prod builds from dev, so it would not ship this beta';
+      msg.textContent = 'Beta is running but its commit is not merged into dev; promoting would build a different tree.';
+      msg.className = 'admin-error';
+    } else {
+      btn.title = 'Merge dev → build & restart prod';
+      msg.textContent = ''; msg.className = '';
+    }
+  } catch (e) {
+    vEl.textContent = cEl.textContent = bEl.textContent = 'error';
+    btn.disabled = true;
+    msg.textContent = 'Failed to load system status: ' + e.message; msg.className = 'admin-error';
+  }
+}
+
+function initSystemStatus() {
+  const btn = el('sys-promoteBtn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const msg = el('sys-statusMsg');
+    if (!confirm('Promote the running beta to production? This merges dev, rebuilds prod, and restarts the server.')) return;
+    btn.disabled = true; btn.textContent = 'Promoting...'; msg.textContent = ''; msg.className = '';
+    try {
+      const res = await fetch(`${API_BASE}/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d && d.status === 'promotion_started') {
+        msg.textContent = 'Promotion started. Prod will rebuild and restart shortly — reload with Ctrl+Shift+R once it is back.';
+        msg.className = 'admin-success';
+      } else {
+        msg.textContent = (d && (d.detail || d.message)) || `Promotion failed (status ${res.status})`;
+        msg.className = 'admin-error';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      msg.textContent = 'Promotion failed: ' + e.message; msg.className = 'admin-error';
+      btn.disabled = false;
+    }
+    btn.textContent = 'Promote beta to prod';
+  });
+  _loadSystemStatus();
+}
+
 /* ── Data Backup (export/import) ── */
 function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
@@ -3074,7 +3135,7 @@ function initAll() {
   modalEl = el('settings-modal');
   const inits = [
     initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
+    initCalDAV, initSystemStatus, initBackup, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
   for (const fn of inits) {

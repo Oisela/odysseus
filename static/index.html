@@ -2424,6 +2424,19 @@
               </div>
             </div>
           </div>
+          <div class="admin-card" id="settings-system-status-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>System</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Running version and deployed commit, and one-click promotion of a tested beta to production.</div>
+            <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Version</span><span id="sys-version" style="font-family:var(--mono,monospace)">…</span></div>
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Prod commit</span><span id="sys-commit" style="font-family:var(--mono,monospace)">…</span></div>
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Beta</span><span id="sys-beta" style="font-family:var(--mono,monospace)">…</span></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button class="admin-btn-add" id="sys-promoteBtn" disabled>Promote beta to prod</button>
+            </div>
+            <div id="sys-statusMsg" style="margin-top:6px;"></div>
+          </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>

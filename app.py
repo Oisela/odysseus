@@ -649,6 +649,9 @@ upload_cleanup_task = None
 
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
+from routes.system_routes import setup_system_routes
+app.include_router(setup_system_routes())
+
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
 
