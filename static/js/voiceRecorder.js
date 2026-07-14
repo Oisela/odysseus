@@ -19,6 +19,9 @@ let recordingInterval = null;
 // Browser STT state
 let _recognition = null;
 let _browserTranscript = '';
+// Input content at dictation start — live results render as base + finals +
+// interim, so pre-typed text survives and interim words replace themselves.
+let _liveBase = '';
 
 // Cached STT provider + language — refreshed on settings change
 let _sttProvider = 'disabled';
@@ -79,26 +82,53 @@ function startBrowserSTT() {
   if (!SpeechRecognition) return;
 
   _browserTranscript = '';
+  const input = document.getElementById('message');
+  _liveBase = input ? input.value.trim() : '';
   _recognition = new SpeechRecognition();
   _recognition.continuous = true;
-  _recognition.interimResults = false;
+  // Live dictation: interim results stream into the input while speaking
+  // and replace themselves until they finalize.
+  _recognition.interimResults = true;
   // Use the configured STT language (Settings → stt_language, e.g. "de-DE");
   // empty string keeps the browser's own default, as before.
   _recognition.lang = _sttLanguage;
 
   _recognition.onresult = (event) => {
+    let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
       if (event.results[i].isFinal) {
         _browserTranscript += event.results[i][0].transcript + ' ';
+      } else {
+        interim += event.results[i][0].transcript;
       }
     }
+    _renderLiveTranscript(interim);
   };
 
   _recognition.onerror = (e) => {
     console.warn('Browser STT error:', e.error);
   };
 
+  // Chrome ends continuous recognition after a silence pause — restart it
+  // while the mic is still recording so live dictation doesn't silently stop.
+  // stopBrowserSTT nulls _recognition before stop(), so this won't refire then.
+  _recognition.onend = function () {
+    if (_recognition === this && isRecording) {
+      try { this.start(); } catch (e) { /* already restarting */ }
+    }
+  };
+
   _recognition.start();
+}
+
+/** Paint base + finalized + interim text into the chat input (live view). */
+function _renderLiveTranscript(interim) {
+  const input = document.getElementById('message');
+  if (!input) return;
+  const parts = [_liveBase, _browserTranscript.trim(), (interim || '').trim()].filter(Boolean);
+  input.value = parts.join(' ');
+  // Auto-resize; the send button ignores input while dataset.mode==='recording'.
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function stopBrowserSTT() {
@@ -187,8 +217,15 @@ export function startRecording(onFileCreated, showToast, showError) {
         if (provider === 'browser') {
           const transcript = stopBrowserSTT();
           if (transcript) {
-            insertTranscription(transcript, showToast);
+            // Live dictation already painted the text — settle it (drop any
+            // dangling interim words) instead of inserting a second copy.
+            _renderLiveTranscript('');
+            const input = document.getElementById('message');
+            if (input) input.focus();
+            if (showToast) showToast('Transcribed');
           } else {
+            // Nothing recognized — restore the pre-dictation input.
+            _renderLiveTranscript('');
             if (showToast) showToast('No speech detected');
             const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
             if (onFileCreated) onFileCreated(audioFile);
