@@ -859,6 +859,8 @@ function initializeEventListeners() {
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
     // Clear character/persona
     if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+    // Clear workspace too — a project chat sets it and it must not leak into fresh chats
+    try { workspaceModule.setWorkspace(''); } catch (_) {}
   }
 
   /** Sync Research indicator button + overflow + tool sidebar active state. */
@@ -3248,6 +3250,8 @@ function initializeEventListeners() {
       _deactivateIncognito();
       // Clear character on new chat
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+      // Clear workspace too — a project chat sets it and it must not leak into fresh chats
+      try { workspaceModule.setWorkspace(''); } catch (_) {}
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);

@@ -12,6 +12,7 @@
 
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
+import workspaceModule from './workspace.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { selectSession, loadSessions, getSessions, createSessionItem } from './sessions.js';
 
@@ -57,7 +58,7 @@ function _openProjectChat(project, sessionId) {
   // Server enforces workspace/template anyway; mirror the workspace into the
   // client picker so the UI pill shows the right folder.
   if (project.workspace) {
-    try { Storage.set(KEYS.WORKSPACE, project.workspace); } catch (e) { /* ignore */ }
+    try { workspaceModule.setWorkspace(project.workspace); } catch (e) { /* ignore */ }
   }
   selectSession(sessionId);
 }
