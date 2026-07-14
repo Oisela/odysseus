@@ -7,6 +7,9 @@
 let API_BASE = '';
 let selectedPreset = null;
 let presets = {};
+// Set while the active session belongs to a project whose persona the server
+// injects each turn — the indicator then shows it read-only (no X, no picker).
+let _projectPersona = null; // { projectName, templateName }
 
 export function loadStoredArray(key) {
   try {
@@ -955,6 +958,7 @@ export function getInject() {
  */
 export function deactivateCharacter() {
   selectedPreset = null;
+  _projectPersona = null;
   // Persist enabled:false — the server copy otherwise keeps enabled:true and
   // loadPresets() auto-reactivates the persona after any reload, leaking it
   // into fresh non-project chats. Same payload shape as saveCustomPreset so
@@ -1022,6 +1026,19 @@ function _syncCharIndicator() {
   const nameSpan = document.getElementById('character-indicator-name');
   const iconEl = document.getElementById('char-indicator-icon');
   if (!btn) return;
+  // Project chats: the server injects the project persona on every turn
+  // (routes/chat_routes._project_context_for_session) — show it read-only
+  // so the chip isn't misleadingly empty. No X, click does nothing.
+  if (_projectPersona) {
+    btn.style.display = '';
+    btn.classList.add('active');
+    if (iconEl) iconEl.innerHTML = '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>';
+    if (nameSpan) nameSpan.textContent = _projectPersona.templateName;
+    btn.title = `Persona from project "${_projectPersona.projectName}" — managed by the project`;
+    const xIcon = btn.querySelector('.tool-indicator-x');
+    if (xIcon) xIcon.style.display = 'none';
+    return;
+  }
   const custom = presets.custom;
   const enabled = custom?.enabled !== false;
   const hasChar = enabled && !!custom?.character_name;
@@ -1054,6 +1071,8 @@ function _syncCharIndicator() {
     if (!btn._wired) {
       btn._wired = true;
       btn.addEventListener('click', (e) => {
+        // Project persona is managed by the project — chip is display-only.
+        if (_projectPersona) return;
         // If clicking the X, deactivate character
         if (e.target.closest('.tool-indicator-x')) {
           if (window._persistentChatSession) return; // locked in persistent chat
@@ -1081,6 +1100,36 @@ function _syncCharIndicator() {
 }
 
 /**
+ * Resolve a project's persona template client-side and show it in the
+ * indicator. Mirrors the server's resolution order: user templates by id
+ * first, then built-in presets (chat_routes._project_context_for_session).
+ * Dynamic import avoids a static presets↔projects cycle.
+ */
+function _showProjectPersona(projectId) {
+  import('./projects.js').then(async (m) => {
+    let projs = m.getProjects ? m.getProjects() : [];
+    if (!projs.length && m.loadProjects) {
+      // Direct entry via URL hash can race the initial project fetch.
+      try { await m.loadProjects(); projs = m.getProjects(); } catch (_) {}
+    }
+    const proj = projs.find(p => String(p.id) === String(projectId));
+    const tid = proj && proj.template_id;
+    if (!tid) {
+      // Project without persona template — nothing to display.
+      _projectPersona = null;
+      _syncCharIndicator();
+      return;
+    }
+    const tmpl = userTemplates.find(t => t.id === tid) || PROMPT_TEMPLATES.find(t => t.id === tid);
+    _projectPersona = { projectName: proj.name, templateName: (tmpl && tmpl.name) || tid };
+    _syncCharIndicator();
+  }).catch(() => {
+    _projectPersona = null;
+    _syncCharIndicator();
+  });
+}
+
+/**
  * Called on every session switch. Handles persistent chat character lock.
  * - Entering a persistent chat: activate its character
  * - Leaving a persistent chat: deactivate the character
@@ -1088,7 +1137,23 @@ function _syncCharIndicator() {
  */
 let _prevSessionId = null;
 
-export function onSessionSwitch(sessionId) {
+export function onSessionSwitch(sessionId, projectId = null) {
+  // Project chats: the server applies the project persona each turn — show it
+  // read-only and skip the persistent-chat machinery entirely.
+  if (projectId) {
+    if (window._persistentChatSession) {
+      selectedPreset = null;
+      window._persistentChatSession = null;
+    }
+    _prevSessionId = sessionId;
+    _showProjectPersona(projectId);
+    return;
+  }
+  if (_projectPersona) {
+    _projectPersona = null;
+    _syncCharIndicator();
+  }
+
   const charSessions = loadStoredObject('odysseus-char-sessions');
 
   // Leaving a persistent chat — deactivate for this switch only

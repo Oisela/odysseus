@@ -23,6 +23,12 @@ const _FOLDER_SVG = '<svg class="workspace-row-icon" width="15" height="15" view
 let _projects = [];
 let _expanded = JSON.parse(localStorage.getItem('ody-projects-expanded') || '{}');
 
+// Read-only accessor for other modules (presets.js resolves the project
+// persona for the indicator chip without duplicating the fetch).
+export function getProjects() {
+  return _projects;
+}
+
 async function _json(url, opts = {}) {
   const res = await fetch(API + url, { credentials: 'same-origin', ...opts });
   if (!res.ok) throw new Error((await res.text().catch(() => '')) || res.statusText);

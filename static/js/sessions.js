@@ -1808,10 +1808,13 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         history.replaceState(null, '', '#' + id);
       }
     }
-    // Restore character preset for persistent chats
+    // Restore character preset for persistent chats; project chats show the
+    // project persona read-only in the indicator instead.
     try {
       const presetsModule = window.presetsModule || (await import('./presets.js')).default;
-      if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
+      if (presetsModule && presetsModule.onSessionSwitch) {
+        presetsModule.onSessionSwitch(id, (_meta && _meta.project_id) || null);
+      }
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
 
