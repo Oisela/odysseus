@@ -1382,6 +1382,24 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         if tools or len(system_text) > 4000:
             system_block["cache_control"] = {"type": "ephemeral"}
         payload["system"] = [system_block]
+    # Prompt-cache the conversation history too — the single biggest cost lever
+    # in the agent loop. Each round re-sends the entire prior transcript verbatim
+    # and only appends the newest turn; putting a cache breakpoint on the LAST
+    # message block makes Anthropic read the whole prefix from cache (~90%
+    # cheaper, lower TTFB) and bill only the fresh delta. Anthropic allows at
+    # most 4 breakpoints; we use system (1) + tools (1) + here (1), well within.
+    # Only worth it for agentic/multi-round calls (tools present) or a transcript
+    # long enough that the cache-WRITE premium pays back — mirrors the system
+    # block's guard so tiny one-off completions aren't penalised.
+    if chat_messages and (tools or len(chat_messages) > 2):
+        last = chat_messages[-1]
+        content = last.get("content")
+        if isinstance(content, str):
+            # Normalise plain-string content to a block so we can attach the flag.
+            content = [{"type": "text", "text": content}] if content else []
+            last["content"] = content
+        if isinstance(content, list) and content:
+            content[-1]["cache_control"] = {"type": "ephemeral"}
     if stream:
         payload["stream"] = True
     # Convert OpenAI-format tools to Anthropic format
