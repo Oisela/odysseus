@@ -1026,8 +1026,10 @@
         if (d.channel) {
           var badge = document.getElementById('sidebar-channel-badge');
           if (badge) {
-            badge.textContent = d.channel + (d.build ? ' · ' + d.build : '');
-            badge.title = 'This instance runs the ' + d.channel + ' channel' + (d.build ? ' (' + d.build + ')' : '');
+            // Version front and center (that's what the user checks);
+            // branch@commit lives in the tooltip for the technical view.
+            badge.textContent = d.channel + (d.version ? ' · v' + d.version : '');
+            badge.title = 'This instance runs the ' + d.channel + ' channel' + (d.build ? ' — ' + d.build : '');
             badge.style.display = '';
           }
         }
