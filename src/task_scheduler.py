@@ -350,6 +350,10 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+        # Task ids currently executing because the USER clicked run — these
+        # are exempt from the interactive-quiet gate AND from the blunt
+        # foreground stop (the user is by definition active while clicking).
+        self._manual_tasks = set()
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -722,7 +726,7 @@ class TaskScheduler:
         finally:
             db.close()
 
-    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
+    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True, manual: bool = False):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
         # line behind another. Once we acquire the slot, flip to "running"
@@ -731,6 +735,8 @@ class TaskScheduler:
         current = asyncio.current_task()
         if current:
             self._task_handles[task_id] = current
+        if manual:
+            self._manual_tasks.add(task_id)
         run_id = str(uuid.uuid4())
         _q_db = SessionLocal()
         try:
@@ -749,12 +755,13 @@ class TaskScheduler:
             _q_db.close()
 
         try:
+            gate = not (bypass_model_slot or manual)
             if bypass_model_slot or not self._task_needs_model_slot(task_id):
                 await self._execute_task_locked(
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=not bypass_model_slot,
+                    gate_foreground=gate,
                 )
                 return
 
@@ -763,7 +770,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=True,
+                    gate_foreground=gate,
                 )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
@@ -772,6 +779,8 @@ class TaskScheduler:
             self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
             raise
         finally:
+            if manual:
+                self._manual_tasks.discard(task_id)
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
@@ -2213,16 +2222,22 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
 
-    async def run_task_now(self, task_id: str, *, force: bool = False):
-        """Manually trigger a task execution."""
+    async def run_task_now(self, task_id: str, *, force: bool = False, manual: bool = False):
+        """Manually trigger a task execution.
+
+        `manual=True` marks a run the USER clicked (UI run/start-now buttons):
+        it skips the interactive-quiet gate and is exempt from the blunt
+        foreground stop — clicking run while using the app must actually run.
+        Programmatic triggers (event bus, agent tool, webhooks) stay polite.
+        """
         if force:
-            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
+            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False, manual=manual))
             return True
         async with self._executing_lock:
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        asyncio.create_task(self._execute_task(task_id))
+        asyncio.create_task(self._execute_task(task_id, manual=manual))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
@@ -2276,6 +2291,10 @@ class TaskScheduler:
             task_ids = list(self._executing)
         stopped = 0
         for task_id in task_ids:
+            # User-clicked runs are exempt: the user is active BECAUSE they
+            # are watching the run they just started.
+            if task_id in self._manual_tasks:
+                continue
             if not self._has_running_run(task_id):
                 continue
             handle = self._task_handles.get(task_id)
