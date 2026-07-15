@@ -13,7 +13,7 @@ import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Set
 
-from src.constants import CHROMA_DIR
+from src.constants import CHROMA_COLLECTION_PREFIX, CHROMA_DIR
 from pathlib import Path
 
 from src.embedding_lanes import (
@@ -37,7 +37,7 @@ DEFAULT_FILE_EXTENSIONS: Set[str] = {
 VECTOR_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
 
-COLLECTION_NAME = "odysseus_rag"
+COLLECTION_NAME = CHROMA_COLLECTION_PREFIX + "odysseus_rag"
 
 
 def _generate_doc_id(text: str, owner: str = "") -> str:

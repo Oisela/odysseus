@@ -9,6 +9,7 @@ Stores pre-computed embeddings (ChromaDB does not manage embedding).
 import logging
 from typing import List, Dict, Optional
 
+from src.constants import CHROMA_COLLECTION_PREFIX
 from src.embedding_lanes import (
     LANE_CUSTOM,
     LANE_FASTEMBED,
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class MemoryVectorStore:
     """Vector index over memory entries for semantic retrieval."""
 
-    COLLECTION_NAME = "odysseus_memories"
+    COLLECTION_NAME = CHROMA_COLLECTION_PREFIX + "odysseus_memories"
 
     def __init__(self, data_dir: str, embedding_model=None):
         self._model = embedding_model

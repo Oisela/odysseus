@@ -80,6 +80,11 @@ MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch outpu
 MAX_READ_CHARS = 20_000         # cap for read_file / document preview
 MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
 
+# Optional per-instance prefix for every Chroma collection (e.g. "beta_").
+# Makes channels sharing one ChromaDB unable to touch each other's vectors;
+# empty on prod so existing collections keep working without migration.
+CHROMA_COLLECTION_PREFIX = os.getenv("ODYSSEUS_CHROMA_PREFIX", "").strip()
+
 # web_fetch response-size policy (#3812). MAX_OUTPUT_CHARS above only trims
 # what the agent SEES; these caps bound what the server downloads, parses,
 # and writes to the content cache. The soft cap is the default download
