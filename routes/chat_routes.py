@@ -217,6 +217,28 @@ def _project_context_for_session(session_id, chat_handler):
                 "Bevorzugte Skills in diesem Projekt (bei passenden Aufgaben deren Regeln anwenden): "
                 + ", ".join(str(s) for s in proj.pinned_skills)
             )
+        # Living context file: gives every new chat the project's current
+        # state without re-explaining. The agent maintains it (instruction
+        # below); the side panel edits it too.
+        if proj.workspace:
+            try:
+                from routes.project_routes import PROJECT_CONTEXT_FILENAME
+                ctx_path = os.path.join(proj.workspace, PROJECT_CONTEXT_FILENAME)
+                with open(ctx_path, encoding="utf-8") as fh:
+                    ctx_text = fh.read().strip()
+                if ctx_text:
+                    if len(ctx_text) > 6000:
+                        ctx_text = ctx_text[:6000] + "\n… (PROJEKT.md gekürzt — Datei selbst lesen für den Rest)"
+                    extra.append(f"PROJEKT.md (lebender Projekt-Kontext):\n{ctx_text}")
+                extra.append(
+                    "Halte PROJEKT.md im Projekt-Ordner aktuell: Wenn sich in diesem "
+                    "Chat Ziel, Stand, offene Punkte oder wichtige Dateien geändert "
+                    "haben, aktualisiere die Datei am Ende (kurz und faktisch)."
+                )
+            except FileNotFoundError:
+                pass
+            except Exception:
+                logger.warning("[project] PROJEKT.md read failed", exc_info=True)
         parts.append("\n".join(extra))
         prompt = "\n\n".join(p for p in parts if p)
         return (proj.workspace or None), prompt, proj.name

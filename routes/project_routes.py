@@ -28,6 +28,39 @@ PROJECTS_BASE = os.path.join(DATA_DIR, "projekte")
 
 _MAX_PROJECT_FILE_BYTES = 100 * 1024 * 1024  # 100 MB per file is plenty here
 
+# Living context file — created with every project, injected into the system
+# prompt each turn (chat_routes._project_context_for_session) and kept
+# up to date by the agent. German headers: it's user-facing project data.
+PROJECT_CONTEXT_FILENAME = "PROJEKT.md"
+_PROJECT_CONTEXT_TEMPLATE = """# {name} — Projekt-Kontext
+
+> Lebendes Gedächtnis dieses Projekts: Odysseus liest diese Datei in jedem
+> Projekt-Chat und hält sie am Ende relevanter Chats aktuell.
+
+## Ziel
+
+## Stand
+- Projekt angelegt am {date}
+
+## Offene Punkte
+
+## Wichtige Dateien
+"""
+
+
+def _seed_project_context(workspace: str, name: str) -> None:
+    """Create PROJEKT.md from the template — never overwrite an existing one
+    (adopted folders may already carry a curated context file)."""
+    try:
+        path = os.path.join(workspace, PROJECT_CONTEXT_FILENAME)
+        if os.path.exists(path):
+            return
+        from datetime import date
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_PROJECT_CONTEXT_TEMPLATE.format(name=name, date=date.today().isoformat()))
+    except OSError:
+        logger.warning("PROJEKT.md seeding failed for %r", workspace, exc_info=True)
+
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -138,6 +171,7 @@ def setup_project_routes():
             db.add(p)
             db.commit()
             db.refresh(p)
+            _seed_project_context(folder, p.name)
             logger.info(f"Project created: {p.id} '{p.name}' -> {folder}")
             return _project_to_dict(p)
         finally:

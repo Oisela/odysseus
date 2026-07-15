@@ -64,15 +64,149 @@ export function onSessionSwitch(sessionId, projectId = null) {
   if (projectId) {
     // Also covers direct entry via URL hash, which skips _openProjectChat.
     const proj = _projects.find(p => String(p.id) === String(projectId));
+    _syncProjectPanelBtn(proj || null);
     if (proj && proj.workspace) {
       try { workspaceModule.setWorkspace(proj.workspace); _workspaceFromProject = true; } catch (e) { /* ignore */ }
     }
     return;
   }
+  _syncProjectPanelBtn(null);
   if (_workspaceFromProject) {
     _workspaceFromProject = false;
     try { workspaceModule.setWorkspace(''); } catch (e) { /* ignore */ }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Project panel — PROJEKT.md (living context) + the project's files, opened
+// via the "Files" pill that appears in project chats. Native modal markup,
+// draggable like the other windows.
+// ---------------------------------------------------------------------------
+
+let _panelProjectId = null;
+
+function _closeProjectPanel() {
+  document.getElementById('project-panel')?.remove();
+  _panelProjectId = null;
+}
+
+function _syncProjectPanelBtn(project) {
+  const btn = document.getElementById('project-panel-btn');
+  if (!btn) return;
+  if (!project) {
+    btn.style.display = 'none';
+    _closeProjectPanel();
+    return;
+  }
+  btn.style.display = '';
+  btn.onclick = () => {
+    if (_panelProjectId === project.id && document.getElementById('project-panel')) {
+      _closeProjectPanel();
+    } else {
+      _openProjectPanel(project);
+    }
+  };
+  // Switching between two project chats: refresh the panel if it's open.
+  if (_panelProjectId && _panelProjectId !== project.id && document.getElementById('project-panel')) {
+    _openProjectPanel(project);
+  }
+}
+
+async function _openProjectPanel(project) {
+  document.getElementById('project-panel')?.remove();
+  _panelProjectId = project.id;
+  const modal = document.createElement('div');
+  modal.id = 'project-panel';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" role="dialog" aria-label="Project files" style="max-width:520px;width:min(520px,94vw);">
+      <div class="modal-header">
+        <h4>${_FOLDER_SVG}<span style="margin-left:6px;">${_esc(project.name)}</span></h4>
+        <button class="close-btn" aria-label="Close">✖</button>
+      </div>
+      <div style="padding:12px 16px;max-height:76vh;overflow:auto;">
+        <label style="display:block;font-size:12px;opacity:.7;margin:2px 0 3px;">PROJEKT.md — living context, read by every project chat</label>
+        <textarea id="pp-context" rows="10" spellcheck="false" style="width:100%;box-sizing:border-box;resize:vertical;font-family:var(--mono,monospace);font-size:12.5px;"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <button type="button" id="pp-save" class="confirm-btn confirm-btn-primary" disabled>Save</button>
+          <span id="pp-msg" style="font-size:12px;opacity:.7;"></span>
+        </div>
+        <label style="display:block;font-size:12px;opacity:.7;margin:12px 0 3px;">Files</label>
+        <div id="pp-files" class="workspace-body" style="max-height:220px;overflow:auto;font-size:13px;">loading …</div>
+        <button type="button" id="pp-upload-btn" class="confirm-btn confirm-btn-secondary" style="margin-top:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload files
+        </button>
+        <input id="pp-upload" type="file" multiple style="display:none;">
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const q = (sel) => modal.querySelector(sel);
+  q('.close-btn').addEventListener('click', _closeProjectPanel);
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) makeWindowDraggable(modal, { content, header });
+
+  // PROJEKT.md: read via the files API; save via the upload endpoint (a Blob
+  // named PROJEKT.md lands at the folder root — no extra write endpoint).
+  const ta = q('#pp-context'), saveBtn = q('#pp-save'), msg = q('#pp-msg');
+  let saved = '';
+  try {
+    const res = await fetch(`${API}/api/projects/${project.id}/files/PROJEKT.md`, { credentials: 'same-origin' });
+    saved = res.ok ? await res.text() : '';
+  } catch (e) { saved = ''; }
+  ta.value = saved;
+  ta.placeholder = 'No PROJEKT.md yet — write the project context here and save.';
+  ta.addEventListener('input', () => { saveBtn.disabled = ta.value === saved; });
+  saveBtn.addEventListener('click', async () => {
+    const fd = new FormData();
+    fd.append('file', new Blob([ta.value], { type: 'text/markdown' }), 'PROJEKT.md');
+    try {
+      await _json(`/api/projects/${project.id}/files`, { method: 'POST', body: fd });
+      saved = ta.value;
+      saveBtn.disabled = true;
+      msg.textContent = 'Saved.';
+      setTimeout(() => { msg.textContent = ''; }, 2500);
+    } catch (e) {
+      if (uiModule.showError) uiModule.showError('Saving PROJEKT.md failed: ' + e.message);
+    }
+  });
+
+  // Files list + upload — same rows as the project modal.
+  const filesBox = q('#pp-files');
+  const renderFiles = async () => {
+    try {
+      const data = await _json(`/api/projects/${project.id}/files`);
+      if (!data.files.length) { filesBox.innerHTML = '<div class="workspace-empty">no files yet</div>'; return; }
+      filesBox.innerHTML = data.files.map(f => `
+        <div class="workspace-row" style="display:flex;justify-content:space-between;gap:8px;cursor:default;">
+          <a href="${API}/api/projects/${project.id}/files/${encodeURIComponent(f.path)}" target="_blank" style="color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><svg class="workspace-row-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> ${_esc(f.path)}</a>
+          <span style="white-space:nowrap;opacity:.6;">${(f.size / 1024).toFixed(0)} KB
+            <a href="#" data-del="${_esc(f.path)}" style="color:var(--accent-error,#c66);text-decoration:none;margin-left:6px;" title="Delete">✕</a></span>
+        </div>`).join('');
+      filesBox.querySelectorAll('[data-del]').forEach(a => a.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        await _json(`/api/projects/${project.id}/files/${encodeURIComponent(a.dataset.del)}`, { method: 'DELETE' });
+        renderFiles();
+      }));
+    } catch (e) {
+      filesBox.innerHTML = '<div class="workspace-empty">Loading files failed</div>';
+    }
+  };
+  renderFiles();
+  q('#pp-upload-btn')?.addEventListener('click', () => q('#pp-upload')?.click());
+  q('#pp-upload')?.addEventListener('change', async (ev) => {
+    for (const file of ev.target.files) {
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        await _json(`/api/projects/${project.id}/files`, { method: 'POST', body: fd });
+      } catch (e) {
+        if (uiModule.showError) uiModule.showError(`Upload ${file.name} failed: ` + e.message);
+      }
+    }
+    ev.target.value = '';
+    renderFiles();
+  });
 }
 
 function _openProjectChat(project, sessionId) {
