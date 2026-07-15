@@ -1820,6 +1820,14 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         presetsModule.onSessionSwitch(id, (_meta && _meta.project_id) || null);
       }
     } catch (e) {}
+    // Same hook for the workspace pill: bind to the project folder in project
+    // chats, release it again when switching to a project-less chat.
+    try {
+      const projectsModule = await import('./projects.js');
+      if (projectsModule.onSessionSwitch) {
+        projectsModule.onSessionSwitch(id, (_meta && _meta.project_id) || null);
+      }
+    } catch (e) {}
     const meta = sessions.find(s => s.id === id);
 
     // Detach any in-flight stream to background instead of aborting
