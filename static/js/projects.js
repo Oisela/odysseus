@@ -231,8 +231,12 @@ async function _openModal(project) {
     const data = await _json('/api/models');
     const items = (data.items || []).filter(it => (it.model_type || 'llm') === 'llm');
     for (const it of items) {
-      if (it.offline || !it.models || it.models.length === 0) continue;
-      const opts = [...(it.models || []), ...(it.models_extra || [])].map(m => {
+      // Unlike the task picker, don't require a live cached `models` list or
+      // an online endpoint: some endpoints (e.g. Gemini) only carry pinned
+      // models_extra, and a default choice doesn't need liveness right now.
+      const merged = [...new Set([...(it.models || []), ...(it.models_extra || [])])];
+      if (!merged.length) continue;
+      const opts = merged.map(m => {
         const key = `${it.url}::${m}`;
         if (key === curModelKey) modelKeyListed = true;
         return `<option value="${_esc(key)}" ${key === curModelKey ? 'selected' : ''}>${_esc(m)}</option>`;
