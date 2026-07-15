@@ -2858,19 +2858,16 @@ async function _saveRoadmap(text, msgEl) {
 }
 
 function _renderRoadmap() {
-  const list = el('dev-roadmap-list'), sectionSel = el('dev-roadmap-section');
+  const list = el('dev-roadmap-list');
   const msg = el('dev-roadmap-msg');
   if (!list) return;
   const { lines, sections } = _roadmapSections(_roadmapText);
   list.innerHTML = '';
-  if (sectionSel) sectionSel.innerHTML = '';
   if (!sections.length) {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
-    if (sectionSel) sectionSel.appendChild(new Option('Eingang', 'Eingang'));
     return;
   }
   for (const sec of sections) {
-    if (sectionSel) sectionSel.appendChild(new Option(sec.title.replace(/\s*\(.*$/, ''), sec.title));
     const head = document.createElement('div');
     head.textContent = sec.title;
     head.style.cssText = 'font-weight:600;margin:10px 0 4px;';
@@ -2917,17 +2914,40 @@ async function _loadRoadmap() {
 }
 
 async function _loadDevStatus() {
-  const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta');
+  const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta'), upd = el('dev-update');
   if (!pkg) return;
+  // Channel awareness: on the beta instance the SSH-based host lookups don't
+  // work (no keys by design) — but the instance KNOWS it is the beta, so say
+  // that instead of a confusing "not running".
+  let channel = '', build = '';
+  try {
+    const v = await fetch(`/api/version`, { credentials: 'same-origin' }).then(r => r.json());
+    channel = v.channel || '';
+    build = v.build || '';
+  } catch (e) { /* keep defaults */ }
   try {
     const res = await fetch(`/api/system/status`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const d = await res.json();
     pkg.textContent = d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`;
-    prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
-    beta.textContent = d.beta_active ? `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}` : 'not running';
+    if (channel === 'beta') {
+      prod.textContent = d.commit && d.commit !== 'unknown' ? `v? @ ${d.commit}` : 'n/a from beta (no host access)';
+      beta.textContent = `this instance — ${build || `v${d.version}`}`;
+      upd.textContent = 'test here, then Update on prod';
+    } else {
+      prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
+      beta.textContent = d.beta_active ? `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}` : 'not running';
+      if (d.promotable) {
+        upd.textContent = 'ready — press Update on the System card';
+      } else if (d.dev_version && d.dev_version !== d.version) {
+        upd.textContent = `v${d.dev_version} in development`;
+      } else {
+        upd.textContent = 'up to date';
+      }
+    }
   } catch (e) {
     pkg.textContent = prod.textContent = beta.textContent = 'error';
+    if (upd) upd.textContent = '—';
   }
 }
 
@@ -2939,40 +2959,49 @@ async function _initBuilderLink() {
     const projs = (m.getProjects && m.getProjects()) || [];
     const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
       || projs.find(p => /entwickler|builder/i.test(p.name || ''));
-    if (!builder || !(builder.sessions || []).length) return;
+    if (!builder) return;
     btn.style.display = '';
     btn.addEventListener('click', async () => {
       try {
         if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
-        const s = await import('./sessions.js');
-        s.selectSession(builder.sessions[0].id);
-      } catch (e) { console.warn('open builder project failed', e); }
+        // Fresh developer chat in the builder project (pinned skill + clone
+        // workspace ride along server-side). Fallback: open its last chat.
+        if (m.startProjectChat) {
+          await m.startProjectChat(builder.id);
+        } else if ((builder.sessions || []).length) {
+          const s = await import('./sessions.js');
+          s.selectSession(builder.sessions[0].id);
+        }
+      } catch (e) { console.warn('start developer chat failed', e); }
     });
   } catch (e) { /* projects module unavailable — keep button hidden */ }
 }
 
 function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
-  const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), sectionSel = el('dev-roadmap-section');
+  const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
   const msg = el('dev-roadmap-msg');
   const doAdd = async () => {
     const text = (input.value || '').trim();
     if (!text) return;
-    const target = sectionSel.value;
+    // New entries always land in Eingang, tagged by type — the developer
+    // sorts them into a version when picking them up. Date so age is visible.
+    const kind = (typeSel && typeSel.value) || 'Idee';
+    const entry = `- [ ] **${kind}:** ${text} (${new Date().toISOString().slice(0, 10)})`;
     const { lines, sections } = _roadmapSections(_roadmapText);
-    const sec = sections.find(s => s.title === target);
+    const sec = sections.find(s => /^Eingang/i.test(s.title));
     let ls;
     if (!sec) {
       // Empty/missing file: start a minimal queue with an Eingang section.
       ls = _roadmapText ? _roadmapText.split('\n') : [];
       if (ls.length && ls[ls.length - 1].trim() !== '') ls.push('');
-      ls.push(`## ${target || 'Eingang'}`, `- [ ] ${text}`);
+      ls.push('## Eingang', entry);
     } else {
       // Insert at the section end, before trailing blank lines.
       let at = sec.end;
       ls = lines.slice();
       while (at > sec.start + 1 && ls[at - 1].trim() === '') at--;
-      ls.splice(at, 0, `- [ ] ${text}`);
+      ls.splice(at, 0, entry);
     }
     if (await _saveRoadmap(ls.join('\n'), msg)) {
       input.value = '';

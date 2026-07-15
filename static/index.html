@@ -2386,9 +2386,10 @@
               <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Open package</span><span id="dev-package" style="font-family:var(--mono,monospace)">…</span></div>
               <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Prod</span><span id="dev-prod" style="font-family:var(--mono,monospace)">…</span></div>
               <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Beta</span><span id="dev-beta" style="font-family:var(--mono,monospace)">…</span></div>
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Update</span><span id="dev-update" style="font-family:var(--mono,monospace)">…</span></div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              <button class="admin-btn-sm" id="dev-builder-btn" style="display:none;">Open builder project</button>
+              <button class="admin-btn-add" id="dev-builder-btn" style="display:none;">Go — start developer chat</button>
             </div>
           </div>
 
@@ -2397,7 +2398,12 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">The developer's work queue — it reads this list on every run. Check off, add, or edit entries; changes are saved to the shared file.</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
               <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Add a bug or idea…" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
-              <select id="dev-roadmap-section" style="height:34px;"></select>
+              <select id="dev-roadmap-type" style="height:34px;">
+                <option value="Bug">Bug</option>
+                <option value="Feature">Feature</option>
+                <option value="Idee">Idee</option>
+                <option value="Polish">Polish</option>
+              </select>
               <button class="admin-btn-add" id="dev-roadmap-add">Add</button>
             </div>
             <div id="dev-roadmap-list" style="font-size:13px;"><div style="opacity:0.6">loading…</div></div>
