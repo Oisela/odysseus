@@ -19,6 +19,7 @@ import { selectSession, loadSessions, getSessions, createSessionItem } from './s
 const API = window.location.origin;
 // Same folder glyph as the workspace picker (not an emoji).
 const _FOLDER_SVG = '<svg class="workspace-row-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const _FOLDER_PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>';
 
 let _projects = [];
 let _expanded = JSON.parse(localStorage.getItem('ody-projects-expanded') || '{}');
@@ -119,9 +120,12 @@ function _openFolderPicker(initialPath, onPick) {
              placeholder="Type or paste a folder path, then press Enter" />
       <p class="muted workspace-note">This folder holds the project's files and is the agent's workspace in project chats.</p>
       <div class="modal-body workspace-body" id="pfp-body"></div>
-      <div class="modal-footer workspace-footer">
-        <button type="button" class="confirm-btn confirm-btn-secondary" id="pfp-cancel">Cancel</button>
-        <button type="button" class="confirm-btn confirm-btn-primary" id="pfp-use">Use this folder</button>
+      <div class="modal-footer workspace-footer" style="display:flex;gap:8px;justify-content:space-between;align-items:center;">
+        <button type="button" class="confirm-btn confirm-btn-secondary" id="pfp-new" title="Create a new folder here">${_FOLDER_PLUS_SVG}<span style="margin-left:5px;">New folder</span></button>
+        <span style="display:flex;gap:8px;">
+          <button type="button" class="confirm-btn confirm-btn-secondary" id="pfp-cancel">Cancel</button>
+          <button type="button" class="confirm-btn confirm-btn-primary" id="pfp-use">Use this folder</button>
+        </span>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -129,6 +133,23 @@ function _openFolderPicker(initialPath, onPick) {
   modal.querySelector('.close-btn').addEventListener('click', close);
   modal.querySelector('#pfp-cancel').addEventListener('click', close);
   modal.querySelector('#pfp-use').addEventListener('click', () => { onPick(curPath); close(); });
+  modal.querySelector('#pfp-new').addEventListener('click', async () => {
+    const name = await uiModule.styledPrompt('Create a new folder inside:\n' + (curPath || '~'), {
+      title: 'New folder', placeholder: 'Folder name', confirmText: 'Create', maxLength: 80,
+    });
+    if (!name) return;
+    try {
+      const res = await _json('/api/workspace/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: curPath, name }),
+      });
+      await nav(res && res.path ? res.path : curPath);
+      if (uiModule.showToast) uiModule.showToast('Folder created');
+    } catch (e) {
+      if (uiModule.showError) uiModule.showError('Could not create folder: ' + (e && e.message ? e.message : e));
+    }
+  });
   modal.querySelector('#pfp-path').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
