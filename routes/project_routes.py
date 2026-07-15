@@ -52,6 +52,7 @@ def _project_to_dict(p: Project) -> dict:
         "instructions": p.instructions or "",
         "template_id": p.template_id or "",
         "pinned_skills": p.pinned_skills or [],
+        "default_model": p.default_model or "",
         "sort_order": p.sort_order or 0,
         "archived": bool(p.archived),
     }
@@ -62,6 +63,9 @@ class ProjectRequest(BaseModel):
     instructions: str = Field("", max_length=20000)
     template_id: str = Field("", max_length=80)
     pinned_skills: List[str] = Field(default_factory=list, max_length=4)
+    # "endpoint_url::model" (same encoding as tasks) — model new project
+    # chats start with; empty = clone from the most recent session.
+    default_model: str = Field("", max_length=400)
     # Optional explicit folder (relative to DATA_DIR or absolute inside it),
     # e.g. "vorlesungen/tiii" to adopt an existing lecture folder.
     workspace: Optional[str] = Field(None, max_length=500)
@@ -129,6 +133,7 @@ def setup_project_routes():
                 instructions=req.instructions.strip(),
                 template_id=req.template_id.strip(),
                 pinned_skills=req.pinned_skills,
+                default_model=req.default_model.strip(),
             )
             db.add(p)
             db.commit()
@@ -148,6 +153,7 @@ def setup_project_routes():
             p.instructions = req.instructions.strip()
             p.template_id = req.template_id.strip()
             p.pinned_skills = req.pinned_skills
+            p.default_model = req.default_model.strip()
             if req.workspace:
                 raw = req.workspace
                 folder = raw if os.path.isabs(raw) else os.path.join(DATA_DIR, raw)

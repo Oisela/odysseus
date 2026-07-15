@@ -70,8 +70,9 @@ function _openProjectChat(project, sessionId) {
 }
 
 async function _newChatInProject(project) {
-  // Clone model/endpoint from the most recent session so the new chat is
-  // immediately usable without a model-picker round-trip.
+  // Project default model ("endpoint_url::model", same encoding as tasks)
+  // wins; otherwise clone model/endpoint from the most recent session so the
+  // new chat is immediately usable without a model-picker round-trip.
   const all = getSessions() || [];
   const donor = all.find(s => s.model && s.endpoint_url) || all[0];
   const fd = new FormData();
@@ -79,7 +80,12 @@ async function _newChatInProject(project) {
   // the auto-namer titles the session from the first exchange — exactly like
   // regular chats.
   fd.append('name', 'Chat');
-  if (donor) {
+  const dm = String(project.default_model || '');
+  const sep = dm.indexOf('::');
+  if (sep > 0 && sep < dm.length - 2) {
+    fd.append('endpoint_url', dm.slice(0, sep));
+    fd.append('model', dm.slice(sep + 2));
+  } else if (donor) {
     fd.append('model', donor.model || '');
     fd.append('endpoint_url', donor.endpoint_url || '');
   }
@@ -181,7 +187,7 @@ function _closeModal() {
 async function _openModal(project) {
   _closeModal();
   const isNew = !project;
-  const p = project || { name: '', instructions: '', template_id: '', pinned_skills: [], workspace: '' };
+  const p = project || { name: '', instructions: '', template_id: '', pinned_skills: [], workspace: '', default_model: '' };
 
   // Personas: own templates + built-in presets, one dropdown with groups.
   let userTemplates = [];
@@ -216,6 +222,31 @@ async function _openModal(project) {
     + grp('Your templates', userTemplates, p.template_id)
     + grp('Presets', builtinPresets, p.template_id);
 
+  // Default model: "endpoint_url::model" pairing (same encoding as tasks) —
+  // new chats in the project start on it instead of cloning the last session.
+  const curModelKey = p.default_model || '';
+  let modelOptions = `<option value="">(none – last used model)</option>`;
+  let modelKeyListed = !curModelKey;
+  try {
+    const data = await _json('/api/models');
+    const items = (data.items || []).filter(it => (it.model_type || 'llm') === 'llm');
+    for (const it of items) {
+      if (it.offline || !it.models || it.models.length === 0) continue;
+      const opts = [...(it.models || []), ...(it.models_extra || [])].map(m => {
+        const key = `${it.url}::${m}`;
+        if (key === curModelKey) modelKeyListed = true;
+        return `<option value="${_esc(key)}" ${key === curModelKey ? 'selected' : ''}>${_esc(m)}</option>`;
+      }).join('');
+      modelOptions += `<optgroup label="${_esc(it.endpoint_name || it.host || 'endpoint')}">${opts}</optgroup>`;
+    }
+  } catch (e) { /* dropdown stays minimal */ }
+  // Preserve a previously-set pairing even if /api/models doesn't list it
+  // anymore (e.g. endpoint disabled), so the user can see it's set.
+  if (!modelKeyListed) {
+    const m = curModelKey.slice(curModelKey.indexOf('::') + 2);
+    modelOptions += `<option value="${_esc(curModelKey)}" selected>${_esc(m)} (unlisted endpoint)</option>`;
+  }
+
   const pinned = new Set(p.pinned_skills || []);
 
   const modal = document.createElement('div');
@@ -232,6 +263,8 @@ async function _openModal(project) {
         <input id="pm-name" type="text" class="styled-prompt-input" value="${_esc(p.name)}">
         <label class="pm-label">Persona / template</label>
         <select id="pm-template">${tplOptions}</select>
+        <label class="pm-label">Default model (new chats in this project start with it)</label>
+        <select id="pm-model">${modelOptions}</select>
         <label class="pm-label">Project instructions (added on top of the persona)</label>
         <textarea id="pm-instructions" rows="6">${_esc(p.instructions)}</textarea>
         <label class="pm-label">Folder</label>
@@ -323,6 +356,7 @@ async function _openModal(project) {
     const body = {
       name: q('#pm-name').value.trim(),
       template_id: q('#pm-template').value,
+      default_model: q('#pm-model').value,
       instructions: q('#pm-instructions').value,
       pinned_skills: [...modal.querySelectorAll('.pm-skill:checked')].map(cb => cb.value).slice(0, 4),
     };
