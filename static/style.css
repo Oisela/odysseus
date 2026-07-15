@@ -608,6 +608,24 @@ body.bg-pattern-sparkles {
       top: 0;
       left: -10px;
     }
+    /* Channel badge (beta instance): small muted tag next to the brand so a
+       test tab is always distinguishable from prod. Hidden on prod (JS shows
+       it only when /api/version reports a channel). */
+    .sidebar-brand-channel {
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1;
+      padding: 2px 5px;
+      margin-left: -4px;
+      border: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      white-space: nowrap;
+      user-select: none;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .sidebar-sep {
       display: none;
     }

@@ -929,7 +929,20 @@ async def serve_login(request: Request):
 @app.get("/api/version")
 async def get_version():
     from core.constants import APP_VERSION
-    return {"version": APP_VERSION}
+    payload = {"version": APP_VERSION}
+    # Channel badge: the beta instance sets ODYSSEUS_CHANNEL in its compose
+    # override so the sidebar can show which channel/build is running.
+    # beta-build.txt (branch@commit) is written by the deploy tooling; prod
+    # sets neither, so it returns the plain version as before.
+    channel = os.getenv("ODYSSEUS_CHANNEL", "").strip()
+    if channel:
+        payload["channel"] = channel
+        try:
+            with open(os.path.join(DATA_DIR, "beta-build.txt"), encoding="utf-8") as fh:
+                payload["build"] = fh.read().strip()[:80]
+        except OSError:
+            pass
+    return payload
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
