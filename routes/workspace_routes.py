@@ -1,6 +1,7 @@
 """Workspace API - browse server directories to pick a tool workspace folder."""
 import os
 from fastapi import APIRouter, Request, HTTPException, Query
+from pydantic import BaseModel
 
 from src.auth_helpers import get_current_user
 from src.tool_security import owner_is_admin_or_single_user
@@ -81,5 +82,36 @@ def setup_workspace_routes():
         from src.tool_execution import vet_workspace
         resolved = vet_workspace(path)
         return {"ok": resolved is not None, "path": resolved}
+
+
+    class MkdirRequest(BaseModel):
+        parent: str
+        name: str
+
+    @router.post("/mkdir")
+    def mkdir(request: Request, body: MkdirRequest):
+        """Create a new folder in the specified parent directory."""
+        owner = get_current_user(request)
+        if not owner_is_admin_or_single_user(owner):
+            raise HTTPException(status_code=403, detail="Workspace modification is admin-only")
+        
+        target = os.path.realpath(os.path.expanduser(body.parent.strip() or "~"))
+        if not os.path.isdir(target):
+            raise HTTPException(status_code=400, detail="Parent directory does not exist")
+            
+        name = body.name.strip()
+        if ".." in name or "/" in name or "\\" in name:
+            raise HTTPException(status_code=400, detail="Invalid folder name")
+            
+        new_dir = os.path.join(target, name)
+        try:
+            os.makedirs(new_dir, exist_ok=False)
+        except FileExistsError:
+            raise HTTPException(status_code=400, detail="Folder already exists")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+            
+        from src.tool_execution import vet_workspace
+        return {"path": new_dir, "selectable": vet_workspace(new_dir) is not None}
 
     return router
