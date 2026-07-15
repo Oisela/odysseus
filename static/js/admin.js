@@ -2759,7 +2759,7 @@ async function _loadSystemStatus() {
   const btn = el('sys-promoteBtn'), msg = el('sys-statusMsg');
   if (!vEl) return;
   try {
-    const res = await fetch(`${API_BASE}/api/system/status`, { credentials: 'same-origin' });
+    const res = await fetch(`/api/system/status`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const d = await res.json();
     vEl.textContent = d.version || 'unknown';
@@ -2795,7 +2795,7 @@ function initSystemStatus() {
     if (!confirm('Promote the running beta to production? This merges dev, rebuilds prod, and restarts the server.')) return;
     btn.disabled = true; btn.textContent = 'Promoting...'; msg.textContent = ''; msg.className = '';
     try {
-      const res = await fetch(`${API_BASE}/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch(`/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
         msg.textContent = 'Promotion started. Prod will rebuild and restart shortly — reload with Ctrl+Shift+R once it is back.';
