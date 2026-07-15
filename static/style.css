@@ -40638,8 +40638,23 @@ body.theme-frosted .modal {
   border-radius: 4px;
 }
 .pomo-rec-del:hover { opacity: 1; color: var(--accent-error, #c66); }
-.pomo-rec-day { font-weight: 600; font-size: 12px; margin: 10px 0 2px; opacity: 0.85; }
+.pomo-rec-day {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 12px;
+  margin: 12px 0 2px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+  opacity: 0.9;
+}
 .pomo-rec-day:first-child { margin-top: 0; }
+.pomo-rec-day-total { font-weight: 500; opacity: 0.65; font-variant-numeric: tabular-nums; }
+/* Statistics window overview — roomier numbers than the inline stats row */
+#pomo-stats-overview { justify-content: space-between; gap: 10px; }
+#pomo-stats-overview b { font-size: 16px; }
 .pomo-manual-row {
   /* Mirrors the two-column settings grid above so the row lines up
      symmetrically: input under the left column, button under the right. */
