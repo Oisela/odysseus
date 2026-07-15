@@ -7402,23 +7402,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         Modals.minimize('doc-panel');
         return;
       }
-      // Removed: the old "if restoreMode && !shouldRestoreOpen → stay
-      // closed" branch. Users expect that entering a chat with an
-      // attached document opens the panel automatically, not just shows
-      // an indicator. The minimised branch above still respects an
-      // explicit user choice to dock the panel; everything else falls
-      // through to the "open panel" path below.
-      if (false) {
+      // Local fork (Oisela): entering a chat must NOT auto-open its attached
+      // documents/PDFs — the panel shoving itself over the chat on every
+      // session switch is disruptive. The doc indicator button next to the
+      // input lights up instead (_syncDocIndicator above) and is the way
+      // back in. Only an explicit prior "open" state restores the panel.
+      if (restoreMode && !shouldRestoreOpen) {
         activeDocId = null;
         _minimizedDocId = null;
         if (Modals.isRegistered('doc-panel')) Modals.unregister('doc-panel');
         return;
       }
-      // Always open when there are docs — the minimised branch above
-      // already returned for users who explicitly docked the panel.
-      // The previous `if (!restoreMode || shouldRestoreOpen)` gate left
-      // the panel closed on first entry to a chat with docs, which
-      // hides the doc unless the user manually opens the panel.
       _markDocVisibleState(sessionId, 'open');
       if (!isOpen) openPanel();
       switchToDoc(target.id);
