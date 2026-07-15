@@ -349,6 +349,10 @@ class TaskScheduler:
         # This is a hard guarantee, not configurable.
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
+        # task_id -> SET of asyncio.Tasks. A force-run and a scheduled run of
+        # the same task can be in flight together; a single-slot map let the
+        # newer coroutine clobber the older one's handle, leaving a zombie
+        # that held the run semaphore but could never be cancelled.
         self._task_handles = {}
         # Task ids currently executing because the USER clicked run — these
         # are exempt from the interactive-quiet gate AND from the blunt
@@ -734,7 +738,7 @@ class TaskScheduler:
         from core.database import SessionLocal, TaskRun
         current = asyncio.current_task()
         if current:
-            self._task_handles[task_id] = current
+            self._task_handles.setdefault(task_id, set()).add(current)
         if manual:
             self._manual_tasks.add(task_id)
         run_id = str(uuid.uuid4())
@@ -781,9 +785,7 @@ class TaskScheduler:
         finally:
             if manual:
                 self._manual_tasks.discard(task_id)
-            handle = self._task_handles.get(task_id)
-            if handle is current:
-                self._task_handles.pop(task_id, None)
+            self._drop_task_handle(task_id, current)
             if release_executing:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
@@ -1163,9 +1165,7 @@ class TaskScheduler:
                 logger.exception("Task %s error-path failed unexpectedly", task_id)
         finally:
             db.close()
-            handle = self._task_handles.get(task_id)
-            if handle is asyncio.current_task():
-                self._task_handles.pop(task_id, None)
+            self._drop_task_handle(task_id, asyncio.current_task())
             if release_executing:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
@@ -2240,13 +2240,26 @@ class TaskScheduler:
         asyncio.create_task(self._execute_task(task_id, manual=manual))
         return True
 
+    def _drop_task_handle(self, task_id: str, task) -> None:
+        handles = self._task_handles.get(task_id)
+        if not handles:
+            return
+        handles.discard(task)
+        if not handles:
+            self._task_handles.pop(task_id, None)
+
+    def _cancel_task_handles(self, task_id: str) -> int:
+        """Cancel every in-flight coroutine of this task. Returns the count."""
+        cancelled = 0
+        for handle in list(self._task_handles.get(task_id, ())):
+            if handle and not handle.done():
+                handle.cancel()
+                cancelled += 1
+        return cancelled
+
     async def stop_task(self, task_id: str) -> bool:
         """Request cancellation of a running/queued task and mark its run aborted."""
-        handle = self._task_handles.get(task_id)
-        stopped = False
-        if handle and not handle.done():
-            handle.cancel()
-            stopped = True
+        stopped = self._cancel_task_handles(task_id) > 0
         async with self._executing_lock:
             if task_id in self._executing:
                 self._executing.discard(task_id)
@@ -2297,10 +2310,7 @@ class TaskScheduler:
                 continue
             if not self._has_running_run(task_id):
                 continue
-            handle = self._task_handles.get(task_id)
-            if handle and not handle.done():
-                handle.cancel()
-                stopped += 1
+            stopped += self._cancel_task_handles(task_id)
             if self._mark_run_aborted(task_id):
                 stopped += 1
         if stopped:
