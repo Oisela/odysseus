@@ -2792,24 +2792,24 @@ function initSystemStatus() {
   if (!btn) return;
   btn.addEventListener('click', async () => {
     const msg = el('sys-statusMsg');
-    if (!confirm('Promote the running beta to production? This merges dev, rebuilds prod, and restarts the server.')) return;
-    btn.disabled = true; btn.textContent = 'Promoting...'; msg.textContent = ''; msg.className = '';
+    if (!confirm('Update production to the released version? This rebuilds prod from dev and restarts the server.')) return;
+    btn.disabled = true; btn.textContent = 'Updating...'; msg.textContent = ''; msg.className = '';
     try {
       const res = await fetch(`/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
-        msg.textContent = 'Promotion started. Prod will rebuild and restart shortly — reload with Ctrl+Shift+R once it is back.';
+        msg.textContent = 'Update started. Prod will rebuild and restart shortly — reload with Ctrl+Shift+R once it is back.';
         msg.className = 'admin-success';
       } else {
-        msg.textContent = (d && (d.detail || d.message)) || `Promotion failed (status ${res.status})`;
+        msg.textContent = (d && (d.detail || d.message)) || `Update failed (status ${res.status})`;
         msg.className = 'admin-error';
         btn.disabled = false;
       }
     } catch (e) {
-      msg.textContent = 'Promotion failed: ' + e.message; msg.className = 'admin-error';
+      msg.textContent = 'Update failed: ' + e.message; msg.className = 'admin-error';
       btn.disabled = false;
     }
-    btn.textContent = 'Promote beta to prod';
+    btn.textContent = 'Update';
   });
   _loadSystemStatus();
 }
