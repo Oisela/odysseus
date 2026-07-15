@@ -2240,18 +2240,44 @@ class TaskScheduler:
         stopped = self._mark_run_aborted(task_id) or stopped
         return stopped
 
+    def _has_running_run(self, task_id: str) -> bool:
+        """Whether the task's current run actually started (status running)."""
+        try:
+            from core.database import SessionLocal, TaskRun
+            db = SessionLocal()
+            try:
+                return db.query(TaskRun.id).filter(
+                    TaskRun.task_id == task_id,
+                    TaskRun.status == "running",
+                ).first() is not None
+            finally:
+                db.close()
+        except Exception:
+            # If we can't tell, err on the old blunt behavior (cancel).
+            return True
+
     async def stop_background_tasks_for_foreground(self, *, reason: str = "Odysseus became active") -> int:
-        """Cancel all in-process scheduler tasks because the user is active.
+        """Cancel in-process scheduler tasks because the user is active.
 
         This is intentionally blunt for scheduled/background work: when the
         user opens or uses Odysseus, foreground interaction wins immediately.
         Manual force-runs can be restarted by the user; automatic jobs will be
         deferred by their cancellation path instead of stealing the app.
+
+        Runs that are still QUEUED (waiting behind the run slot or the
+        interactive-quiet gate) are doing no work yet and are left waiting:
+        cancelling them here aborted every run dispatched while the app was
+        open and re-deferred it 15 minutes on each user request, so tasks
+        never got to run. The quiet gate keeps them from starting, and the
+        per-run foreground monitor cancels them if the user is active once
+        they do start.
         """
         async with self._executing_lock:
             task_ids = list(self._executing)
         stopped = 0
         for task_id in task_ids:
+            if not self._has_running_run(task_id):
+                continue
             handle = self._task_handles.get(task_id)
             if handle and not handle.done():
                 handle.cancel()
