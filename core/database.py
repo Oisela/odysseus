@@ -201,6 +201,9 @@ class Project(TimestampMixin, Base):
     template_id = Column(String, nullable=True)
     # Skill names that get priority injection in project chats (keep small).
     pinned_skills = Column(JSON, default=list)
+    # "endpoint_url::model" pairing new chats in this project start with
+    # (same encoding as tasks); empty = clone from the most recent session.
+    default_model = Column(String, nullable=True)
     sort_order = Column(Integer, default=0)
     archived = Column(Boolean, default=False)
 
@@ -753,6 +756,30 @@ def _migrate_add_session_project_id_column():
             logging.getLogger(__name__).info("Migrated: added 'project_id' to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"sessions.project_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_project_default_model_column():
+    """Add default_model to projects (endpoint_url::model for new chats). Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(projects)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "default_model" not in columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN default_model VARCHAR")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'default_model' to projects")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"projects.default_model migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1887,6 +1914,7 @@ def init_db():
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_session_project_id_column()
+    _migrate_add_project_default_model_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()

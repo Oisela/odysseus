@@ -225,6 +225,58 @@ def _project_context_for_session(session_id, chat_handler):
         return None, None, None
 
 
+def _apply_project_default_model(sess, session_id: str, owner: str | None = None) -> bool:
+    """Fill an empty session model from the project's default_model.
+
+    Projects can pin an "endpoint_url::model" pairing (same encoding as
+    tasks); a project chat that reaches the send path without a model gets
+    that pairing instead of the generic cached-endpoint recovery, so every
+    client (phone, fresh browser) starts project chats on the intended model.
+    A model the user picked manually in the chat is never overridden.
+    """
+    if (getattr(sess, "model", "") or "").strip():
+        return False
+    if not session_id:
+        return False
+    try:
+        from core.database import Project as DbProject, Session as DbSess
+        db = SessionLocal()
+        try:
+            row = db.query(DbSess.project_id).filter(DbSess.id == session_id).first()
+            if not row or not row.project_id:
+                return False
+            proj = db.query(DbProject).filter(DbProject.id == row.project_id).first()
+            if not proj or proj.archived:
+                return False
+            raw = (getattr(proj, "default_model", "") or "").strip()
+            if "::" not in raw:
+                return False
+            endpoint_url, _, model = raw.partition("::")
+            endpoint_url, model = endpoint_url.strip(), model.strip()
+            if not endpoint_url or not model:
+                return False
+            db_session_q = db.query(DBSession).filter(DBSession.id == session_id)
+            if owner:
+                db_session_q = db_session_q.filter(DBSession.owner == owner)
+            db_session = db_session_q.first()
+            if db_session:
+                db_session.endpoint_url = endpoint_url
+                db_session.model = model
+                db_session.updated_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+        sess.endpoint_url = endpoint_url
+        sess.model = model
+        logger.info(
+            "Applied project default model %r for session %s", model, session_id
+        )
+        return True
+    except Exception:
+        logger.warning("[project] default model apply failed", exc_info=True)
+        return False
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -503,9 +555,11 @@ def setup_chat_routes(
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
-        # Empty model + live endpoint = setup race (Issue #587). Repair from
-        # the endpoint's cached model list before privilege checks, which
-        # otherwise see "" and behave inconsistently with the allowlist.
+        # Empty model: project default first (deliberate choice), then the
+        # cached-endpoint recovery for the setup race (Issue #587) — both
+        # before privilege checks, which otherwise see "" and behave
+        # inconsistently with the allowlist.
+        _apply_project_default_model(sess, session, owner=owner)
         _recover_empty_session_model(sess, session, owner=owner)
         if not getattr(sess, "model", "").strip():
             raise HTTPException(
@@ -764,7 +818,8 @@ def setup_chat_routes(
             # endpoint setup, or a previous endpoint delete/recreate). Pull
             # the first cached model off the matching endpoint so the
             # upstream isn't called with model="" (which surfaces as a
-            # generic 401/503).
+            # generic 401/503). Project default (deliberate choice) first.
+            _apply_project_default_model(sess, session, owner=owner)
             _recover_empty_session_model(sess, session, owner=owner)
             if not getattr(sess, "model", "").strip():
                 raise HTTPException(
