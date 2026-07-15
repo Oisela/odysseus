@@ -40613,6 +40613,33 @@ body.theme-frosted .modal {
 }
 .pomo-stats span { display: flex; flex-direction: column; gap: 1px; }
 .pomo-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
+/* Focus record rows (today list in the timer + the statistics window) */
+.pomo-today { width: 100%; max-height: 110px; overflow-y: auto; margin: -8px 0 10px; }
+.pomo-today:empty { display: none; }
+.pomo-rec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 2px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.pomo-rec-row:last-child { border-bottom: none; }
+.pomo-rec-time { flex: 1; opacity: 0.75; font-variant-numeric: tabular-nums; text-align: left; }
+.pomo-rec-dur { font-variant-numeric: tabular-nums; }
+.pomo-rec-del {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.35;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.pomo-rec-del:hover { opacity: 1; color: var(--accent-error, #c66); }
+.pomo-rec-day { font-weight: 600; font-size: 12px; margin: 10px 0 2px; opacity: 0.85; }
+.pomo-rec-day:first-child { margin-top: 0; }
 .pomo-manual-row {
   /* Mirrors the two-column settings grid above so the row lines up
      symmetrically: input under the left column, button under the right. */

@@ -27,17 +27,61 @@ POMODORO_LOG_FILE = os.path.join(DATA_DIR, "pomodoro_log.json")
 _MAX_SECONDS_PER_LOG = 24 * 3600
 
 
-def _load_log() -> Dict[str, Dict[str, int]]:
+def _load_log() -> Dict[str, Dict[str, Any]]:
     try:
         import json
         with open(POMODORO_LOG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        return {k: _normalize_owner_record(v) for k, v in data.items()}
     except FileNotFoundError:
         return {}
     except Exception as e:
         logger.warning(f"pomodoro log unreadable, starting fresh: {e}")
         return {}
+
+
+def _normalize_owner_record(rec: Any) -> Dict[str, Any]:
+    """Upgrade an owner's record to the entries format.
+
+    v1 stored only day totals ({iso-date: seconds}); v2 keeps individual
+    sessions ({"entries": [{id, date, start, end, seconds, note}]}) so the UI
+    can show and delete single pomodoros (TickTick-style focus record). Old
+    day totals become one synthetic entry per day — totals stay identical.
+    """
+    if isinstance(rec, dict) and isinstance(rec.get("entries"), list):
+        return {"entries": [e for e in rec["entries"] if isinstance(e, dict)]}
+    entries = []
+    if isinstance(rec, dict):
+        for day in sorted(rec):
+            try:
+                seconds = max(0, int(rec[day]))
+                date.fromisoformat(str(day))
+            except (TypeError, ValueError):
+                continue
+            if seconds:
+                entries.append({
+                    "id": uuid.uuid4().hex[:12],
+                    "date": str(day),
+                    "start": None,
+                    "end": None,
+                    "seconds": seconds,
+                    "note": "Tagessumme (vor v3.2)",
+                })
+    return {"entries": entries}
+
+
+def _day_seconds(rec: Dict[str, Any]) -> Dict[str, int]:
+    """Collapse an owner's entries into the {iso-date: seconds} map the
+    stats math works on."""
+    days: Dict[str, int] = {}
+    for e in rec.get("entries", []):
+        try:
+            days[e["date"]] = days.get(e["date"], 0) + max(0, int(e.get("seconds", 0)))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return days
 
 
 def compute_stats(day_seconds: Dict[str, Any], today: date) -> Dict[str, int]:
@@ -131,23 +175,73 @@ def setup_pomodoro_routes():
         else:
             day = datetime.now().date().isoformat()
 
+        def _iso_ts(field: str) -> Optional[str]:
+            raw = str(body.get(field) or "").strip()
+            if not raw:
+                return None
+            try:
+                datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                return raw
+            except ValueError:
+                return None
+
         log = _load_log()
-        mine = log.setdefault(key, {})
-        try:
-            current = max(0, int(mine.get(day, 0)))
-        except (TypeError, ValueError):
-            current = 0
-        mine[day] = current + seconds
+        mine = log.setdefault(key, {"entries": []})
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "date": day,
+            "start": _iso_ts("start"),
+            "end": _iso_ts("end"),
+            "seconds": seconds,
+            "note": str(body.get("note") or "").strip()[:120],
+        }
+        mine["entries"].append(entry)
         atomic_write_json(POMODORO_LOG_FILE, log, indent=2)
 
-        stats = compute_stats(mine, datetime.now().date())
-        return {"ok": True, "date": day, "day_total_s": mine[day], **stats}
+        days = _day_seconds(mine)
+        stats = compute_stats(days, datetime.now().date())
+        return {"ok": True, "id": entry["id"], "date": day,
+                "day_total_s": days.get(day, 0), **stats}
 
     @router.get("/stats")
     async def pomodoro_stats(request: Request) -> Dict[str, Any]:
-        """Today / this-week / per-day-average focus time for the caller."""
+        """Today / this-week / per-day-average focus time for the caller,
+        plus all-time totals for the statistics view."""
         key = _owner_key(request)
-        mine = _load_log().get(key, {})
-        return compute_stats(mine, datetime.now().date())
+        mine = _load_log().get(key, {"entries": []})
+        days = _day_seconds(mine)
+        today = datetime.now().date()
+        stats = compute_stats(days, today)
+        entries = mine.get("entries", [])
+        stats["total_s"] = sum(days.values())
+        stats["total_sessions"] = len(entries)
+        stats["today_sessions"] = sum(1 for e in entries if e.get("date") == today.isoformat())
+        return stats
+
+    @router.get("/records")
+    async def pomodoro_records(request: Request, limit: int = 200) -> Dict[str, Any]:
+        """Individual focus sessions, newest first (TickTick's focus record)."""
+        key = _owner_key(request)
+        mine = _load_log().get(key, {"entries": []})
+        entries = sorted(
+            mine.get("entries", []),
+            key=lambda e: (str(e.get("date") or ""), str(e.get("end") or e.get("start") or "")),
+            reverse=True,
+        )
+        return {"records": entries[: max(1, min(limit, 1000))]}
+
+    @router.delete("/records/{entry_id}")
+    async def pomodoro_delete_record(entry_id: str, request: Request) -> Dict[str, Any]:
+        """Remove a single logged session (mis-click, double log)."""
+        key = _owner_key(request)
+        log = _load_log()
+        mine = log.setdefault(key, {"entries": []})
+        before = len(mine["entries"])
+        mine["entries"] = [e for e in mine["entries"] if e.get("id") != entry_id]
+        if len(mine["entries"]) == before:
+            raise HTTPException(404, "Eintrag nicht gefunden")
+        atomic_write_json(POMODORO_LOG_FILE, log, indent=2)
+        stats = compute_stats(_day_seconds(mine), datetime.now().date())
+        return {"ok": True, **stats}
 
     return router
