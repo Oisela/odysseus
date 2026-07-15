@@ -4033,6 +4033,7 @@ async function _toggleCardPreview(card, em) {
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="trash" title="Move to Trash"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg><span class="reader-btn-label">Trash</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
             </div>
@@ -4077,6 +4078,10 @@ async function _toggleCardPreview(card, em) {
     reader.querySelector('[data-act="summarize"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       await _summarizeEmail(reader, data, ev.currentTarget);
+    });
+    reader.querySelector('[data-act="trash"]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _readerMoveToTrash(em, card, folderAtStart);
     });
     _wireMetaToggle(reader);
     // from-sender / thread-search Search button is DISABLED for now —
@@ -6110,6 +6115,7 @@ async function _openEmailAsTab(em, folder) {
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="trash" title="Move to Trash"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg><span class="reader-btn-label">Trash</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -6145,6 +6151,10 @@ async function _openEmailAsTab(em, folder) {
     reader.querySelector('[data-act="summarize"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       try { await _summarizeEmail(reader, data, ev.currentTarget); } catch {}
+    });
+    reader.querySelector('[data-act="trash"]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _readerMoveToTrash(em, modal, useFolder);
     });
     _wireMetaToggle(reader);
     reader.querySelector('[data-act="from-sender"]')?.remove();
@@ -6271,6 +6281,7 @@ async function _openEmailWindow(em, folder) {
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="trash" title="Move to Trash"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg><span class="reader-btn-label">Trash</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
             </div>
@@ -6305,6 +6316,10 @@ async function _openEmailWindow(em, folder) {
     bodyEl.querySelector('[data-act="summarize"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       try { await _summarizeEmail(bodyEl, data, ev.currentTarget); } catch {}
+    });
+    bodyEl.querySelector('[data-act="trash"]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      _readerMoveToTrash(em, modal, useFolder);
     });
     _wireMetaToggle(bodyEl);
     bodyEl.querySelector('[data-act="from-sender"]')?.remove();
@@ -6642,6 +6657,47 @@ function _fitEmailDropdown(dropdown, rect) {
       dropdown.style.overflowY = 'auto';
     }
   });
+}
+
+/**
+ * Move an email to Trash from a reader toolbar (inline card reader, email
+ * modal, standalone window). Same server call as the More-menu entry; after
+ * success the card is removed from the grid and the next email is opened.
+ * `cardOrModal` may be a grid card OR a floating modal — modals are simply
+ * closed (they have no grid siblings).
+ */
+async function _readerMoveToTrash(em, cardOrModal, folder) {
+  const busy = _showEmailDeleteOverlay(cardOrModal);
+  await busy?.ready;
+  try {
+    await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(folder || state._libFolder || 'INBOX')}${_acct()}`, { method: 'DELETE' });
+  } catch (e) {
+    console.error('move to trash failed', e);
+    busy?.remove?.();
+    showToast('Failed to move to Trash');
+    return;
+  }
+  busy?.remove?.();
+  showToast('Moved to Trash');
+  let nextUid = null;
+  try {
+    const sibling = _findSiblingEmailCard(cardOrModal, +1) || _findSiblingEmailCard(cardOrModal, -1);
+    nextUid = sibling ? sibling.dataset.uid : null;
+  } catch (e) { /* modal context — no siblings */ }
+  try { await _animateEmailCardRemoval([em.uid]); } catch (e) { /* card may not be in the grid */ }
+  state._libEmails = (state._libEmails || []).filter(e => String(e.uid) !== String(em.uid));
+  try { _renderGrid(); _libCacheWriteBack(); } catch (e) { /* grid not open */ }
+  if (cardOrModal && cardOrModal.classList && cardOrModal.classList.contains('modal')) {
+    try { cardOrModal.remove(); } catch (e) { /* already gone */ }
+  }
+  if (!nextUid) return;
+  const grid = document.getElementById('email-lib-grid');
+  const nextCard = grid?.querySelector(`.doclib-card[data-uid="${CSS.escape(String(nextUid))}"]`);
+  const nextEm = state._libEmails.find(e => String(e.uid) === String(nextUid));
+  if (nextCard && nextEm) {
+    _toggleCardPreview(nextCard, nextEm);
+    nextCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function _showReaderMoreMenu(em, card, reader, anchor) {
