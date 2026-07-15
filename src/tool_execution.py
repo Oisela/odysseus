@@ -979,27 +979,33 @@ def format_tool_result(description: str, result: Dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
 
+    # Defense-in-depth cap on every primary payload field. Most tools already
+    # truncate at the source (MAX_OUTPUT_CHARS), but MCP results, chained-model
+    # responses, and future tools don't reliably — one giant dump here would
+    # blow the context window for the whole rest of the session.
+    _cap = lambda t: _truncate(t, limit=12_000)  # noqa: E731
+
     if "stdout" in result:
         if result["stdout"]:
-            parts.append(f"**stdout:**\n```\n{result['stdout']}\n```")
+            parts.append(f"**stdout:**\n```\n{_cap(result['stdout'])}\n```")
         if result["stderr"]:
-            parts.append(f"**stderr:**\n```\n{result['stderr']}\n```")
+            parts.append(f"**stderr:**\n```\n{_cap(result['stderr'])}\n```")
         parts.append(f"**exit_code:** {result.get('exit_code', 'unknown')}")
     elif "output" in result:
         # bash / python canonical result shape: {"output": ..., "exit_code": ...}
-        parts.append(f"```\n{result['output']}\n```")
+        parts.append(f"```\n{_cap(result['output'])}\n```")
         if result.get("exit_code") not in (0, None):
             parts.append(f"**exit_code:** {result['exit_code']}")
     elif "content" in result:
-        parts.append(f"**content ({result.get('size', '?')} chars):**\n```\n{result['content']}\n```")
+        parts.append(f"**content ({result.get('size', '?')} chars):**\n```\n{_cap(result['content'])}\n```")
     elif "response" in result:
         model = result.get("model", result.get("session_name", ""))
         if model:
-            parts.append(f"**{model} responded:**\n{result['response']}")
+            parts.append(f"**{model} responded:**\n{_cap(result['response'])}")
         else:
-            parts.append(result["response"])
+            parts.append(_cap(result["response"]))
     elif "results" in result:
-        parts.append(result["results"])
+        parts.append(_cap(result["results"]))
     elif "session_id" in result and "name" in result:
         parts.append(f"Session created: **{result['name']}** (id: `{result['session_id']}`, model: {result.get('model', 'unknown')})")
     elif "success" in result:
