@@ -2595,6 +2595,9 @@ body.bg-pattern-sparkles {
       0%, 100% { background: color-mix(in srgb, var(--red) 12%, transparent); }
       50% { background: color-mix(in srgb, var(--red) 22%, transparent); }
     }
+    /* In project chats the project pill names the folder — the workspace
+       pill would repeat the same information right next to it. */
+    body.project-chat #workspace-indicator-btn { display: none !important; }
     .tool-indicator-x {
       margin-left: 2px;
       opacity: 0.4;

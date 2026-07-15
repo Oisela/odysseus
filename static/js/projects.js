@@ -65,12 +65,16 @@ export function onSessionSwitch(sessionId, projectId = null) {
     // Also covers direct entry via URL hash, which skips _openProjectChat.
     const proj = _projects.find(p => String(p.id) === String(projectId));
     _syncProjectPanelBtn(proj || null);
+    // The project pill replaces the workspace pill here — showing both would
+    // name the same folder twice (CSS hides the workspace pill on this class).
+    document.body.classList.toggle('project-chat', !!proj);
     if (proj && proj.workspace) {
       try { workspaceModule.setWorkspace(proj.workspace); _workspaceFromProject = true; } catch (e) { /* ignore */ }
     }
     return;
   }
   _syncProjectPanelBtn(null);
+  document.body.classList.remove('project-chat');
   if (_workspaceFromProject) {
     _workspaceFromProject = false;
     try { workspaceModule.setWorkspace(''); } catch (e) { /* ignore */ }
