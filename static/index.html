@@ -1455,6 +1455,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>System</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="developer">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span>Developer</span>
+          </button>
         </div>
         <div class="settings-panels">
 
@@ -2367,6 +2371,44 @@
         </div>
 
         <!-- ═══ SYSTEM TAB ═══ -->
+        <!-- ═══ DEVELOPER TAB (admin) ═══ -->
+        <div data-settings-panel="developer" class="hidden">
+
+          <div class="admin-card" id="settings-dev-status-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Package status</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">The open package is what dev is currently collecting; releases get promoted to prod via the System card.</div>
+            <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Open package</span><span id="dev-package" style="font-family:var(--mono,monospace)">…</span></div>
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Prod</span><span id="dev-prod" style="font-family:var(--mono,monospace)">…</span></div>
+              <div style="display:flex;justify-content:space-between;gap:12px;"><span style="opacity:0.6">Beta</span><span id="dev-beta" style="font-family:var(--mono,monospace)">…</span></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button class="admin-btn-sm" id="dev-builder-btn" style="display:none;">Open builder project</button>
+            </div>
+          </div>
+
+          <div class="admin-card" id="settings-dev-roadmap-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Roadmap</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">The developer's work queue — it reads this list on every run. Check off, add, or edit entries; changes are saved to the shared file.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+              <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Add a bug or idea…" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
+              <select id="dev-roadmap-section" style="height:34px;"></select>
+              <button class="admin-btn-add" id="dev-roadmap-add">Add</button>
+            </div>
+            <div id="dev-roadmap-list" style="font-size:13px;"><div style="opacity:0.6">loading…</div></div>
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+              <button class="admin-btn-sm" id="dev-roadmap-raw-btn">Edit raw</button>
+              <span id="dev-roadmap-msg" style="font-size:12px;"></span>
+            </div>
+            <textarea id="dev-roadmap-raw" class="hidden" rows="16" spellcheck="false" style="width:100%;box-sizing:border-box;margin-top:8px;font-family:var(--mono,monospace);font-size:12px;"></textarea>
+            <div id="dev-roadmap-raw-actions" class="hidden" style="display:flex;gap:8px;margin-top:6px;">
+              <button class="admin-btn-add" id="dev-roadmap-raw-save">Save raw</button>
+              <button class="admin-btn-sm" id="dev-roadmap-raw-cancel">Cancel</button>
+            </div>
+          </div>
+
+        </div>
+
         <div data-settings-panel="system" class="hidden">
 
           <div class="admin-card" id="settings-system-logs-card">

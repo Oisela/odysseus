@@ -7,12 +7,14 @@ So we reach the host over the pre-configured `odysseus-host` SSH alias, exactly
 like the beta-deploy / promote scripts do.
 """
 import logging
+import os
 import subprocess
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
-from src.constants import APP_VERSION
+from src.constants import APP_VERSION, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,12 @@ _PROD_DIR = "/opt/odysseus"
 _BETA_DIR = "/opt/odysseus-beta"
 _BETA_URL = "http://127.0.0.1:7001/api/version"
 _PROMOTE = "/home/deploy/odysseus-entwickler/promote.sh"
+# Living work queue — same file the developer skill reads on every start.
+_ROADMAP = os.path.join(DATA_DIR, "dev", "ROADMAP.md")
+
+
+class RoadmapBody(BaseModel):
+    content: str = Field(..., max_length=200_000)
 
 
 def _ssh(*args: str, timeout: int = 8) -> subprocess.CompletedProcess:
@@ -87,8 +95,24 @@ def setup_system_routes() -> APIRouter:
         # already merged into origin/dev (what prod will actually build).
         promotable = bool(beta_active and beta_in_dev)
 
+        # The open package = APP_VERSION on origin/dev's tip (may be ahead of
+        # this running instance). Read it from the host checkout's remote ref.
+        dev_version = None
+        try:
+            r = _ssh(
+                "bash", "-lc",
+                f"git -C {_PROD_DIR} fetch -q origin 2>/dev/null; "
+                f"git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null "
+                f"| grep -m1 'APP_VERSION'",
+            )
+            if r.returncode == 0 and '"' in r.stdout:
+                dev_version = r.stdout.split('"')[1] or None
+        except Exception:
+            logger.exception("system/status: dev version lookup failed")
+
         return {
             "version": APP_VERSION,
+            "dev_version": dev_version,
             "commit": commit,
             "beta_active": beta_active,
             "beta_branch": beta_branch,
@@ -96,6 +120,32 @@ def setup_system_routes() -> APIRouter:
             "beta_in_dev": beta_in_dev,
             "promotable": promotable,
         }
+
+    @router.get("/roadmap")
+    def get_roadmap(request: Request):
+        require_admin(request)
+        try:
+            with open(_ROADMAP, encoding="utf-8") as fh:
+                return {"content": fh.read(), "missing": False}
+        except FileNotFoundError:
+            return {"content": "", "missing": True}
+        except OSError as e:
+            raise HTTPException(500, f"Roadmap read failed: {e}")
+
+    @router.post("/roadmap")
+    def save_roadmap(body: RoadmapBody, request: Request):
+        require_admin(request)
+        try:
+            os.makedirs(os.path.dirname(_ROADMAP), exist_ok=True)
+            # Atomic replace so a crash mid-write can't truncate the queue the
+            # developer skill works from.
+            tmp = _ROADMAP + ".tmp"
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(body.content)
+            os.replace(tmp, _ROADMAP)
+        except OSError as e:
+            raise HTTPException(500, f"Roadmap write failed: {e}")
+        return {"ok": True}
 
     @router.post("/promote")
     def promote_beta(request: Request):

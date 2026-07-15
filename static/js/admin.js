@@ -2814,6 +2814,192 @@ function initSystemStatus() {
   _loadSystemStatus();
 }
 
+/* ── Developer page (package status + editable roadmap) ── */
+let _roadmapText = '';
+
+function _roadmapSections(text) {
+  // Top-level "## " headers with their line ranges; items are top-level
+  // "- [ ]"/"- [x]" lines inside a section (continuation lines are the
+  // indented non-list lines that follow an item).
+  const lines = text.split('\n');
+  const sections = [];
+  let cur = null;
+  lines.forEach((line, i) => {
+    if (line.startsWith('## ')) {
+      if (cur) cur.end = i;
+      cur = { title: line.slice(3).trim(), start: i, end: lines.length, items: [] };
+      sections.push(cur);
+      return;
+    }
+    if (cur && /^- \[[ xX]\] /.test(line)) {
+      cur.items.push({ line: i, done: /^- \[[xX]\]/.test(line), text: line.slice(6).trim(), extra: [] });
+    } else if (cur && cur.items.length && /^\s{2,}\S/.test(line)) {
+      cur.items[cur.items.length - 1].extra.push(line.trim());
+    }
+  });
+  return { lines, sections };
+}
+
+async function _saveRoadmap(text, msgEl) {
+  try {
+    const res = await fetch(`/api/system/roadmap`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text }),
+    });
+    if (!res.ok) throw new Error(`save ${res.status}`);
+    _roadmapText = text;
+    if (msgEl) { msgEl.textContent = 'Saved.'; msgEl.className = 'admin-success'; setTimeout(() => { msgEl.textContent = ''; }, 2500); }
+    return true;
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = 'Save failed: ' + e.message; msgEl.className = 'admin-error'; }
+    return false;
+  }
+}
+
+function _renderRoadmap() {
+  const list = el('dev-roadmap-list'), sectionSel = el('dev-roadmap-section');
+  const msg = el('dev-roadmap-msg');
+  if (!list) return;
+  const { lines, sections } = _roadmapSections(_roadmapText);
+  list.innerHTML = '';
+  if (sectionSel) sectionSel.innerHTML = '';
+  if (!sections.length) {
+    list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
+    if (sectionSel) sectionSel.appendChild(new Option('Eingang', 'Eingang'));
+    return;
+  }
+  for (const sec of sections) {
+    if (sectionSel) sectionSel.appendChild(new Option(sec.title.replace(/\s*\(.*$/, ''), sec.title));
+    const head = document.createElement('div');
+    head.textContent = sec.title;
+    head.style.cssText = 'font-weight:600;margin:10px 0 4px;';
+    list.appendChild(head);
+    if (!sec.items.length) {
+      const empty = document.createElement('div');
+      empty.textContent = '(no entries)';
+      empty.style.cssText = 'opacity:0.45;margin-left:4px;';
+      list.appendChild(empty);
+      continue;
+    }
+    for (const item of sec.items) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;gap:7px;align-items:baseline;cursor:pointer;padding:2px 0;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = item.done;
+      cb.addEventListener('change', async () => {
+        const ls = _roadmapText.split('\n');
+        ls[item.line] = ls[item.line].replace(/^- \[[ xX]\]/, cb.checked ? '- [x]' : '- [ ]');
+        if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
+      });
+      const span = document.createElement('span');
+      span.textContent = item.text;
+      if (item.extra.length) span.title = item.extra.join('\n');
+      if (item.done) span.style.cssText = 'opacity:0.5;text-decoration:line-through;';
+      row.appendChild(cb); row.appendChild(span);
+      list.appendChild(row);
+    }
+  }
+}
+
+async function _loadRoadmap() {
+  const msg = el('dev-roadmap-msg');
+  try {
+    const res = await fetch(`/api/system/roadmap`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`load ${res.status}`);
+    const d = await res.json();
+    _roadmapText = d.content || '';
+    _renderRoadmap();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed to load roadmap: ' + e.message; msg.className = 'admin-error'; }
+  }
+}
+
+async function _loadDevStatus() {
+  const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta');
+  if (!pkg) return;
+  try {
+    const res = await fetch(`/api/system/status`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const d = await res.json();
+    pkg.textContent = d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`;
+    prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
+    beta.textContent = d.beta_active ? `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}` : 'not running';
+  } catch (e) {
+    pkg.textContent = prod.textContent = beta.textContent = 'error';
+  }
+}
+
+async function _initBuilderLink() {
+  const btn = el('dev-builder-btn');
+  if (!btn) return;
+  try {
+    const m = await import('./projects.js');
+    const projs = (m.getProjects && m.getProjects()) || [];
+    const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
+      || projs.find(p => /entwickler|builder/i.test(p.name || ''));
+    if (!builder || !(builder.sessions || []).length) return;
+    btn.style.display = '';
+    btn.addEventListener('click', async () => {
+      try {
+        if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+        const s = await import('./sessions.js');
+        s.selectSession(builder.sessions[0].id);
+      } catch (e) { console.warn('open builder project failed', e); }
+    });
+  } catch (e) { /* projects module unavailable — keep button hidden */ }
+}
+
+function initDeveloper() {
+  if (!el('settings-dev-status-card')) return;
+  const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), sectionSel = el('dev-roadmap-section');
+  const msg = el('dev-roadmap-msg');
+  const doAdd = async () => {
+    const text = (input.value || '').trim();
+    if (!text) return;
+    const target = sectionSel.value;
+    const { lines, sections } = _roadmapSections(_roadmapText);
+    const sec = sections.find(s => s.title === target);
+    let ls;
+    if (!sec) {
+      // Empty/missing file: start a minimal queue with an Eingang section.
+      ls = _roadmapText ? _roadmapText.split('\n') : [];
+      if (ls.length && ls[ls.length - 1].trim() !== '') ls.push('');
+      ls.push(`## ${target || 'Eingang'}`, `- [ ] ${text}`);
+    } else {
+      // Insert at the section end, before trailing blank lines.
+      let at = sec.end;
+      ls = lines.slice();
+      while (at > sec.start + 1 && ls[at - 1].trim() === '') at--;
+      ls.splice(at, 0, `- [ ] ${text}`);
+    }
+    if (await _saveRoadmap(ls.join('\n'), msg)) {
+      input.value = '';
+      _renderRoadmap();
+    }
+  };
+  if (addBtn) addBtn.addEventListener('click', doAdd);
+  if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
+
+  // Raw editor for everything the structured view can't express.
+  const rawBtn = el('dev-roadmap-raw-btn'), raw = el('dev-roadmap-raw'), rawActions = el('dev-roadmap-raw-actions');
+  if (rawBtn) rawBtn.addEventListener('click', () => {
+    raw.value = _roadmapText;
+    raw.classList.remove('hidden');
+    rawActions.classList.remove('hidden');
+  });
+  const closeRaw = () => { raw.classList.add('hidden'); rawActions.classList.add('hidden'); };
+  el('dev-roadmap-raw-save')?.addEventListener('click', async () => {
+    if (await _saveRoadmap(raw.value, msg)) { closeRaw(); _renderRoadmap(); }
+  });
+  el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
+
+  _loadDevStatus();
+  _loadRoadmap();
+  _initBuilderLink();
+}
+
 /* ── Data Backup (export/import) ── */
 function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
@@ -3135,7 +3321,7 @@ function initAll() {
   modalEl = el('settings-modal');
   const inits = [
     initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initSystemStatus, initBackup, initDangerZone, initTokenForm, initLogsView,
+    initCalDAV, initSystemStatus, initDeveloper, initBackup, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
   for (const fn of inits) {
