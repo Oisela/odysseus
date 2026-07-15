@@ -178,7 +178,12 @@ function _updateChip() {
 function _finishWork() {
   const endedAt = _run.endsAt || Date.now();
   if (!_run.baseLogged) {
-    _logSeconds(Math.round(_phaseMs('work') / 1000));
+    const secs = Math.round(_phaseMs('work') / 1000);
+    _logSeconds(secs, {
+      start: new Date(endedAt - secs * 1000).toISOString(),
+      end: new Date(endedAt).toISOString(),
+      note: 'Focus',
+    });
     _run.baseLogged = true;
   }
   _run = { phase: 'overtime', round: _run.round, since: endedAt };
@@ -222,9 +227,12 @@ function _notify(title, body) {
 
 // ── Focus-time ledger (server-side, shared across devices) ──
 
-function _logSeconds(seconds, date) {
+function _logSeconds(seconds, opts = {}) {
   const payload = { seconds: Math.round(seconds) };
-  if (date) payload.date = date;
+  if (opts.date) payload.date = opts.date;
+  if (opts.start) payload.start = opts.start;
+  if (opts.end) payload.end = opts.end;
+  if (opts.note) payload.note = opts.note;
   return fetch(`${API_BASE}/api/pomodoro/log`, {
     method: 'POST',
     credentials: 'same-origin',
@@ -244,6 +252,139 @@ async function _refreshStats() {
     box.querySelector('[data-stat="week"]').textContent = _fmtHours(s.week_s);
     box.querySelector('[data-stat="avg"]').textContent = _fmtHours(s.week_avg_s);
   } catch (e) { /* stats are cosmetic — never break the timer */ }
+  _renderTodayRecords().catch(() => {});
+}
+
+// ── Focus record (individual sessions, TickTick-style) ──
+
+const _escTxt = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function _localDate(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function _recTime(e) {
+  const t = (iso) => {
+    try {
+      const d = new Date(iso);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    } catch (err) { return ''; }
+  };
+  if (e.start && e.end) return `${t(e.start)} – ${t(e.end)}`;
+  if (e.end || e.start) return t(e.end || e.start);
+  return _escTxt(e.note || 'logged');
+}
+
+async function _fetchRecords() {
+  try {
+    const res = await fetch(`${API_BASE}/api/pomodoro/records`, { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    return (await res.json()).records || [];
+  } catch (e) { return []; }
+}
+
+async function _deleteRecord(id) {
+  try {
+    await fetch(`${API_BASE}/api/pomodoro/records/${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    });
+  } catch (e) { /* refresh shows the truth either way */ }
+  _refreshStats();
+  if (document.getElementById('pomodoro-stats-modal')) _renderStatsModal();
+}
+
+function _recordRowsHtml(recs) {
+  return recs.map((r) => `
+    <div class="pomo-rec-row">
+      <span class="pomo-rec-time">${_recTime(r)}</span>
+      <span class="pomo-rec-dur">${_fmtHours(r.seconds)}</span>
+      <button type="button" class="pomo-rec-del" data-id="${_escTxt(r.id)}" title="Delete entry">✕</button>
+    </div>`).join('');
+}
+
+function _wireRecordDeletes(root) {
+  root.querySelectorAll('.pomo-rec-del').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); _deleteRecord(b.dataset.id); }));
+}
+
+/** Today's sessions under the stats row — see and undo what got logged. */
+async function _renderTodayRecords() {
+  const box = _modal?.querySelector('#pomo-today');
+  if (!box) return;
+  const today = _localDate();
+  const recs = (await _fetchRecords()).filter((r) => r.date === today);
+  box.innerHTML = recs.length ? _recordRowsHtml(recs) : '';
+  _wireRecordDeletes(box);
+}
+
+// ── Statistics window (overview + full focus record) ──
+
+function _openStatsModal() {
+  document.getElementById('pomodoro-stats-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'pomodoro-stats-modal';
+  modal.className = 'modal';
+  modal.style.zIndex = '260'; // above the pomodoro window
+  modal.innerHTML = `
+    <div class="modal-content pomo-modal-content" style="max-width:420px;width:min(420px,94vw);">
+      <div class="modal-header">
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>Focus statistics</h4>
+        <button class="close-btn" id="pomo-stats-close">✖</button>
+      </div>
+      <div class="modal-body" style="padding:12px 16px;max-height:70vh;overflow:auto;">
+        <div class="pomo-stats" id="pomo-stats-overview" style="margin-bottom:12px;">
+          <span><b data-k="today_sessions">–</b>Today's pomos</span>
+          <span><b data-k="total_sessions">–</b>Total pomos</span>
+          <span><b data-k="today_s">–</b>Today's focus</span>
+          <span><b data-k="total_s">–</b>Total focus</span>
+        </div>
+        <div id="pomo-stats-records" style="font-size:13px;"><div style="opacity:0.6">loading …</div></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('#pomo-stats-close').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) makeWindowDraggable(modal, { content, header });
+  _renderStatsModal();
+}
+
+async function _renderStatsModal() {
+  const modal = document.getElementById('pomodoro-stats-modal');
+  if (!modal) return;
+  try {
+    const [sRes, recs] = await Promise.all([
+      fetch(`${API_BASE}/api/pomodoro/stats`, { credentials: 'same-origin' }),
+      _fetchRecords(),
+    ]);
+    const s = sRes.ok ? await sRes.json() : {};
+    const ov = modal.querySelector('#pomo-stats-overview');
+    ov.querySelector('[data-k="today_sessions"]').textContent = s.today_sessions ?? 0;
+    ov.querySelector('[data-k="total_sessions"]').textContent = s.total_sessions ?? 0;
+    ov.querySelector('[data-k="today_s"]').textContent = _fmtHours(s.today_s);
+    ov.querySelector('[data-k="total_s"]').textContent = _fmtHours(s.total_s);
+    const box = modal.querySelector('#pomo-stats-records');
+    if (!recs.length) {
+      box.innerHTML = '<div style="opacity:0.6">No focus sessions logged yet.</div>';
+      return;
+    }
+    let html = '';
+    let lastDay = '';
+    for (const r of recs) {
+      if (r.date !== lastDay) {
+        html += `<div class="pomo-rec-day">${_escTxt(r.date)}</div>`;
+        lastDay = r.date;
+      }
+      html += _recordRowsHtml([r]);
+    }
+    box.innerHTML = html;
+    _wireRecordDeletes(box);
+  } catch (e) {
+    const box = modal.querySelector('#pomo-stats-records');
+    if (box) box.innerHTML = '<div style="opacity:0.6">Failed to load statistics.</div>';
+  }
 }
 
 // ── Controls ──
@@ -269,7 +410,11 @@ function _handleAction(action) {
   } else if (action === 'bank') {
     // "+" — bank the overtime, then start the break.
     const extra = Math.round((Date.now() - _run.since) / 1000);
-    if (extra > 0) _logSeconds(extra);
+    if (extra > 0) _logSeconds(extra, {
+      start: new Date(_run.since).toISOString(),
+      end: new Date().toISOString(),
+      note: 'Overtime',
+    });
     _startPhase(_breakFor(_run.round), _run.round);
     return;
   } else if (action === 'break') {
@@ -296,7 +441,8 @@ function _getModal() {
     <div class="modal-content pomo-modal-content">
       <div class="modal-header">
         <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>Pomodoro</h4>
-        <button class="pomo-pip-btn" id="pomo-pip" title="Pop out mini timer" style="display:none;margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
+        <button class="pomo-pip-btn" id="pomo-stats-btn" title="Focus statistics" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></button>
+        <button class="pomo-pip-btn" id="pomo-pip" title="Pop out mini timer" style="display:none;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
         <button class="close-btn" id="pomo-close">✖</button>
       </div>
       <div class="modal-body pomo-body">
@@ -315,6 +461,7 @@ function _getModal() {
           <span><b data-stat="week">–</b>This week</span>
           <span><b data-stat="avg">–</b>Ø / day</span>
         </div>
+        <div class="pomo-today" id="pomo-today"></div>
         <div class="pomo-settings">
           <label>Focus (min)<input type="number" class="pomo-input" id="pomo-cfg-work" min="1" max="180"></label>
           <label>Rounds<input type="number" class="pomo-input" id="pomo-cfg-rounds" min="1" max="12"></label>
@@ -339,6 +486,11 @@ function _getModal() {
     pipBtn.style.display = '';
     pipBtn.addEventListener('click', (e) => { e.stopPropagation(); _openPiP(); });
   }
+
+  _modal.querySelector('#pomo-stats-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    _openStatsModal();
+  });
 
   // One delegated listener — the control buttons are re-rendered per state.
   _modal.querySelector('#pomo-controls').addEventListener('click', (e) => {
@@ -369,7 +521,7 @@ function _getModal() {
     const inp = _modal.querySelector('#pomo-manual-mins');
     const mins = parseInt(inp.value, 10);
     if (!mins || mins <= 0) { inp.focus(); return; }
-    await _logSeconds(mins * 60);
+    await _logSeconds(mins * 60, { note: 'Manual' });
     inp.value = '';
   });
 
