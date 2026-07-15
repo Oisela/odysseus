@@ -370,14 +370,28 @@ async function _renderStatsModal() {
       box.innerHTML = '<div style="opacity:0.6">No focus sessions logged yet.</div>';
       return;
     }
-    let html = '';
-    let lastDay = '';
+    // Group by day; the header carries the day's total so long lists stay
+    // scannable. Records are capped server-side (newest 200 ≈ a month).
+    const byDay = new Map();
     for (const r of recs) {
-      if (r.date !== lastDay) {
-        html += `<div class="pomo-rec-day">${_escTxt(r.date)}</div>`;
-        lastDay = r.date;
-      }
-      html += _recordRowsHtml([r]);
+      if (!byDay.has(r.date)) byDay.set(r.date, []);
+      byDay.get(r.date).push(r);
+    }
+    const dayLabel = (iso) => {
+      try {
+        return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, {
+          weekday: 'short', day: '2-digit', month: 'short',
+        });
+      } catch (e) { return iso; }
+    };
+    let html = '';
+    for (const [day, dayRecs] of byDay) {
+      const total = dayRecs.reduce((s, r) => s + (Number(r.seconds) || 0), 0);
+      html += `<div class="pomo-rec-day"><span>${_escTxt(dayLabel(day))}</span><span class="pomo-rec-day-total">${_fmtHours(total)}</span></div>`;
+      html += _recordRowsHtml(dayRecs);
+    }
+    if (recs.length >= 200) {
+      html += '<div style="opacity:0.5;font-size:11px;margin-top:8px;">Showing the most recent 200 sessions.</div>';
     }
     box.innerHTML = html;
     _wireRecordDeletes(box);
@@ -420,6 +434,11 @@ function _handleAction(action) {
   } else if (action === 'break') {
     // Skip the overtime, straight into the break.
     _startPhase(_breakFor(_run.round), _run.round);
+    return;
+  } else if (action === 'skip') {
+    // End the break early — straight to "ready" for the next focus round.
+    _finishBreak();
+    _render();
     return;
   } else if (action === 'reset') {
     _run = null;
@@ -540,7 +559,9 @@ function _controlsHtml() {
     return btn('bank', `+ Add ${extra}`, true) + btn('break', 'Break', false);
   }
   const paused = _run.remainingMs != null;
+  const inBreak = _run.phase === 'short' || _run.phase === 'long';
   return btn(paused ? 'resume' : 'pause', paused ? 'Resume' : 'Pause', true)
+       + (inBreak ? btn('skip', 'Skip', false) : '')
        + btn('reset', 'Reset', false);
 }
 
