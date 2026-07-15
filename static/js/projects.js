@@ -53,6 +53,27 @@ function _saveExpanded() {
   localStorage.setItem('ody-projects-expanded', JSON.stringify(_expanded));
 }
 
+// The workspace pill is a client-global picker; project chats bind it to the
+// project folder. Track when WE set it so leaving a project chat releases it
+// again — otherwise the folder sticks to unrelated chats the user switches to.
+let _workspaceFromProject = false;
+
+/** Called by sessions.selectSession on every switch (like presets). */
+export function onSessionSwitch(sessionId, projectId = null) {
+  if (projectId) {
+    // Also covers direct entry via URL hash, which skips _openProjectChat.
+    const proj = _projects.find(p => String(p.id) === String(projectId));
+    if (proj && proj.workspace) {
+      try { workspaceModule.setWorkspace(proj.workspace); _workspaceFromProject = true; } catch (e) { /* ignore */ }
+    }
+    return;
+  }
+  if (_workspaceFromProject) {
+    _workspaceFromProject = false;
+    try { workspaceModule.setWorkspace(''); } catch (e) { /* ignore */ }
+  }
+}
+
 function _openProjectChat(project, sessionId) {
   // Stale guard: the chat may have been deleted via the native row menu —
   // opening it then dies on an empty response. Resync instead.
