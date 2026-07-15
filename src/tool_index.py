@@ -12,6 +12,8 @@ import re
 import time
 from typing import Dict, List, Optional, Set
 
+from src.constants import CHROMA_COLLECTION_PREFIX
+
 from src.embedding_lanes import (
     LANE_CUSTOM,
     LANE_FASTEMBED,
@@ -55,6 +57,12 @@ ALWAYS_AVAILABLE = frozenset({
     "read_file",
     "write_file",
     "bash",
+    # Same rationale for the code/file navigation trio: the self-development
+    # workflow (and any file work in project chats) needs them on every turn,
+    # and German phrasing rarely triggers their retrieval.
+    "grep",
+    "glob",
+    "edit_file",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -74,7 +82,7 @@ ASSISTANT_ALWAYS_AVAILABLE = frozenset({
     "ui_control",
 })
 
-COLLECTION_NAME = "odysseus_tool_index"
+COLLECTION_NAME = CHROMA_COLLECTION_PREFIX + "odysseus_tool_index"
 
 # ── Tool description registry ──
 # Each tool gets a searchable description that helps retrieval.
