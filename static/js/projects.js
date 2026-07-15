@@ -99,6 +99,10 @@ function _syncProjectPanelBtn(project) {
     return;
   }
   btn.style.display = '';
+  // The pill wears the project's name (like the persona chip does) — the
+  // folder glyph alone doesn't say WHICH project context you're in.
+  const nameEl = btn.querySelector('#project-panel-name');
+  if (nameEl) nameEl.textContent = project.name || 'Project';
   btn.onclick = () => {
     if (_panelProjectId === project.id && document.getElementById('project-panel')) {
       _closeProjectPanel();
@@ -256,6 +260,21 @@ async function _newChatInProject(project) {
   } catch (e) {
     if (uiModule.showError) uiModule.showError('Could not create chat: ' + e.message);
   }
+}
+
+/**
+ * Start a fresh chat in a project from outside this module (Developer page's
+ * "Go" button). Resolves the project by id, creates the chat with the
+ * project's default model, and opens it.
+ */
+export async function startProjectChat(projectId) {
+  let proj = _projects.find(p => String(p.id) === String(projectId));
+  if (!proj) {
+    try { await loadProjects(); } catch (e) { /* keep going with what we have */ }
+    proj = _projects.find(p => String(p.id) === String(projectId));
+  }
+  if (!proj) throw new Error('Project not found');
+  await _newChatInProject(proj);
 }
 
 // ---------------------------------------------------------------------------
