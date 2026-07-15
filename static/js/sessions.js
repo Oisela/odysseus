@@ -1794,6 +1794,10 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       try { window.documentModule.clearSelection(); } catch {}
     }
     currentSessionId = id;
+    // Navigating to a real session abandons any pending draft chat — without
+    // this, the next send materializes the stale draft (with its model) and
+    // the message lands in a brand-new session instead of the selected one.
+    _pendingChat = null;
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
     // URL hash — the user complained that coming back to Odysseus kept

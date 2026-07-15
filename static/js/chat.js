@@ -790,8 +790,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
     }
 
-    // Materialize pending session (deferred from model click) on first message
-    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    // Materialize pending session (deferred from model click) on first message.
+    // Only when no session is active: a pending draft never coexists with a
+    // selected session (createDirectChat nulls currentSessionId), so an active
+    // session means the draft is stale and must not swallow the message.
+    if (!sessionModule.getCurrentSessionId()
+        && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       _sendPerf.mark('pending_session_begin');
       const ok = await sessionModule.materializePendingSession();
       _sendPerf.mark('pending_session_done');
