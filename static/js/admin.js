@@ -2787,6 +2787,23 @@ async function _loadSystemStatus() {
   }
 }
 
+// Tiny semver compare: returns <0 / 0 / >0 like strcmp. Tolerates missing
+// segments ("3.3" vs "3.3.1"). Local copy — cookbook-hwfit.js has its own.
+function _sysCmpSemver(a, b) {
+  const _parse = (s) => String(s || '').split(/[.+-]/).filter(p => /^\d+$/.test(p)).map(Number);
+  const A = _parse(a), B = _parse(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const av = A[i] || 0, bv = B[i] || 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+// Below this, prod has no version switcher / fixed update button of its own —
+// switching back to a newer version after landing here needs the CLI fallback
+// (ssh + switch-version.sh). Warn before jumping down that far.
+const _SYS_SWITCHER_MIN_VERSION = '3.3.1';
+
 /* Version switcher — jump prod to any RELEASED version (down- or re-upgrade).
    The list comes from the host's release ledger; the server refuses commits
    that are not in it. Works with zero AI involvement by design. */
@@ -2826,7 +2843,11 @@ async function _initVersionSwitcher() {
   btn.addEventListener('click', async () => {
     const chosen = releases.find((r) => r.commit === sel.value);
     if (!chosen) return;
-    if (!confirm(`Switch production to v${chosen.version} (${chosen.commit})?\n\nData is kept; dev stays untouched. IMPORTANT: close and reopen the app window once it is back.`)) return;
+    let confirmMsg = `Switch production to v${chosen.version} (${chosen.commit})?\n\nData is kept; dev stays untouched. IMPORTANT: close and reopen the app window once it is back.`;
+    if (_sysCmpSemver(chosen.version, _SYS_SWITCHER_MIN_VERSION) < 0) {
+      confirmMsg += `\n\nWarning: v${chosen.version} predates the version switcher (added in v${_SYS_SWITCHER_MIN_VERSION}). Once switched, THIS PAGE won't have a working switcher to come back with — you'd need the CLI fallback (see the odysseus-entwickler skill) to return to a newer version.`;
+    }
+    if (!confirm(confirmMsg)) return;
     btn.disabled = true;
     msg.textContent = '';
     try {
