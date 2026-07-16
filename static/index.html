@@ -1019,7 +1019,7 @@
       if (el) {
         el.textContent = 'Type /setup, then choose Local models or API.';
       }
-      fetch('/api/version').then(function(r){return r.json()}).then(function(d){
+      var _renderVersion = function(d){
         if (d.version) window._appVersion = d.version;
         // Non-prod channels announce themselves next to the brand title so a
         // beta tab is always recognizable (channel + branch@commit).
@@ -1036,7 +1036,32 @@
             badge.style.display = '';
           }
         }
-      }).catch(function(){});
+      };
+      // Server-update watch: an open window that survives a prod rebuild is
+      // left with dead connections — every fetch fails with "Failed to fetch"
+      // and it looks like data loss (learned the hard way on 2026-07-16).
+      // Poll /api/version and offer a one-click reload when version/build
+      // changes under the window.
+      var _verKey = null;
+      var _showReloadBanner = function(newV){
+        if (document.getElementById('server-updated-banner')) return;
+        var bar = document.createElement('div');
+        bar.id = 'server-updated-banner';
+        bar.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:10px;align-items:center;padding:8px 14px;border-radius:0 0 10px 10px;background:var(--accent-primary,var(--red,#c66));color:#fff;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,0.35);';
+        bar.innerHTML = '<span>Odysseus was updated' + (newV ? ' to v' + newV : '') + ' — reload to keep working.</span>' +
+          '<button id="server-updated-reload" style="background:rgba(255,255,255,0.2);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Reload</button>';
+        document.body.appendChild(bar);
+        document.getElementById('server-updated-reload').addEventListener('click', function(){ location.reload(); });
+      };
+      var _checkVersion = function(){
+        fetch('/api/version', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(d){
+          var key = (d.version || '') + '|' + (d.build || '');
+          if (_verKey === null) { _verKey = key; _renderVersion(d); return; }
+          if (key !== _verKey) _showReloadBanner(d.version);
+        }).catch(function(){ /* restart in progress — the next tick decides */ });
+      };
+      _checkVersion();
+      setInterval(_checkVersion, 60000);
     })();
     </script>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
