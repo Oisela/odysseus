@@ -2977,6 +2977,55 @@ async function _initBuilderLink() {
   } catch (e) { /* projects module unavailable — keep button hidden */ }
 }
 
+function _initBetaButtons() {
+  const startBtn = el('dev-beta-start'), stopBtn = el('dev-beta-stop'), msg = el('dev-beta-msg');
+  if (!startBtn || !stopBtn) return;
+  const say = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = ok ? 'admin-success' : 'admin-error';
+  };
+  startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
+    say('', true);
+    try {
+      const res = await fetch(`/api/system/beta-start`, { method: 'POST', credentials: 'same-origin' });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d && d.status === 'already_running') {
+        say('Beta is already running on :7001.', true);
+      } else if (res.ok && d && d.status === 'beta_start_requested') {
+        say('Beta is starting on dev — ready on :7001 in a few minutes; the status above refreshes on its own.', true);
+        // The compose build takes a while; refresh the card a few times so
+        // the Beta row flips to live without a manual reload.
+        [45, 90, 180].forEach((s) => setTimeout(_loadDevStatus, s * 1000));
+      } else {
+        say((d && (d.detail || d.message)) || `Beta start failed (status ${res.status})`, false);
+      }
+    } catch (e) {
+      say('Beta start failed: ' + e.message, false);
+    }
+    startBtn.disabled = false;
+  });
+  stopBtn.addEventListener('click', async () => {
+    if (!confirm('Stop the beta channel? (:7001 goes offline; beta data is kept)')) return;
+    stopBtn.disabled = true;
+    say('', true);
+    try {
+      const res = await fetch(`/api/system/beta-stop`, { method: 'POST', credentials: 'same-origin' });
+      const d = await res.json().catch(() => null);
+      if (res.ok) {
+        say('Beta stopped.', true);
+        _loadDevStatus();
+      } else {
+        say((d && (d.detail || d.message)) || `Beta stop failed (status ${res.status})`, false);
+      }
+    } catch (e) {
+      say('Beta stop failed: ' + e.message, false);
+    }
+    stopBtn.disabled = false;
+  });
+}
+
 function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
   const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
@@ -3024,6 +3073,7 @@ function initDeveloper() {
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
 
+  _initBetaButtons();
   _loadDevStatus();
   _loadRoadmap();
   _initBuilderLink();

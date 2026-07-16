@@ -147,6 +147,52 @@ def setup_system_routes() -> APIRouter:
             raise HTTPException(500, f"Roadmap write failed: {e}")
         return {"ok": True}
 
+    @router.post("/beta-start")
+    def start_beta(request: Request):
+        """Boot the beta channel on origin/dev — no AI involved, one click.
+
+        Runs beta-deploy.sh detached (systemd-run as the deploy user, the same
+        way the developer skill does) because the compose build takes minutes.
+        """
+        require_admin(request)
+        try:
+            if _ssh("curl", "-fsS", "-m", "3", _BETA_URL).returncode == 0:
+                return {"status": "already_running"}
+        except Exception:
+            pass
+        unit = "odysseus-beta-start-$(date +%s)"
+        cmd = (
+            f"sudo systemd-run --unit={unit} --collect --uid=deploy "
+            f"bash /home/deploy/odysseus-entwickler/beta-deploy.sh dev"
+        )
+        try:
+            r = _ssh("bash", "-lc", cmd, timeout=15)
+        except Exception as e:
+            logger.exception("system/beta-start: failed to launch")
+            raise HTTPException(500, f"Beta start failed: {e}")
+        if r.returncode != 0:
+            logger.error("system/beta-start rc=%s err=%s", r.returncode, r.stderr.strip())
+            raise HTTPException(500, f"Beta start failed: {r.stderr.strip() or 'ssh error'}")
+        return {"status": "beta_start_requested"}
+
+    @router.post("/beta-stop")
+    def stop_beta(request: Request):
+        """Park the beta channel (compose down + free the :7001 serve)."""
+        require_admin(request)
+        cmd = (
+            "cd /opt/odysseus-beta && docker compose -p odysseus-beta down; "
+            "tailscale serve --https=7001 off"
+        )
+        try:
+            r = _ssh("bash", "-lc", cmd, timeout=90)
+        except Exception as e:
+            logger.exception("system/beta-stop: failed")
+            raise HTTPException(500, f"Beta stop failed: {e}")
+        if r.returncode != 0:
+            logger.error("system/beta-stop rc=%s err=%s", r.returncode, r.stderr.strip())
+            raise HTTPException(500, f"Beta stop failed: {r.stderr.strip() or 'ssh error'}")
+        return {"status": "beta_stopped"}
+
     @router.post("/promote")
     def promote_beta(request: Request):
         require_admin(request)
