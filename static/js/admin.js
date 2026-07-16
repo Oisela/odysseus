@@ -2980,6 +2980,14 @@ async function _initBuilderLink() {
 function _initBetaButtons() {
   const startBtn = el('dev-beta-start'), stopBtn = el('dev-beta-stop'), msg = el('dev-beta-msg');
   if (!startBtn || !stopBtn) return;
+  // The beta instance has no host access (no SSH keys by design) — these
+  // buttons only act from prod, so disable them on the beta itself.
+  fetch(`/api/version`, { credentials: 'same-origin' }).then(r => r.json()).then((v) => {
+    if (v.channel === 'beta') {
+      startBtn.disabled = stopBtn.disabled = true;
+      startBtn.title = stopBtn.title = 'Only available on the main instance';
+    }
+  }).catch(() => {});
   const say = (text, ok) => {
     if (!msg) return;
     msg.textContent = text;
