@@ -50,25 +50,37 @@ def _normalize_owner_record(rec: Any) -> Dict[str, Any]:
     can show and delete single pomodoros (TickTick-style focus record). Old
     day totals become one synthetic entry per day — totals stay identical.
     """
-    if isinstance(rec, dict) and isinstance(rec.get("entries"), list):
-        return {"entries": [e for e in rec["entries"] if isinstance(e, dict)]}
-    entries = []
-    if isinstance(rec, dict):
-        for day in sorted(rec):
+    def _day_total_entries(source: dict, note: str, prefix: str) -> list:
+        out = []
+        for day in sorted(source):
             try:
-                seconds = max(0, int(rec[day]))
+                seconds = max(0, int(source[day]))
                 date.fromisoformat(str(day))
             except (TypeError, ValueError):
                 continue
             if seconds:
-                entries.append({
-                    "id": uuid.uuid4().hex[:12],
+                out.append({
+                    # Deterministic id: normalization runs on every LOAD but
+                    # only persists on the next write — random ids would break
+                    # delete-by-id in between (fetched id != regenerated id).
+                    "id": f"{prefix}-{day}",
                     "date": str(day),
                     "start": None,
                     "end": None,
                     "seconds": seconds,
-                    "note": "Tagessumme (vor v3.2)",
+                    "note": note,
                 })
+        return out
+
+    if isinstance(rec, dict) and isinstance(rec.get("entries"), list):
+        entries = [e for e in rec["entries"] if isinstance(e, dict)]
+        # A v3.1-era instance (rollback window) logs day totals NEXT TO the
+        # entries key — merge those stray day keys instead of dropping the
+        # focus time silently on the next upgrade.
+        stray = {k: v for k, v in rec.items() if k != "entries"}
+        entries += _day_total_entries(stray, "Tagessumme (Rollback-Fenster)", "rb")
+        return {"entries": entries}
+    entries = _day_total_entries(rec if isinstance(rec, dict) else {}, "Tagessumme (vor v3.2)", "legacy")
     return {"entries": entries}
 
 
