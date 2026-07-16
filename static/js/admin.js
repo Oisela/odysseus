@@ -3068,10 +3068,14 @@ function _initBetaButtons() {
       if (res.ok && d && d.status === 'already_running') {
         say('Beta is already running on :7001.', true);
       } else if (res.ok && d && d.status === 'beta_start_requested') {
-        say('Beta is starting on dev — ready on :7001 in a few minutes; the status above refreshes on its own.', true);
-        // The compose build takes a while; refresh the card a few times so
-        // the Beta row flips to live without a manual reload.
-        [45, 90, 180].forEach((s) => setTimeout(_loadDevStatus, s * 1000));
+        say('Beta is starting on dev — the first build takes 2–4 minutes; the status refreshes every 30s (or hit Refresh).', true);
+        // Poll until the Beta row flips to live (build can take minutes);
+        // stop after ~8 min so an aborted build doesn't poll forever.
+        let polls = 0;
+        const iv = setInterval(() => {
+          _loadDevStatus();
+          if (++polls >= 16) clearInterval(iv);
+        }, 30000);
       } else {
         say((d && (d.detail || d.message)) || `Beta start failed (status ${res.status})`, false);
       }
@@ -3147,6 +3151,10 @@ function initDeveloper() {
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
 
+  el('dev-status-refresh')?.addEventListener('click', () => {
+    _loadDevStatus();
+    _loadSystemStatus();
+  });
   _initBetaButtons();
   _loadDevStatus();
   _loadRoadmap();
