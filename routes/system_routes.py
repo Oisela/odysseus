@@ -25,12 +25,20 @@ _PROD_DIR = "/opt/odysseus"
 _BETA_DIR = "/opt/odysseus-beta"
 _BETA_URL = "http://127.0.0.1:7001/api/version"
 _PROMOTE = "/home/deploy/odysseus-entwickler/promote.sh"
+_SWITCH = "/home/deploy/odysseus-entwickler/switch-version.sh"
+_RELEASES = "/home/deploy/odysseus-entwickler/releases.log"
+
+
 # Living work queue — same file the developer skill reads on every start.
 _ROADMAP = os.path.join(DATA_DIR, "dev", "ROADMAP.md")
 
 
 class RoadmapBody(BaseModel):
     content: str = Field(..., max_length=200_000)
+
+
+class SwitchBody(BaseModel):
+    commit: str = Field(..., min_length=6, max_length=40, pattern=r"^[0-9a-f]+$")
 
 
 def _ssh(*args: str, timeout: int = 8) -> subprocess.CompletedProcess:
@@ -41,6 +49,26 @@ def _ssh(*args: str, timeout: int = 8) -> subprocess.CompletedProcess:
         text=True,
         timeout=timeout,
     )
+
+
+def _read_releases() -> list:
+    """Parse the host's release ledger (version<TAB>commit<TAB>date)."""
+    releases = []
+    try:
+        r = _ssh("cat", _RELEASES)
+        if r.returncode != 0:
+            return releases
+        for line in r.stdout.splitlines():
+            parts = line.strip().split("\t")
+            if len(parts) >= 2 and parts[0] and parts[1]:
+                releases.append({
+                    "version": parts[0],
+                    "commit": parts[1],
+                    "date": parts[2] if len(parts) > 2 else "",
+                })
+    except Exception:
+        logger.exception("system/releases: ledger read failed")
+    return releases
 
 
 def setup_system_routes() -> APIRouter:
@@ -192,6 +220,51 @@ def setup_system_routes() -> APIRouter:
             logger.error("system/beta-stop rc=%s err=%s", r.returncode, r.stderr.strip())
             raise HTTPException(500, f"Beta stop failed: {r.stderr.strip() or 'ssh error'}")
         return {"status": "beta_stopped"}
+
+    @router.get("/releases")
+    def list_releases(request: Request):
+        """Released versions from the host ledger, newest last; marks current."""
+        require_admin(request)
+        releases = _read_releases()
+        current = "unknown"
+        try:
+            r = _ssh("git", "-C", _PROD_DIR, "rev-parse", "--short", "HEAD")
+            if r.returncode == 0:
+                current = r.stdout.strip()
+        except Exception:
+            logger.exception("system/releases: current commit lookup failed")
+        for rel in releases:
+            rel["current"] = rel["commit"] == current
+        return {"releases": releases, "current_commit": current}
+
+    @router.post("/switch")
+    def switch_version(body: SwitchBody, request: Request):
+        """Switch prod to a RELEASED version (down- or re-upgrade).
+
+        Only commits from the host's release ledger are accepted — this
+        endpoint must never let a client check out arbitrary tree states.
+        Runs detached (systemd-run) because the rebuild restarts this
+        very process, exactly like promote.
+        """
+        require_admin(request)
+        releases = _read_releases()
+        target = next((rel for rel in releases if rel["commit"] == body.commit), None)
+        if not target:
+            raise HTTPException(400, "Commit is not a released version — refusing to switch.")
+        unit = "odysseus-switch-$(date +%s)"
+        cmd = (
+            f"sudo systemd-run --unit={unit} --collect "
+            f"bash {_SWITCH} {target['commit']}"
+        )
+        try:
+            r = _ssh("bash", "-lc", cmd, timeout=15)
+        except Exception as e:
+            logger.exception("system/switch: failed to launch")
+            raise HTTPException(500, f"Version switch failed to start: {e}")
+        if r.returncode != 0:
+            logger.error("system/switch rc=%s err=%s", r.returncode, r.stderr.strip())
+            raise HTTPException(500, f"Version switch failed to start: {r.stderr.strip() or 'ssh error'}")
+        return {"status": "switch_started", "version": target["version"], "commit": target["commit"]}
 
     @router.post("/promote")
     def promote_beta(request: Request):

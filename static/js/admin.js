@@ -2787,9 +2787,75 @@ async function _loadSystemStatus() {
   }
 }
 
+/* Version switcher — jump prod to any RELEASED version (down- or re-upgrade).
+   The list comes from the host's release ledger; the server refuses commits
+   that are not in it. Works with zero AI involvement by design. */
+async function _initVersionSwitcher() {
+  const sel = el('sys-versionSel'), btn = el('sys-switchBtn'), msg = el('sys-statusMsg');
+  if (!sel || !btn) return;
+  let releases = [];
+  let currentCommit = '';
+  try {
+    const res = await fetch(`/api/system/releases`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`releases ${res.status}`);
+    const d = await res.json();
+    releases = d.releases || [];
+    currentCommit = d.current_commit || '';
+  } catch (e) {
+    sel.innerHTML = '<option value="">n/a</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.innerHTML = '';
+  if (!releases.length) {
+    sel.appendChild(new Option('no releases yet', ''));
+    sel.disabled = true;
+    return;
+  }
+  // Newest last in the ledger — show newest first in the picker.
+  [...releases].reverse().forEach((r) => {
+    const label = `v${r.version} (${r.commit})${r.current ? ' — current' : ''}`;
+    sel.appendChild(new Option(label, r.commit));
+  });
+  const sync = () => {
+    const chosen = releases.find((r) => r.commit === sel.value);
+    btn.disabled = !chosen || chosen.current;
+  };
+  sel.addEventListener('change', sync);
+  sync();
+  btn.addEventListener('click', async () => {
+    const chosen = releases.find((r) => r.commit === sel.value);
+    if (!chosen) return;
+    if (!confirm(`Switch production to v${chosen.version} (${chosen.commit})?\n\nData is kept; dev stays untouched. IMPORTANT: close and reopen the app window once it is back.`)) return;
+    btn.disabled = true;
+    msg.textContent = '';
+    try {
+      const res = await fetch(`/api/system/switch`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commit: chosen.commit }),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d && d.status === 'switch_started') {
+        msg.textContent = `Switching to v${d.version} — prod rebuilds and restarts shortly. Close and REOPEN the app window once it is back.`;
+        msg.className = 'admin-success';
+      } else {
+        msg.textContent = (d && (d.detail || d.message)) || `Switch failed (status ${res.status})`;
+        msg.className = 'admin-error';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      msg.textContent = 'Switch failed: ' + e.message;
+      msg.className = 'admin-error';
+      btn.disabled = false;
+    }
+  });
+}
+
 function initSystemStatus() {
   const btn = el('sys-promoteBtn');
   if (!btn) return;
+  _initVersionSwitcher();
   btn.addEventListener('click', async () => {
     const msg = el('sys-statusMsg');
     if (!confirm('Update production to the released version? This rebuilds prod from dev and restarts the server.')) return;
