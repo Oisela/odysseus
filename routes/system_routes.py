@@ -8,6 +8,7 @@ like the beta-deploy / promote scripts do.
 """
 import logging
 import os
+import shlex
 import subprocess
 
 from fastapi import APIRouter, HTTPException, Request
@@ -49,6 +50,19 @@ def _ssh(*args: str, timeout: int = 8) -> subprocess.CompletedProcess:
         text=True,
         timeout=timeout,
     )
+
+
+def _ssh_script(script: str, timeout: int = 8) -> subprocess.CompletedProcess:
+    """Run a multi-word shell script on the host.
+
+    ssh joins its argv with SPACES and no quoting — `ssh bash -lc <script>`
+    hands the remote `bash -c` only the FIRST word of the script (the rest
+    become positional params). Every multi-word command must therefore be
+    shlex-quoted into a single remote word. (Found 2026-07-16: the beta-start
+    button ran a bare `sudo`, and the update-ready/dev-version checks were
+    silently broken the same way.)
+    """
+    return _ssh("bash", "-lc", shlex.quote(script), timeout=timeout)
 
 
 def _read_releases() -> list:
@@ -109,11 +123,10 @@ def setup_system_routes() -> APIRouter:
                 r = _ssh("git", "-C", _BETA_DIR, "rev-parse", "--short", "HEAD")
                 if r.returncode == 0:
                     beta_commit = r.stdout.strip() or None
-                r = _ssh(
-                    "bash", "-lc",
+                r = _ssh_script(
                     f"git -C {_BETA_DIR} fetch -q origin 2>/dev/null; "
                     f"git -C {_BETA_DIR} merge-base --is-ancestor HEAD origin/dev "
-                    f"&& echo yes || echo no",
+                    f"&& echo yes || echo no"
                 )
                 beta_in_dev = r.returncode == 0 and r.stdout.strip() == "yes"
             except Exception:
@@ -127,11 +140,10 @@ def setup_system_routes() -> APIRouter:
         # this running instance). Read it from the host checkout's remote ref.
         dev_version = None
         try:
-            r = _ssh(
-                "bash", "-lc",
+            r = _ssh_script(
                 f"git -C {_PROD_DIR} fetch -q origin 2>/dev/null; "
                 f"git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null "
-                f"| grep -m1 'APP_VERSION'",
+                f"| grep -m1 'APP_VERSION'"
             )
             if r.returncode == 0 and '"' in r.stdout:
                 dev_version = r.stdout.split('"')[1] or None
@@ -194,7 +206,7 @@ def setup_system_routes() -> APIRouter:
             f"bash /home/deploy/odysseus-entwickler/beta-deploy.sh dev"
         )
         try:
-            r = _ssh("bash", "-lc", cmd, timeout=15)
+            r = _ssh_script(cmd, timeout=15)
         except Exception as e:
             logger.exception("system/beta-start: failed to launch")
             raise HTTPException(500, f"Beta start failed: {e}")
@@ -212,7 +224,7 @@ def setup_system_routes() -> APIRouter:
             "tailscale serve --https=7001 off"
         )
         try:
-            r = _ssh("bash", "-lc", cmd, timeout=90)
+            r = _ssh_script(cmd, timeout=90)
         except Exception as e:
             logger.exception("system/beta-stop: failed")
             raise HTTPException(500, f"Beta stop failed: {e}")
@@ -257,7 +269,7 @@ def setup_system_routes() -> APIRouter:
             f"bash {_SWITCH} {target['commit']}"
         )
         try:
-            r = _ssh("bash", "-lc", cmd, timeout=15)
+            r = _ssh_script(cmd, timeout=15)
         except Exception as e:
             logger.exception("system/switch: failed to launch")
             raise HTTPException(500, f"Version switch failed to start: {e}")
@@ -286,7 +298,7 @@ def setup_system_routes() -> APIRouter:
             f"bash {_PROMOTE}"
         )
         try:
-            r = _ssh("bash", "-lc", cmd, timeout=15)
+            r = _ssh_script(cmd, timeout=15)
         except Exception as e:
             logger.exception("system/promote: failed to launch")
             raise HTTPException(500, f"Promotion failed to start: {e}")
