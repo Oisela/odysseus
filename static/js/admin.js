@@ -522,7 +522,8 @@ async function loadEndpoints() {
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(ep.name)}</span>
+              <input type="text" class="admin-user-name adm-ep-rename" data-adm-ep-rename="${ep.id}" value="${esc(ep.name)}" placeholder="Endpoint name" title="Click to rename (e.g. &quot;Google Gemini Free&quot;)" style="background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 4px;min-width:120px;max-width:260px;font:inherit;color:inherit;">
+
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -571,6 +572,29 @@ async function loadEndpoints() {
       });
       return out;
     };
+    // Inline endpoint rename (same pattern as the token rename): commit on
+    // blur/Enter via the field-targeted PATCH. Lets two keys of the same
+    // provider carry distinct names ("Google Gemini Free" vs "... Paid") —
+    // the name flows into the model picker as endpoint_name.
+    queryAll('[data-adm-ep-rename]').forEach(input => {
+      const original = input.value;
+      input.addEventListener('click', e => e.stopPropagation());
+      const commit = async () => {
+        const name = (input.value || '').trim();
+        if (!name || name === original) { input.value = original; return; }
+        try {
+          const r = await fetch(`/api/model-endpoints/${input.dataset.admEpRename}`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!r.ok) throw new Error('Save failed');
+          loadEndpoints();
+        } catch (_) { input.value = original; }
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+    });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
     });
