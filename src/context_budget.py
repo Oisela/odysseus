@@ -68,6 +68,40 @@ def compute_input_token_budget(
     return configured if configured > 0 else default
 
 
+def resolve_agent_input_budget(endpoint_url: str, model: str, context_length: int = 0,
+                               *, get_setting=None) -> int:
+    """Effective soft input-token budget for an agent turn (0 = budget disabled).
+
+    Single source of truth for the settings + window-probe dance so the trim
+    step (agent_loop) and the compaction trigger (chat_helpers) key off the
+    SAME number — compaction firing at the model window while the trim cuts
+    at a much smaller budget silently front-drops history instead of
+    summarizing it (the v3.5 'Orientierungsverlust' bug).
+
+    `get_setting` is injectable for tests; default is src.settings.get_setting.
+    """
+    if get_setting is None:
+        from src.settings import get_setting as _gs
+        get_setting = _gs
+    try:
+        soft = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
+    except (TypeError, ValueError):
+        soft = DEFAULT_BUDGET
+    if soft <= 0:
+        return 0
+    try:
+        hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
+    except (TypeError, ValueError):
+        hard_max = DEFAULT_HARD_MAX
+    if hard_max <= 0:
+        hard_max = DEFAULT_HARD_MAX
+    from src.model_context import budget_context_for_model
+    ctx = budget_context_for_model(endpoint_url, model, fallback=context_length)
+    return compute_input_token_budget(
+        soft, ctx, budget_is_explicit(soft), hard_max=hard_max,
+    )
+
+
 def budget_is_explicit(configured: int, *, default: int = DEFAULT_BUDGET) -> bool:
     """Whether a configured agent_input_token_budget is a deliberate explicit cap.
 

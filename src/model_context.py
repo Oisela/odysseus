@@ -111,8 +111,17 @@ REQUEST_TIMEOUT = 5
 # Substring matching — use the shortest unique prefix so variants get caught.
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
+    # Claude 5 generation + late-4 Opus/Sonnet: 1M-token windows (Anthropic
+    # docs 2026-06). Longest-key matching below lets 'claude-opus-4-8' win
+    # over the generic 'claude-opus-4' (200k) entry.
+    'claude-fable-5': 1000000,
+    'claude-mythos-5': 1000000,
+    'claude-sonnet-5': 1000000,
+    'claude-sonnet-4-6': 1000000,
+    'claude-opus-4-8': 1000000,
+    'claude-opus-4-7': 1000000,
+    'claude-opus-4-6': 1000000,
     'claude-sonnet-4-5': 200000,
-    'claude-sonnet-4-6': 200000,
     'claude-sonnet-4': 200000,
     'claude-opus-4': 200000,
     'claude-haiku-4': 200000,

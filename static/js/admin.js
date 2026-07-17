@@ -522,7 +522,8 @@ async function loadEndpoints() {
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(ep.name)}</span>
+              <input type="text" class="admin-user-name adm-ep-rename" data-adm-ep-rename="${ep.id}" value="${esc(ep.name)}" placeholder="Endpoint name" title="Click to rename (e.g. &quot;Google Gemini Free&quot;)" style="background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 4px;min-width:120px;max-width:260px;font:inherit;color:inherit;">
+
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -571,6 +572,29 @@ async function loadEndpoints() {
       });
       return out;
     };
+    // Inline endpoint rename (same pattern as the token rename): commit on
+    // blur/Enter via the field-targeted PATCH. Lets two keys of the same
+    // provider carry distinct names ("Google Gemini Free" vs "... Paid") —
+    // the name flows into the model picker as endpoint_name.
+    queryAll('[data-adm-ep-rename]').forEach(input => {
+      const original = input.value;
+      input.addEventListener('click', e => e.stopPropagation());
+      const commit = async () => {
+        const name = (input.value || '').trim();
+        if (!name || name === original) { input.value = original; return; }
+        try {
+          const r = await fetch(`/api/model-endpoints/${input.dataset.admEpRename}`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!r.ok) throw new Error('Save failed');
+          loadEndpoints();
+        } catch (_) { input.value = original; }
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+    });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
     });
@@ -2944,6 +2968,19 @@ async function _saveRoadmap(text, msgEl) {
   }
 }
 
+// Collapsed-state of roadmap sections, persisted per section title.
+// Released/rejected packages start collapsed so the card leads with the
+// open package and the inbox (v3.5, Alessios Wunsch: übersichtlicher).
+let _roadmapCollapsed = null;
+
+function _roadmapCollapsedState() {
+  if (!_roadmapCollapsed) {
+    try { _roadmapCollapsed = JSON.parse(localStorage.getItem('ody-roadmap-collapsed') || '{}'); }
+    catch (_) { _roadmapCollapsed = {}; }
+  }
+  return _roadmapCollapsed;
+}
+
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
   const msg = el('dev-roadmap-msg');
@@ -2954,11 +2991,26 @@ function _renderRoadmap() {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
     return;
   }
+  const collapsedState = _roadmapCollapsedState();
   for (const sec of sections) {
+    const doneCount = sec.items.filter(it => it.done).length;
+    const collapsed = (sec.title in collapsedState)
+      ? !!collapsedState[sec.title]
+      : /RELEASED/i.test(sec.title);
     const head = document.createElement('div');
-    head.textContent = sec.title;
-    head.style.cssText = 'font-weight:600;margin:10px 0 4px;';
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:600;margin:10px 0 4px;cursor:pointer;user-select:none;';
+    head.innerHTML = `
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.6;transition:transform .15s ease;transform:rotate(${collapsed ? '-90' : '0'}deg);"><polyline points="6 9 12 15 18 9"/></svg>
+      <span></span>
+      <span class="folder-count" style="font-weight:400;">${doneCount}/${sec.items.length}</span>`;
+    head.querySelector('span').textContent = sec.title;
+    head.addEventListener('click', () => {
+      collapsedState[sec.title] = !collapsed;
+      try { localStorage.setItem('ody-roadmap-collapsed', JSON.stringify(collapsedState)); } catch (_) {}
+      _renderRoadmap();
+    });
     list.appendChild(head);
+    if (collapsed) continue;
     if (!sec.items.length) {
       const empty = document.createElement('div');
       empty.textContent = '(no entries)';
@@ -3038,7 +3090,7 @@ async function _loadDevStatus() {
   }
 }
 
-async function _initBuilderLink() {
+async function _initBuilderLink(_attempt = 0) {
   const btn = el('dev-builder-btn');
   if (!btn) return;
   try {
@@ -3046,7 +3098,15 @@ async function _initBuilderLink() {
     const projs = (m.getProjects && m.getProjects()) || [];
     const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
       || projs.find(p => /entwickler|builder/i.test(p.name || ''));
-    if (!builder) return;
+    if (!builder) {
+      // Projects load async at app start. When this init runs first, the
+      // cache is still empty and the Go button stayed hidden forever (seen
+      // on prod 2026-07-17). Retry briefly until the list is in — on
+      // instances without a builder project (e.g. the beta) the retries
+      // fizzle out and the button legitimately stays hidden.
+      if (_attempt < 8) setTimeout(() => _initBuilderLink(_attempt + 1), 900);
+      return;
+    }
     btn.style.display = '';
     btn.addEventListener('click', async () => {
       try {

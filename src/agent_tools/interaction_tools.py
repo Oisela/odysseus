@@ -22,7 +22,18 @@ class AskUserTool:
         if isinstance(parsed, dict):
             question = str(parsed.get("question", "")).strip()
             multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
-            for opt in (parsed.get("options") or []):
+            raw_options = parsed.get("options")
+            if isinstance(raw_options, str):
+                # Models occasionally emit the list as an embedded JSON string —
+                # or garbage text. Parse it; never iterate a str (chars would
+                # each become an "option").
+                try:
+                    raw_options = json.loads(raw_options)
+                except (ValueError, TypeError):
+                    raw_options = None
+            if not isinstance(raw_options, list):
+                raw_options = []
+            for opt in raw_options:
                 if isinstance(opt, dict):
                     label = str(opt.get("label", "")).strip()
                     descr = str(opt.get("description", "")).strip()
@@ -39,7 +50,8 @@ class AskUserTool:
             return "ask_user: invalid", {
                 "error": (
                     "ask_user needs a non-empty `question` and at least 2 `options` "
-                    "(each an object with a `label`, optional `description`)."
+                    "as a JSON array (each an object with a `label`, optional "
+                    "`description`). Retry with valid JSON args."
                 ),
                 "exit_code": 1,
             }

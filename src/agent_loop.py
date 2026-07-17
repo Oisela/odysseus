@@ -26,6 +26,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
+from src.tool_execution import PARALLEL_SAFE_TOOLS
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -2223,6 +2224,22 @@ def _resolve_tool_blocks(
     return tool_blocks, used_native, converted_calls
 
 
+def _parallel_safe_round(tool_blocks, tool_policy, max_tool_calls, total_tool_calls) -> bool:
+    """True when every block this round is a stateless read that may run
+    concurrently (PARALLEL_SAFE_TOOLS) and neither a policy block nor the
+    tool budget could interrupt the round midway — the two cases that make
+    the sequential loop stop between blocks."""
+    if len(tool_blocks) < 2:
+        return False
+    if not all(b.tool_type in PARALLEL_SAFE_TOOLS for b in tool_blocks):
+        return False
+    if tool_policy and any(tool_policy.blocks(b.tool_type) for b in tool_blocks):
+        return False
+    if max_tool_calls > 0 and total_tool_calls + len(tool_blocks) > max_tool_calls:
+        return False
+    return True
+
+
 def _append_tool_results(
     messages: List[Dict],
     round_response: str,
@@ -3143,36 +3160,16 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
-        from src.model_context import budget_context_for_model
+        from src.context_budget import resolve_agent_input_budget
 
-        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
-        if soft_budget > 0:
+        # Settings + window-probe dance (hard_max ceiling #1230, materialized
+        # default = auto #4121, only proven windows scale #4122) lives in
+        # resolve_agent_input_budget — shared with the compaction trigger in
+        # chat_helpers so both key off the SAME budget (v3.5).
+        effective_budget = resolve_agent_input_budget(endpoint_url, model, context_length)
+        if effective_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Ceiling for the auto-derived budget (no effect on an explicit budget;
-            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
-            # so misconfig can't zero the budget.
-            try:
-                hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
-            except (TypeError, ValueError):
-                hard_max = DEFAULT_HARD_MAX
-            if hard_max <= 0:
-                hard_max = DEFAULT_HARD_MAX
-            # Default value = auto sentinel (scale to the window); any other value =
-            # explicit cap. Value-based, not presence-based, because the save path
-            # materializes defaults so a persisted default must still read as auto (#4121).
-            budget_is_explicit = _budget_is_explicit(soft_budget)
-            # Scale only off a window we actually discovered, bound to the value it
-            # proves (else 0) — not the passed-in context_length, which can be stale
-            # or unset for some callers (#4122 review).
-            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
-            effective_budget = compute_input_token_budget(
-                soft_budget,
-                ctx_for_budget,
-                budget_is_explicit,
-                hard_max=hard_max,
-            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,
@@ -3958,6 +3955,42 @@ async def stream_agent_loop(
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
         budget_hit = False
+
+        # Fork (v3.5): when every block this round is a stateless read
+        # (PARALLEL_SAFE_TOOLS), start them all now and let the loop below
+        # consume the results in block order — the SSE stream stays
+        # deterministic, only the wall-clock execution overlaps. The
+        # workspace binding is a ContextVar (task-local), so concurrent
+        # blocks can't leak paths into each other. Blocked-by-policy or
+        # over-budget rounds fall back to the sequential path untouched.
+        _prestarted: dict = {}
+        if _parallel_safe_round(tool_blocks, tool_policy, max_tool_calls, total_tool_calls):
+            def _prestart_block(b):
+                q: asyncio.Queue = asyncio.Queue()
+
+                async def _push(payload):
+                    await q.put(payload)
+
+                async def _run():
+                    try:
+                        return await execute_tool_block(
+                            b,
+                            session_id=session_id,
+                            disabled_tools=disabled_tools,
+                            tool_policy=tool_policy,
+                            owner=owner,
+                            progress_cb=_push,
+                            workspace=workspace,
+                        )
+                    finally:
+                        # Sentinel so the drainer knows to stop.
+                        await q.put(None)
+
+                return q, asyncio.create_task(_run())
+
+            for _pre_i, _pre_b in enumerate(tool_blocks):
+                _prestarted[_pre_i] = _prestart_block(_pre_b)
+
         for i, block in enumerate(tool_blocks):
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
@@ -3993,26 +4026,30 @@ async def stream_agent_loop(
                 # periodic {elapsed_s, tail} payloads via this callback;
                 # we forward each one as a `tool_progress` SSE event so
                 # the UI can render live elapsed-time + tail-of-output.
-                _progress_q: asyncio.Queue = asyncio.Queue()
-                async def _push_progress(payload):
-                    await _progress_q.put(payload)
+                if i in _prestarted:
+                    # Already running (parallel read round) — just consume.
+                    _progress_q, _tool_task = _prestarted[i]
+                else:
+                    _progress_q = asyncio.Queue()
+                    async def _push_progress(payload):
+                        await _progress_q.put(payload)
 
-                async def _run_tool():
-                    try:
-                        return await execute_tool_block(
-                            block,
-                            session_id=session_id,
-                            disabled_tools=disabled_tools,
-                            tool_policy=tool_policy,
-                            owner=owner,
-                            progress_cb=_push_progress,
-                            workspace=workspace,
-                        )
-                    finally:
-                        # Sentinel so the drainer knows to stop.
-                        await _progress_q.put(None)
+                    async def _run_tool():
+                        try:
+                            return await execute_tool_block(
+                                block,
+                                session_id=session_id,
+                                disabled_tools=disabled_tools,
+                                tool_policy=tool_policy,
+                                owner=owner,
+                                progress_cb=_push_progress,
+                                workspace=workspace,
+                            )
+                        finally:
+                            # Sentinel so the drainer knows to stop.
+                            await _progress_q.put(None)
 
-                _tool_task = asyncio.create_task(_run_tool())
+                    _tool_task = asyncio.create_task(_run_tool())
                 # Drain progress events as they arrive — block until the
                 # next event OR the tool finishes (sentinel = None).
                 while True:

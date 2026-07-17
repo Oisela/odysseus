@@ -104,6 +104,10 @@ class ProjectRequest(BaseModel):
     workspace: Optional[str] = Field(None, max_length=500)
 
 
+class ChatOrderRequest(BaseModel):
+    session_ids: List[str] = Field(..., max_length=500)
+
+
 def setup_project_routes():
     router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -127,12 +131,17 @@ def setup_project_routes():
             ids = [p.id for p in projects]
             sess_map: dict = {pid: [] for pid in ids}
             if ids:
+                # Manually ranked chats first (project_rank asc), unranked
+                # ones follow by recency. nullslast because SQLite sorts
+                # NULL first on ASC, which would bury the manual order.
+                from sqlalchemy import nullslast
                 rows = (
                     db.query(DbSession.id, DbSession.name, DbSession.project_id,
                              DbSession.last_message_at)
                     .filter(DbSession.project_id.in_(ids),
                             DbSession.archived == False)  # noqa: E712
-                    .order_by(DbSession.last_message_at.desc())
+                    .order_by(nullslast(DbSession.project_rank.asc()),
+                              DbSession.last_message_at.desc())
                     .all()
                 )
                 for r in rows:
@@ -227,6 +236,35 @@ def setup_project_routes():
             if not sess or (sess.owner and owner and sess.owner != owner):
                 raise HTTPException(404, "Session nicht gefunden")
             sess.project_id = project_id
+            sess.project_rank = None  # newcomers join the recency block
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
+
+    @router.post("/{project_id}/chat-order")
+    def reorder_project_chats(project_id: str, req: ChatOrderRequest, request: Request):
+        """Persist a manual order for the project's chats. The list is the
+        complete new top block: listed sessions get project_rank = index,
+        chats of the project NOT listed fall back to unranked (recency)."""
+        owner = effective_user(request)
+        db = SessionLocal()
+        try:
+            _get_owned(db, project_id, owner)
+            sessions = (
+                db.query(DbSession)
+                .filter(DbSession.project_id == project_id)
+                .all()
+            )
+            by_id = {str(s.id): s for s in sessions}
+            wanted = [str(sid) for sid in req.session_ids]
+            unknown = [sid for sid in wanted if sid not in by_id]
+            if unknown:
+                raise HTTPException(400, f"Session gehört nicht zum Projekt: {unknown[0]}")
+            for s in sessions:
+                s.project_rank = None
+            for idx, sid in enumerate(wanted):
+                by_id[sid].project_rank = idx
             db.commit()
             return {"ok": True}
         finally:
@@ -242,6 +280,7 @@ def setup_project_routes():
             if not sess or (sess.owner and owner and sess.owner != owner):
                 raise HTTPException(404, "Session nicht gefunden")
             sess.project_id = None
+            sess.project_rank = None
             db.commit()
             return {"ok": True}
         finally:

@@ -567,6 +567,16 @@ async def _document_tool_dispatch(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+# Tools that may run concurrently within one agent round: stateless reads with
+# no cross-call ordering semantics. bash/python (cwd, side effects) and every
+# mutating tool stay sequential; MCP tools are excluded because a stdio server
+# may not tolerate interleaved requests.
+PARALLEL_SAFE_TOOLS = frozenset({
+    "ls", "read_file", "grep", "glob",
+    "web_search", "web_fetch", "search_chats",
+})
+
+
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,

@@ -1625,6 +1625,12 @@ body.bg-pattern-sparkles {
     .project-row.drag-over {
       outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); opacity: 1;
     }
+    /* Reordering a chat inside its project: the marked row is the insertion
+       point (drop = insert before; the "+ New chat" row = move to end). Only
+       the mirrored project rows ever get this class (js/projects.js). */
+    .list-item.drag-over {
+      outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent);
+    }
     .session-folder.dragging-folder { opacity: 0.4; }
     .folder-toggle { font-size: 0.7em; width: 10px; text-align: center; }
     .folder-name { font-weight: inherit; flex: 1; }
@@ -40725,4 +40731,27 @@ body.theme-frosted .modal {
   gap: 6px !important;
   cursor: pointer;
   font-size: 12px;
+}
+
+/* Quote-and-Ask (v3.5): floating pill over a text selection in the chat
+   history — click puts the excerpt into the composer as a blockquote
+   (js/quoteAsk.js). Same card/border/fg vocabulary as the other pills. */
+.quote-ask-btn {
+  position: fixed;
+  z-index: 3000;
+  display: none;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.quote-ask-btn:hover {
+  background: color-mix(in srgb, var(--fg) 8%, var(--card));
 }

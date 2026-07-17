@@ -703,6 +703,46 @@ function render() {
     frag.appendChild(row);
 
     if (open) {
+      // Manual reorder (v3.5): dropping a chat of THIS project onto one of
+      // its sibling rows inserts it before that row; the full new order is
+      // persisted via POST chat-order (ranked block first, rest by recency).
+      const orderIds = (p.sessions || []).map(ps => String(ps.id));
+      const _reorder = async (sid, beforeId) => {
+        const next = orderIds.filter(id => id !== sid);
+        const at = beforeId === null ? next.length : next.indexOf(beforeId);
+        next.splice(at < 0 ? next.length : at, 0, sid);
+        try {
+          await _json(`/api/projects/${p.id}/chat-order`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_ids: next }),
+          });
+          await loadProjects();
+        } catch (e) {
+          if (uiModule.showError) uiModule.showError('Reorder failed: ' + e.message);
+        }
+      };
+      const _wireReorderTarget = (el, beforeId) => {
+        el.addEventListener('dragover', (ev) => {
+          if (![...ev.dataTransfer.types].includes('application/x-odysseus-session')) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.dataTransfer.dropEffect = 'move';
+          el.classList.add('drag-over');
+        });
+        el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+        el.addEventListener('drop', (ev) => {
+          el.classList.remove('drag-over');
+          const sid = ev.dataTransfer.getData('application/x-odysseus-session');
+          if (!sid) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          // Only reorder within the same project; foreign chats keep the
+          // existing "drop on the project row to move it here" gesture.
+          if (!orderIds.includes(String(sid)) || String(sid) === String(beforeId)) return;
+          _reorder(String(sid), beforeId);
+        });
+      };
       for (const ps of (p.sessions || [])) {
         const full = bySid.get(String(ps.id));
         if (full) {
@@ -711,6 +751,7 @@ function render() {
           // row itself so it stays a direct sibling (animation stagger).
           const item = createSessionItem(full);
           item.style.marginLeft = '14px';
+          _wireReorderTarget(item, String(ps.id));
           frag.appendChild(item);
         } else {
           _missingSessions = true;
@@ -721,6 +762,7 @@ function render() {
       add.style.cssText = 'padding-left:26px;font-size:12px;opacity:.75;';
       add.textContent = '+ New chat';
       add.addEventListener('click', () => _newChatInProject(p));
+      _wireReorderTarget(add, null); // drop below the last chat = move to end
       frag.appendChild(add);
     }
   }
