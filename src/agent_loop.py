@@ -26,6 +26,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
+from src.tool_execution import PARALLEL_SAFE_TOOLS
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -2223,6 +2224,22 @@ def _resolve_tool_blocks(
     return tool_blocks, used_native, converted_calls
 
 
+def _parallel_safe_round(tool_blocks, tool_policy, max_tool_calls, total_tool_calls) -> bool:
+    """True when every block this round is a stateless read that may run
+    concurrently (PARALLEL_SAFE_TOOLS) and neither a policy block nor the
+    tool budget could interrupt the round midway — the two cases that make
+    the sequential loop stop between blocks."""
+    if len(tool_blocks) < 2:
+        return False
+    if not all(b.tool_type in PARALLEL_SAFE_TOOLS for b in tool_blocks):
+        return False
+    if tool_policy and any(tool_policy.blocks(b.tool_type) for b in tool_blocks):
+        return False
+    if max_tool_calls > 0 and total_tool_calls + len(tool_blocks) > max_tool_calls:
+        return False
+    return True
+
+
 def _append_tool_results(
     messages: List[Dict],
     round_response: str,
@@ -3958,6 +3975,42 @@ async def stream_agent_loop(
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
         budget_hit = False
+
+        # Fork (v3.5): when every block this round is a stateless read
+        # (PARALLEL_SAFE_TOOLS), start them all now and let the loop below
+        # consume the results in block order — the SSE stream stays
+        # deterministic, only the wall-clock execution overlaps. The
+        # workspace binding is a ContextVar (task-local), so concurrent
+        # blocks can't leak paths into each other. Blocked-by-policy or
+        # over-budget rounds fall back to the sequential path untouched.
+        _prestarted: dict = {}
+        if _parallel_safe_round(tool_blocks, tool_policy, max_tool_calls, total_tool_calls):
+            def _prestart_block(b):
+                q: asyncio.Queue = asyncio.Queue()
+
+                async def _push(payload):
+                    await q.put(payload)
+
+                async def _run():
+                    try:
+                        return await execute_tool_block(
+                            b,
+                            session_id=session_id,
+                            disabled_tools=disabled_tools,
+                            tool_policy=tool_policy,
+                            owner=owner,
+                            progress_cb=_push,
+                            workspace=workspace,
+                        )
+                    finally:
+                        # Sentinel so the drainer knows to stop.
+                        await q.put(None)
+
+                return q, asyncio.create_task(_run())
+
+            for _pre_i, _pre_b in enumerate(tool_blocks):
+                _prestarted[_pre_i] = _prestart_block(_pre_b)
+
         for i, block in enumerate(tool_blocks):
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
@@ -3993,26 +4046,30 @@ async def stream_agent_loop(
                 # periodic {elapsed_s, tail} payloads via this callback;
                 # we forward each one as a `tool_progress` SSE event so
                 # the UI can render live elapsed-time + tail-of-output.
-                _progress_q: asyncio.Queue = asyncio.Queue()
-                async def _push_progress(payload):
-                    await _progress_q.put(payload)
+                if i in _prestarted:
+                    # Already running (parallel read round) — just consume.
+                    _progress_q, _tool_task = _prestarted[i]
+                else:
+                    _progress_q = asyncio.Queue()
+                    async def _push_progress(payload):
+                        await _progress_q.put(payload)
 
-                async def _run_tool():
-                    try:
-                        return await execute_tool_block(
-                            block,
-                            session_id=session_id,
-                            disabled_tools=disabled_tools,
-                            tool_policy=tool_policy,
-                            owner=owner,
-                            progress_cb=_push_progress,
-                            workspace=workspace,
-                        )
-                    finally:
-                        # Sentinel so the drainer knows to stop.
-                        await _progress_q.put(None)
+                    async def _run_tool():
+                        try:
+                            return await execute_tool_block(
+                                block,
+                                session_id=session_id,
+                                disabled_tools=disabled_tools,
+                                tool_policy=tool_policy,
+                                owner=owner,
+                                progress_cb=_push_progress,
+                                workspace=workspace,
+                            )
+                        finally:
+                            # Sentinel so the drainer knows to stop.
+                            await _progress_q.put(None)
 
-                _tool_task = asyncio.create_task(_run_tool())
+                    _tool_task = asyncio.create_task(_run_tool())
                 # Drain progress events as they arrive — block until the
                 # next event OR the tool finishes (sentinel = None).
                 while True:
