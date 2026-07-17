@@ -70,20 +70,46 @@ def _save_tidy_state(memory_manager, owner: Optional[str], fingerprint: str) -> 
 
 EXTRACT_SYSTEM_PROMPT = (
     "You are a memory extraction assistant. Analyze the conversation and extract ONLY "
-    "durable personal facts about the user that would be useful across many future conversations.\n\n"
-    "Good examples: name, job title, city, family members, long-term projects, strong preferences.\n"
-    "Bad examples: what they asked about today, temporary moods, generic statements, "
+    "durable items that will matter across many future conversations — two kinds:\n\n"
+    "1. PERSONAL FACTS about the user.\n"
+    "   Good examples: name, job title, city, family members, long-term projects, strong preferences.\n"
+    "   Bad examples: what they asked about today, temporary moods, generic statements, "
     "things the assistant said, one-off tasks, opinions on the current topic.\n\n"
+    "2. CORRECTIONS the assistant should learn from: the user corrected the assistant "
+    "(a wrong fact, a wrong approach, a misread preference), or the assistant clearly "
+    "acknowledged its own mistake. Phrase the lesson forward-looking so the SAME mistake "
+    "is not repeated ('X is Y, not Z', 'When doing X, do Y'). Do NOT extract mere topic "
+    "disagreements or the user changing their mind about what they want.\n\n"
     "Rules:\n"
-    "- MAX 2 facts per conversation — only the most important\n"
-    "- Only extract facts the USER stated or clearly implied\n"
-    "- Each fact must be a single short sentence (under 15 words)\n"
-    "- If a fact is similar to something likely already known, skip it\n"
+    "- MAX 2 facts and MAX 2 corrections per conversation — only the most important\n"
+    "- Facts must come from what the USER stated or clearly implied\n"
+    "- Each item must be a single short sentence (under 15 words)\n"
+    "- If an item is similar to something likely already known, skip it\n"
     "- If nothing durable was revealed, return []\n\n"
     "Return a JSON array of objects with 'text' and 'category' fields.\n"
-    "Categories: 'identity', 'preference', 'fact', 'contact', 'project', 'goal'\n\n"
+    "Categories: 'identity', 'preference', 'fact', 'contact', 'project', 'goal', 'correction'\n\n"
     "Return ONLY valid JSON, no markdown fences."
 )
+
+# Cheap user-message heuristic used by the caller to fast-path an extraction
+# run when the user seems to be CORRECTING the assistant — corrections must not
+# wait for the every-Nth-message cadence, or the mistake scrolls out of the
+# extraction window before it is ever analyzed.
+_CORRECTION_PATTERNS = re.compile(
+    r"(?i)\b("
+    r"falsch|stimmt (so )?nicht|nicht richtig|nicht korrekt|korrektur|"
+    r"doch nicht|hab(e)? ich nicht gesagt|meinte? (ich )?(eigentlich|etwas anderes)|"
+    r"wrong|incorrect|not (right|correct|true|what i (meant|said|asked))|"
+    r"you (mis|got .* wrong)|that'?s not|actually,? (no|i)"
+    r")\b"
+)
+
+
+def looks_like_correction(text: str) -> bool:
+    """True when a user message reads like it corrects the assistant."""
+    if not text or len(text) > 2000:
+        return False
+    return bool(_CORRECTION_PATTERNS.search(text))
 
 # How many recent messages to include for extraction
 CONTEXT_WINDOW = 6
