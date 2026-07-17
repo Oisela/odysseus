@@ -21,6 +21,7 @@ import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
+import quoteAskModule from './js/quoteAsk.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import calendarModule from './js/calendar.js';
@@ -4272,6 +4273,7 @@ function startOdysseusApp() {
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
+  quoteAskModule.init();
 
   // Auto-focus message input on load
   const msgEl = document.getElementById('message');
