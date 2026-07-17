@@ -480,7 +480,7 @@ async def _build_context_owner_probe(monkeypatch, request_state):
         captured["preface_owner"] = kwargs["owner"]
         return [], [], []
 
-    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None, budget_tokens=None):
         captured["compact_owner"] = owner
         return messages, 8192, False
 

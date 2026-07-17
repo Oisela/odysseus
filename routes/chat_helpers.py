@@ -786,9 +786,21 @@ async def build_chat_context(
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
 
-    # Auto-compact
+    # Auto-compact. Agent turns are soft-trimmed to the agent input budget in
+    # agent_loop — key the compaction threshold off that SAME budget so older
+    # turns are summarized before the trim silently front-drops them
+    # (v3.5 fix: with an undiscovered model window the budget fell back to
+    # 6k while compaction waited for 85% of the window — it never fired).
+    _compact_budget = None
+    if agent_mode:
+        try:
+            from src.context_budget import resolve_agent_input_budget
+            _compact_budget = resolve_agent_input_budget(sess.endpoint_url, sess.model) or None
+        except Exception:
+            logger.debug("agent compact budget unavailable", exc_info=True)
     messages, context_length, was_compacted = await maybe_compact(
         sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
+        budget_tokens=_compact_budget,
     )
     _before_trim_messages = len(messages)
     _before_trim_tokens = estimate_tokens(messages)
