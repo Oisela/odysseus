@@ -2968,6 +2968,19 @@ async function _saveRoadmap(text, msgEl) {
   }
 }
 
+// Collapsed-state of roadmap sections, persisted per section title.
+// Released/rejected packages start collapsed so the card leads with the
+// open package and the inbox (v3.5, Alessios Wunsch: übersichtlicher).
+let _roadmapCollapsed = null;
+
+function _roadmapCollapsedState() {
+  if (!_roadmapCollapsed) {
+    try { _roadmapCollapsed = JSON.parse(localStorage.getItem('ody-roadmap-collapsed') || '{}'); }
+    catch (_) { _roadmapCollapsed = {}; }
+  }
+  return _roadmapCollapsed;
+}
+
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
   const msg = el('dev-roadmap-msg');
@@ -2978,11 +2991,26 @@ function _renderRoadmap() {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
     return;
   }
+  const collapsedState = _roadmapCollapsedState();
   for (const sec of sections) {
+    const doneCount = sec.items.filter(it => it.done).length;
+    const collapsed = (sec.title in collapsedState)
+      ? !!collapsedState[sec.title]
+      : /RELEASED/i.test(sec.title);
     const head = document.createElement('div');
-    head.textContent = sec.title;
-    head.style.cssText = 'font-weight:600;margin:10px 0 4px;';
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:600;margin:10px 0 4px;cursor:pointer;user-select:none;';
+    head.innerHTML = `
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.6;transition:transform .15s ease;transform:rotate(${collapsed ? '-90' : '0'}deg);"><polyline points="6 9 12 15 18 9"/></svg>
+      <span></span>
+      <span class="folder-count" style="font-weight:400;">${doneCount}/${sec.items.length}</span>`;
+    head.querySelector('span').textContent = sec.title;
+    head.addEventListener('click', () => {
+      collapsedState[sec.title] = !collapsed;
+      try { localStorage.setItem('ody-roadmap-collapsed', JSON.stringify(collapsedState)); } catch (_) {}
+      _renderRoadmap();
+    });
     list.appendChild(head);
+    if (collapsed) continue;
     if (!sec.items.length) {
       const empty = document.createElement('div');
       empty.textContent = '(no entries)';
