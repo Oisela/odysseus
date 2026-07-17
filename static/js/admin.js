@@ -3038,7 +3038,7 @@ async function _loadDevStatus() {
   }
 }
 
-async function _initBuilderLink() {
+async function _initBuilderLink(_attempt = 0) {
   const btn = el('dev-builder-btn');
   if (!btn) return;
   try {
@@ -3046,7 +3046,15 @@ async function _initBuilderLink() {
     const projs = (m.getProjects && m.getProjects()) || [];
     const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
       || projs.find(p => /entwickler|builder/i.test(p.name || ''));
-    if (!builder) return;
+    if (!builder) {
+      // Projects load async at app start. When this init runs first, the
+      // cache is still empty and the Go button stayed hidden forever (seen
+      // on prod 2026-07-17). Retry briefly until the list is in — on
+      // instances without a builder project (e.g. the beta) the retries
+      // fizzle out and the button legitimately stays hidden.
+      if (_attempt < 8) setTimeout(() => _initBuilderLink(_attempt + 1), 900);
+      return;
+    }
     btn.style.display = '';
     btn.addEventListener('click', async () => {
       try {
