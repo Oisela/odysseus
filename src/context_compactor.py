@@ -316,20 +316,31 @@ async def maybe_compact(
     messages: List[Dict],
     headers: Optional[Dict] = None,
     owner: Optional[str] = None,
+    budget_tokens: Optional[int] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
+
+    `budget_tokens` (optional) is a caller-imposed input budget that is
+    SMALLER than the model window — the agent loop soft-trims to it. When
+    given, the compaction threshold keys off that budget so older turns get
+    summarized BEFORE the trim silently front-drops them. Without it, the
+    threshold keys off the model window as before (plain chat path).
 
     Returns (messages, context_length, was_compacted).
     """
     context_length = get_context_length(endpoint_url, model)
+    threshold_base = context_length
+    if budget_tokens and budget_tokens > 0:
+        threshold_base = min(context_length, budget_tokens) if context_length else budget_tokens
     used = estimate_tokens(messages)
-    pct = (used / context_length) * 100 if context_length else 0
+    pct = (used / threshold_base) * 100 if threshold_base else 0
 
     if pct < COMPACT_THRESHOLD * 100:
         return messages, context_length, False
 
     logger.info(
-        f"Context at {pct:.1f}% ({used}/{context_length} tokens) — compacting"
+        f"Context at {pct:.1f}% ({used}/{threshold_base} tokens"
+        f"{' — agent budget' if budget_tokens else ''}) — compacting"
     )
 
     # Split into system preface and conversation

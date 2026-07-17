@@ -3160,36 +3160,16 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
-        from src.model_context import budget_context_for_model
+        from src.context_budget import resolve_agent_input_budget
 
-        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
-        if soft_budget > 0:
+        # Settings + window-probe dance (hard_max ceiling #1230, materialized
+        # default = auto #4121, only proven windows scale #4122) lives in
+        # resolve_agent_input_budget — shared with the compaction trigger in
+        # chat_helpers so both key off the SAME budget (v3.5).
+        effective_budget = resolve_agent_input_budget(endpoint_url, model, context_length)
+        if effective_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Ceiling for the auto-derived budget (no effect on an explicit budget;
-            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
-            # so misconfig can't zero the budget.
-            try:
-                hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
-            except (TypeError, ValueError):
-                hard_max = DEFAULT_HARD_MAX
-            if hard_max <= 0:
-                hard_max = DEFAULT_HARD_MAX
-            # Default value = auto sentinel (scale to the window); any other value =
-            # explicit cap. Value-based, not presence-based, because the save path
-            # materializes defaults so a persisted default must still read as auto (#4121).
-            budget_is_explicit = _budget_is_explicit(soft_budget)
-            # Scale only off a window we actually discovered, bound to the value it
-            # proves (else 0) — not the passed-in context_length, which can be stale
-            # or unset for some callers (#4122 review).
-            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
-            effective_budget = compute_input_token_budget(
-                soft_budget,
-                ctx_for_budget,
-                budget_is_explicit,
-                hard_max=hard_max,
-            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,
