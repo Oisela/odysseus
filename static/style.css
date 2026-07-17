@@ -1625,6 +1625,12 @@ body.bg-pattern-sparkles {
     .project-row.drag-over {
       outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); opacity: 1;
     }
+    /* Reordering a chat inside its project: the marked row is the insertion
+       point (drop = insert before; the "+ New chat" row = move to end). Only
+       the mirrored project rows ever get this class (js/projects.js). */
+    .list-item.drag-over {
+      outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent);
+    }
     .session-folder.dragging-folder { opacity: 0.4; }
     .folder-toggle { font-size: 0.7em; width: 10px; text-align: center; }
     .folder-name { font-weight: inherit; flex: 1; }
