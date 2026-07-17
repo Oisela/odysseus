@@ -1182,6 +1182,15 @@ def run_post_response_tasks(
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
+    # Corrections skip the cadence (v3.5): when the user's message reads like
+    # "nein, falsch / that's not what I meant", extract NOW so the lesson is
+    # captured while the mistake is still inside the extraction window.
+    if not _should_extract and _msg_count >= 2:
+        try:
+            from services.memory.memory_extractor import looks_like_correction
+            _should_extract = looks_like_correction(message)
+        except Exception:
+            pass
     if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
