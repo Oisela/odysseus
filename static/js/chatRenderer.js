@@ -2175,23 +2175,29 @@ export function renderAskUserCard(payload, options) {
     if (!label) return;
     const description = (opt && opt.description) ? String(opt.description) : '';
     const row = document.createElement(multi ? 'label' : 'button');
-    row.className = 'ask-user-option';
+    // Buttons can't be reliable flex containers (Chrome miscalculates the
+    // height once children wrap), so label+description live in an inner
+    // block and only multi rows (checkbox beside it) use flex.
+    row.className = multi ? 'ask-user-option ask-user-option-multi' : 'ask-user-option';
     if (multi) {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.value = label;
       row.appendChild(checkbox);
     }
+    const main = document.createElement('span');
+    main.className = 'ask-user-option-main';
     const labelText = document.createElement('span');
     labelText.className = 'ask-user-option-label';
     labelText.innerHTML = emojiText(label);
-    row.appendChild(labelText);
+    main.appendChild(labelText);
     if (description) {
       const descriptionText = document.createElement('span');
       descriptionText.className = 'ask-user-option-desc';
       descriptionText.innerHTML = emojiText(description);
-      row.appendChild(descriptionText);
+      main.appendChild(descriptionText);
     }
+    row.appendChild(main);
     if (!multi) {
       row.type = 'button';
       row.addEventListener('click', () => send(label));
