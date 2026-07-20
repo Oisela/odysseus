@@ -40375,7 +40375,7 @@ body.theme-frosted .modal {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 8px;
   width: 100%;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
@@ -40395,7 +40395,17 @@ body.theme-frosted .modal {
 }
 .ask-user-option:disabled { cursor: default; }
 .ask-user-option-label { font-weight: 500; }
-.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+.ask-user-option-desc {
+  /* Own full-width row under the label — inline it got squeezed next to
+     the label and wrapped mid-sentence. */
+  flex-basis: 100%;
+  opacity: 0.65;
+  font-size: 12px;
+  line-height: 1.4;
+}
+/* Multi-select rows: indent the description past the checkbox column so it
+   aligns with the label above it. */
+.ask-user-option input[type="checkbox"] ~ .ask-user-option-desc { margin-left: 24px; }
 /* Free-text "Other" row: input + send, on one line. */
 .ask-user-other {
   display: flex;
