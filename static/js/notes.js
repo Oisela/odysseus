@@ -623,10 +623,49 @@ function _isNoteFullyDone(note) {
   return false;
 }
 
+// ── Recipes & shopping list ─────────────────────────────────────────────
+// The shopping list is the named list (label tag) below; each ingredient
+// becomes its own todo in it. Recipes carry ingredients as items[].
+const SHOPPING_LIST_TAG = 'Einkauf';
+
+// Split "200ml Milch" into { qty: '200ml', name: 'Milch' }. Quantity =
+// leading number (incl. fractions) plus an optional unit word.
+function _ingredientParts(text) {
+  const t = (text || '').trim();
+  const m = t.match(/^([\d.,/½¼¾]+\s*(?:g|kg|mg|ml|cl|dl|l|el|tl|prisen?|stk|stück|pck|packung(?:en)?|bund|dosen?|x|×)?\.?)\s+(.+)$/i);
+  if (m) return { qty: m[1].trim(), name: m[2].trim() };
+  return { qty: '', name: t };
+}
+
+// Dedup key: the ingredient name without quantity, case-insensitive.
+function _ingredientKey(text) {
+  return _ingredientParts(text).name.replace(/^\d+×\s*/, '').toLowerCase();
+}
+
+// Merge a new ingredient into an existing shopping-list entry title:
+// no quantities on either side → count up ("2× Milch"); otherwise keep the
+// name once and join the quantity strings ("Milch — 200ml + 1l").
+function _mergeIngredientTitles(existingTitle, newText) {
+  const ex = _ingredientParts(existingTitle);
+  const nw = _ingredientParts(newText);
+  const dash = existingTitle.match(/^(.+?) — (.+)$/);
+  if (dash) {
+    // Already in joined form: "Milch — 200ml + 1l" + next quantity.
+    return `${dash[1]} — ${dash[2]} + ${nw.qty || newText}`;
+  }
+  if (!ex.qty && !nw.qty) {
+    const counted = existingTitle.match(/^(\d+)×\s+(.*)$/);
+    return counted ? `${parseInt(counted[1], 10) + 1}× ${counted[2]}` : `2× ${existingTitle}`;
+  }
+  const name = ex.name || nw.name;
+  const parts = [ex.qty || '1×', nw.qty || '1×'];
+  return `${name} — ${parts.join(' + ')}`;
+}
+
 // A "checklist note" — todo or goal — has structured items[] that the cards
 // render as checkboxes and that "fully done" / progress logic reads from.
 function _hasItems(note) {
-  return note && (note.note_type === 'todo' || note.note_type === 'goal' || note.note_type === 'checklist');
+  return note && (note.note_type === 'todo' || note.note_type === 'goal' || note.note_type === 'checklist' || note.note_type === 'recipe');
 }
 
 // Compact " N/M" progress string for a goal's checklist. Empty when the goal
@@ -1936,11 +1975,14 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
 }
 
 function _buildRowHtml(note) {
-  const isTodo = _hasItems(note);
+  const isRecipe = note.note_type === 'recipe';
+  const isTodo = _hasItems(note) && !isRecipe;
   const items = Array.isArray(note.items) ? note.items : [];
   const doneCount = items.filter(it => it.done).length;
   let sub = '';
-  if (isTodo) {
+  if (isRecipe) {
+    sub = items.length ? `${items.length} ingredient${items.length === 1 ? '' : 's'}` : ((note.content || '').split('\n').find(l => l.trim()) || '');
+  } else if (isTodo) {
     const firstOpen = items.find(it => !it.done);
     if (items.length) sub = `${doneCount}/${items.length}` + (firstOpen ? ' · ' + (firstOpen.text || '') : '');
   } else {
@@ -1951,6 +1993,8 @@ function _buildRowHtml(note) {
   const allDone = isTodo && items.length > 0 && doneCount === items.length;
   const icon = isTodo
     ? `<button type="button" class="note-row-check${allDone ? ' all-done' : ''}" data-note-id="${note.id}" title="Complete (moves to archive)" aria-label="Complete to-do"></button>`
+    : isRecipe
+    ? `<span class="note-row-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></svg></span>`
     : `<span class="note-row-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/></svg></span>`;
   const pin = note.pinned
     ? `<span class="note-row-pin" title="Pinned"><svg width="10" height="10" viewBox="0 0 24 28" fill="currentColor"><g transform="rotate(0 12 14)"><line x1="12" y1="17" x2="12" y2="27" stroke="currentColor" stroke-width="2"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></g></svg></span>`
@@ -1958,7 +2002,7 @@ function _buildRowHtml(note) {
   return `<div class="note-row${note.id === _selectedNoteId ? ' active' : ''}" data-note-id="${note.id}">
     ${icon}
     <div class="note-row-main">
-      <div class="note-row-title">${_esc(note.title || (isTodo ? '(untitled to-do)' : '(untitled note)'))}</div>
+      <div class="note-row-title">${_esc(note.title || (isRecipe ? '(untitled recipe)' : isTodo ? '(untitled to-do)' : '(untitled note)'))}</div>
       ${sub ? `<div class="note-row-sub">${_esc(sub)}</div>` : ''}
     </div>
     ${pin}
@@ -2120,9 +2164,12 @@ function _buildCardHtml(note, activeReminderHighlights) {
     if (_hasItems(note) && Array.isArray(note.items)) {
       // Goal notes can carry a free-form description above the step list —
       // todos rarely do, but the same render works for both.
-      if (note.note_type === 'goal' && (note.content || '').trim()) {
+      if ((note.note_type === 'goal' || note.note_type === 'recipe') && (note.content || '').trim()) {
+        // Recipes reuse the goal layout: instructions (markdown) above the
+        // ingredient checklist. Recipes render the full text — a cooking
+        // Anleitung cut off at 300 chars would be useless.
         const fullText = note.content || '';
-        const preview = fullText.length > 300 ? fullText.slice(0, 300) + '…' : fullText;
+        const preview = (note.note_type === 'recipe' || fullText.length <= 300) ? fullText : fullText.slice(0, 300) + '…';
         contentHtml += `<div class="note-goal-desc note-md">${_mdRender(preview)}</div>`;
       }
       contentHtml += '<div class="note-checklist-preview">';
@@ -2182,6 +2229,11 @@ function _buildCardHtml(note, activeReminderHighlights) {
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
           Goal${_goalProgress(note)}
         </span>`
+      : note.note_type === 'recipe'
+      ? `<span class="note-goal-pill" title="Recipe">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></svg>
+          Recipe
+        </span>`
       : '';
     return `<div class="note-card${note.pinned ? ' note-card-pinned' : ''}${cc}${sel}${goalClass}${reminderGlowClass}${_selectMode ? ' note-card-selectmode' : ''}" draggable="${(_selectMode || _isNotesMobileMode()) ? 'false' : 'true'}" data-note-id="${note.id}"${cardStyle}>
       ${_selectMode ? `<input type="checkbox" class="memory-select-cb note-card-cb" data-note-id="${note.id}" ${_selectedIds.has(note.id) ? 'checked' : ''} />` : ''}
@@ -2221,6 +2273,10 @@ function _buildCardHtml(note, activeReminderHighlights) {
         <button class="note-card-action note-card-unarchive" data-note-id="${note.id}" title="Unarchive">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
         </button>` : `
+        ${note.note_type === 'recipe' ? `
+        <button class="note-card-action note-card-shoplist" data-note-id="${note.id}" title="Add ingredients to shopping list">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+        </button>` : ''}
         ${_hasItems(note) ? `
         <button class="note-card-action note-card-copy" data-note-id="${note.id}" title="Copy all items">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -2749,6 +2805,44 @@ function _bindCardEvents(body) {
       });
     });
   });
+  // Recipe → shopping list: every ingredient becomes its own checkable todo
+  // in the "Einkauf" list; duplicates merge ("2× Milch" / quantities joined).
+  body.querySelectorAll('.note-card-shoplist').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.dataset.noteId;
+      const note = _notes.find(n => n.id === id);
+      if (!note) return;
+      const zutaten = (note.items || []).map(it => (it.text || '').trim()).filter(Boolean);
+      if (!zutaten.length) { uiModule.showToast('No ingredients in this recipe yet'); return; }
+      btn.disabled = true;
+      try {
+        const existing = _notes.filter(n => !n.archived && n.id !== id && _noteTags(n).includes(SHOPPING_LIST_TAG));
+        let added = 0, merged = 0;
+        for (const z of zutaten) {
+          const dup = existing.find(n => _ingredientKey(n.title) === _ingredientKey(z));
+          if (dup) {
+            merged++;
+            const newTitle = _mergeIngredientTitles(dup.title, z);
+            dup.title = newTitle;
+            await _patchNote(dup.id, { title: newTitle }).catch(() => {});
+          } else {
+            added++;
+            const saved = await _saveNote({ title: z, note_type: 'todo', items: [], label: SHOPPING_LIST_TAG });
+            if (saved && saved.id) { _notes.unshift(saved); existing.push(saved); }
+          }
+        }
+        _renderNotes();
+        uiModule.showToast(`${added} added to ${SHOPPING_LIST_TAG}${merged ? `, ${merged} merged` : ''}`);
+      } catch (err) {
+        console.error('add-to-shopping-list failed:', err);
+        uiModule.showError('Failed to add to shopping list');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
   // Copy entire checklist (title + items, markdown-style)
   body.querySelectorAll('.note-card-copy').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -3147,7 +3241,7 @@ function _collectFormDraft(form) {
     repeat: form.querySelector('.note-form-repeat')?.value || 'none',
   };
   if (type === 'note') d.content = form.querySelector('.note-form-content')?.value || '';
-  else if (type === 'goal') { d.content = form.querySelector('.note-form-goal-desc')?.value || ''; d.items = _collectItems(form); }
+  else if (type === 'goal' || type === 'recipe') { d.content = form.querySelector('.note-form-goal-desc')?.value || ''; d.items = _collectItems(form); }
   else d.items = _collectItems(form);
   return d;
 }
@@ -3221,13 +3315,13 @@ function _buildForm(note = null) {
         ? `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(note?.content || '')}</textarea>`
         : type === 'draw'
         ? _buildDrawHtml()
-        : type === 'goal'
+        : (type === 'goal' || type === 'recipe')
         ? _buildGoalHtml(note, items)
         : _buildChecklistHtml(items)}
     </div>
     <div class="note-form-reminder-tags"></div>
     <div class="note-form-meta">
-      <div class="note-form-type-seg${type === 'todo' ? ' is-todo' : type === 'draw' ? ' is-draw' : ''}" role="group">
+      <div class="note-form-type-seg${type === 'todo' ? ' is-todo' : type === 'recipe' ? ' is-recipe' : type === 'draw' ? ' is-draw' : ''}" role="group">
         <button type="button" class="note-form-type-pill${type === 'note' ? ' active' : ''}" data-type="note">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
           <span>Note</span>
@@ -3235,6 +3329,10 @@ function _buildForm(note = null) {
         <button type="button" class="note-form-type-pill${type === 'todo' ? ' active' : ''}" data-type="todo">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           <span>Todo</span>
+        </button>
+        <button type="button" class="note-form-type-pill${type === 'recipe' ? ' active' : ''}" data-type="recipe">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></svg>
+          <span>Recipe</span>
         </button>
         <button type="button" class="note-form-type-pill${type === 'draw' ? ' active' : ''}" data-type="draw">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
@@ -3283,8 +3381,8 @@ function _buildForm(note = null) {
   // *editing* an existing goal-typed note — but the switch handler still
   // accepts Goal→Todo/Note transitions (downgrading legacy goals), so
   // these stashes still earn their keep.
-  let _stashedGoalDesc = (type === 'goal') ? (note?.content || '') : null;
-  let _stashedGoalItems = (type === 'goal' && Array.isArray(note?.items)) ? note.items.slice() : null;
+  let _stashedGoalDesc = (type === 'goal' || type === 'recipe') ? (note?.content || '') : null;
+  let _stashedGoalItems = ((type === 'goal' || type === 'recipe') && Array.isArray(note?.items)) ? note.items.slice() : null;
 
   // Drawing also stashes the saved image URL so it survives Note↔Draw flips.
   let _stashedDrawUrl = (type === 'draw') ? (_safeImgSrc(note?.image_url) || null) : null;
@@ -3310,7 +3408,7 @@ function _buildForm(note = null) {
         _stashedNoteText = form.querySelector('.note-form-content')?.value || '';
       } else if (currentType === 'todo') {
         _stashedTodoItems = _collectItems(form);
-      } else if (currentType === 'goal') {
+      } else if (currentType === 'goal' || currentType === 'recipe') {
         _stashedGoalDesc = form.querySelector('.note-form-goal-desc')?.value || '';
         _stashedGoalItems = _collectItems(form);
       } else if (currentType === 'draw') {
@@ -3333,6 +3431,16 @@ function _buildForm(note = null) {
         }
         bodyEl.innerHTML = _buildChecklistHtml(nextItems);
         _wireChecklist(bodyEl);
+      } else if (newType === 'recipe') {
+        // Recipe reuses the goal body: instructions textarea + item list
+        // (the items are the ingredients).
+        const nextItems = (_stashedGoalItems && _stashedGoalItems.length)
+          ? _stashedGoalItems
+          : (_stashedTodoItems && _stashedTodoItems.length)
+          ? _stashedTodoItems
+          : [{ id: _uid(), text: '', done: false }];
+        bodyEl.innerHTML = _buildGoalHtml({ note_type: 'recipe', content: _stashedGoalDesc || _stashedNoteText || '' }, nextItems);
+        _wireGoalForm(form, bodyEl);
       } else if (newType === 'draw') {
         bodyEl.innerHTML = _buildDrawHtml();
         // If the user just attached a photo (via the photo button) and then
@@ -3365,6 +3473,7 @@ function _buildForm(note = null) {
       currentType = newType;
       const seg = form.querySelector('.note-form-type-seg');
       seg?.classList.toggle('is-todo', newType === 'todo');
+      seg?.classList.toggle('is-recipe', newType === 'recipe');
       seg?.classList.toggle('is-draw', newType === 'draw');
       form.querySelectorAll('.note-form-type-pill').forEach(p => p.classList.toggle('active', p.dataset.type === newType));
       // The standalone image preview (form-image-wrap) and the canvas would
@@ -3429,7 +3538,7 @@ function _buildForm(note = null) {
   });
 
   if (currentType === 'todo') _wireChecklist(form.querySelector('.note-form-body'));
-  if (currentType === 'goal') _wireGoalForm(form, form.querySelector('.note-form-body'));
+  if (currentType === 'goal' || currentType === 'recipe') _wireGoalForm(form, form.querySelector('.note-form-body'));
   if (currentType === 'draw') {
     _wireCanvas(form.querySelector('.note-form-body'), _safeImgSrc(note?.image_url) || null);
     // Same hides we apply on type-switch — keep them consistent on initial open.
@@ -3932,13 +4041,20 @@ function _buildForm(note = null) {
       const url = await _uploadCanvasAsPng(canvas);
       if (!url) { uiModule.showError('Failed to save drawing'); return; }
       payload.image_url = url;
-    } else if (currentType === 'goal') {
-      // Legacy: existing goal-type notes still edit through this branch.
-      // No AI involvement — save as a normal note with description + items.
+    } else if (currentType === 'goal' || currentType === 'recipe') {
+      // Legacy goals and recipes share the branch: description + items
+      // (for recipes: instructions + ingredients). No AI involvement.
       payload.content = form.querySelector('.note-form-goal-desc')?.value || '';
       payload.items = _collectItems(form);
     } else {
       payload.items = _collectItems(form);
+    }
+    if (currentType === 'recipe') {
+      // Recipes always live in the "Recipes" list so the sidebar collects
+      // them automatically — user tags stay untouched alongside.
+      const tags = (payload.label || '').split(/\s+/).filter(Boolean);
+      if (!tags.some(t => t.replace(/^#/, '').toLowerCase() === 'recipes')) tags.push('Recipes');
+      payload.label = tags.join(' ');
     }
     if (isEdit) payload.id = note.id;
     // Reset fired reminder if due_date changed (so re-arm works), and also
@@ -4075,9 +4191,10 @@ function _buildForm(note = null) {
 // editor, just like a regular todo with a body.
 function _buildGoalHtml(note, items) {
   const desc = (note?.content || '').toString();
+  const isRecipe = note?.note_type === 'recipe';
   return `
     <div class="note-form-goal">
-      <textarea class="note-form-goal-desc" placeholder="Description (optional)" rows="3">${_esc(desc)}</textarea>
+      <textarea class="note-form-goal-desc" placeholder="${isRecipe ? 'Instructions (markdown works)…' : 'Description (optional)'}" rows="${isRecipe ? 5 : 3}">${_esc(desc)}</textarea>
       ${_buildChecklistHtml(items)}
     </div>
   `;
@@ -4989,7 +5106,7 @@ function _editNote(id) {
       const ta = form.querySelector('.note-form-content');
       if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch {} return; }
     }
-    if (note.note_type === 'todo' || note.note_type === 'goal' || note.note_type === 'checklist') {
+    if (note.note_type === 'todo' || note.note_type === 'goal' || note.note_type === 'checklist' || note.note_type === 'recipe') {
       // Last non-empty checklist row, or the first row if all empty.
       const rows = form.querySelectorAll('.note-cl-row .note-cl-text');
       let target = null;
