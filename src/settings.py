@@ -156,6 +156,11 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    # Model work-sharing: the lead agent model hands subtasks to this cheaper
+    # worker via the `delegate` tool. Same "model@endpoint_name" spec as the
+    # teacher; the enabled flag gates execution without losing the selection.
+    "delegate_worker_model": "",
+    "delegate_enabled": False,
     "teacher_tier2_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always

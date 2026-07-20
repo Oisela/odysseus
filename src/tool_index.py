@@ -63,6 +63,11 @@ ALWAYS_AVAILABLE = frozenset({
     "grep",
     "glob",
     "edit_file",
+    # Model work-sharing (v3.6): the lead model decides on its own when to
+    # hand a subtask to the cheaper worker model, so the tool must be on
+    # every agent turn — retrieval can't anticipate that decision. No-op
+    # with a clear error while delegate_enabled is off.
+    "delegate",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -105,6 +110,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
     "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
+    "delegate": "Hand a self-contained subtask (summarize, extract, transform, draft, review a diff) to the configured cheaper worker model and verify its result. Content = the complete task with ALL needed context inlined — the worker has no tools and cannot ask follow-ups. Prefer this over doing large mechanical work yourself.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
     "list_models": "List all available AI models and their endpoints.",
