@@ -832,6 +832,8 @@ body.bg-pattern-sparkles {
        the default right:-10px dot sat ON that text. Park it on the clock
        icon's top corner instead (icon-rail pattern). */
     #tool-pomodoro-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
+    /* Header-only section — collapsing it hides nothing, so no chevron. */
+    #pomodoro-section .section-collapse-btn { display: none; }
     /* Per-user nudge: the listed tools' minimized dot sits 2px further
        in from the right edge so it doesn't look glued to the border. */
     #tool-theme-btn.rail-minimized::after,
@@ -40377,10 +40379,11 @@ body.theme-frosted .modal {
   gap: 8px;
 }
 .ask-user-option {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 3px 8px;
+  /* Plain block, NOT flex: single-select rows are <button>s, and Chrome
+     miscalculates a button's height once flex children wrap — the
+     description then bled out of the box over the next option. Label and
+     description are stacked blocks inside .ask-user-option-main instead. */
+  display: block;
   width: 100%;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
@@ -40394,23 +40397,28 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
+/* Multi rows are <label>s (no button quirk): checkbox beside the text block. */
+.ask-user-option-multi {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ask-user-option-multi input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; }
+.ask-user-option-main { display: block; flex: 1; min-width: 0; }
 .ask-user-option:hover:not(:disabled) {
   border-color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
 }
 .ask-user-option:disabled { cursor: default; }
-.ask-user-option-label { font-weight: 500; }
+.ask-user-option-label { display: block; font-weight: 500; }
 .ask-user-option-desc {
-  /* Own full-width row under the label — inline it got squeezed next to
-     the label and wrapped mid-sentence. */
-  flex-basis: 100%;
+  /* Own full-width line under the label. */
+  display: block;
+  margin-top: 2px;
   opacity: 0.65;
   font-size: 12px;
   line-height: 1.4;
 }
-/* Multi-select rows: indent the description past the checkbox column so it
-   aligns with the label above it. */
-.ask-user-option input[type="checkbox"] ~ .ask-user-option-desc { margin-left: 24px; }
 /* Free-text "Other" row: input + send, on one line. */
 .ask-user-other {
   display: flex;
