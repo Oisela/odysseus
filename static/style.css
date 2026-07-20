@@ -40765,3 +40765,145 @@ body.theme-frosted .modal {
 .quote-ask-btn:hover {
   background: color-mix(in srgb, var(--fg) 8%, var(--card));
 }
+
+/* ── Notes master-detail (TickTick-style list view, v3.6) ─────────────────
+   Lists sidebar + compact rows + detail pane. The detail pane hosts the
+   regular .note-card / .note-form, so card styling below stays untouched. */
+.notes-pane-body.notes-pane-body-md { padding: 0; gap: 0; overflow: hidden; }
+.notes-md-layout { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+.notes-md-sidebar {
+  width: 128px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.notes-md-sidebar-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  padding: 10px 8px 3px;
+}
+/* Mirrors .settings-nav-item — same sidebar language as the Settings modal. */
+.notes-list-entry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+  min-width: 0;
+}
+.notes-list-entry:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.notes-list-entry.active { background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent); color: var(--accent, var(--red)); }
+.notes-list-entry-icon { flex-shrink: 0; display: inline-flex; opacity: 0.7; }
+.notes-list-entry.active .notes-list-entry-icon { opacity: 1; }
+.notes-list-entry-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.notes-list-count { flex-shrink: 0; font-size: 10px; opacity: 0.5; }
+.notes-md-newlist-input {
+  margin: 2px 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.notes-md-rows-col {
+  width: 262px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notes-md-quickadd { padding: 8px 8px 4px; }
+.notes-md-quickadd-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.notes-md-quickadd-input:focus { outline: none; border-color: var(--accent, var(--red)); }
+.notes-md-rows { flex: 1; overflow-y: auto; scrollbar-width: thin; padding: 4px 0 8px; }
+.note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  transition: background 0.1s;
+}
+.note-row:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.note-row.active { background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+/* TickTick-style completion circle — matches .note-check-dot's language. */
+.note-row-check {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.note-row-check:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.note-row-check.all-done { border-color: var(--green); background: color-mix(in srgb, var(--green) 25%, transparent); }
+.note-row-icon { flex-shrink: 0; margin-top: 1px; opacity: 0.55; display: inline-flex; }
+.note-row-main { flex: 1; min-width: 0; }
+.note-row-title { font-size: 12.5px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-row-sub {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.note-row-pin { flex-shrink: 0; margin-top: 2px; color: var(--accent, var(--red)); opacity: 0.8; display: inline-flex; }
+.note-row-meta { flex-shrink: 0; font-size: 10px; opacity: 0.6; margin-top: 2px; white-space: nowrap; }
+.note-row-meta.overdue { color: var(--red); opacity: 1; }
+
+.notes-md-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 10px 12px;
+}
+.notes-md-detail .note-card { cursor: default; }
+.notes-md-empty {
+  opacity: 0.5;
+  font-size: 12px;
+  text-align: center;
+  padding: 34px 12px;
+  line-height: 1.6;
+}
+/* Narrow window: the sidebar is the first thing to give way. */
+@media (max-width: 900px) {
+  .notes-pane:not(.notes-view-grid) .notes-md-sidebar { width: 104px; }
+}
