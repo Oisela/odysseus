@@ -32,6 +32,10 @@ let _viewMode = (typeof localStorage !== 'undefined' && localStorage.getItem('od
 // prefs registry only exists so freshly created (still empty) lists survive.
 let _selectedNoteId = null;
 let _prefLists = [];
+// Below this pane-body width the list view falls back to the legacy flat
+// cards — three columns don't fit a sidebar-docked pane.
+const NOTES_MD_MIN_WIDTH = 560;
+let _notesMdResizeObserver = null;
 let _showingArchived = false;
 let _selectMode = false;
 let _reminderTimer = null;
@@ -1468,6 +1472,22 @@ export function openPanel() {
   // Named-list registry (master-detail sidebar) — loads in parallel and
   // re-renders once; empty lists live only here, tagged notes carry the rest.
   _loadPrefLists().then(() => { if (_open) _renderNotes(); });
+
+  // Re-render when the pane crosses the master-detail width threshold
+  // (dragged wider, docked, fullscreened) — the two layouts are different
+  // DOM, a CSS media query can't switch them.
+  try {
+    if (_notesMdResizeObserver) _notesMdResizeObserver.disconnect();
+    let lastMd = null;
+    _notesMdResizeObserver = new ResizeObserver(() => {
+      const b = document.querySelector('#notes-pane .notes-pane-body');
+      if (!b) return;
+      const md = (b.getBoundingClientRect().width || 0) >= NOTES_MD_MIN_WIDTH;
+      if (lastMd === null) { lastMd = md; return; }
+      if (md !== lastMd) { lastMd = md; _renderNotes(); }
+    });
+    _notesMdResizeObserver.observe(pane);
+  } catch { /* ResizeObserver unavailable — layout just stays as opened */ }
 }
 
 function _renderLoadingSkeleton() {
@@ -1676,6 +1696,10 @@ export function closePanel(direction) {
 
   // Drop the document keydown listener and the 30s reminder interval —
   // both leaked across open/close cycles in the v2 review.
+  if (_notesMdResizeObserver) {
+    _notesMdResizeObserver.disconnect();
+    _notesMdResizeObserver = null;
+  }
   if (_notesKeydownHandler) {
     document.removeEventListener('keydown', _notesKeydownHandler);
     _notesKeydownHandler = null;
@@ -1833,10 +1857,13 @@ function _renderNotes() {
 
   // TickTick-style master-detail is the list view's default layout (v3.6).
   // The legacy flat-card render remains for grid view, mobile, select mode,
-  // the archive, and the goals-Today special view — those flows keep their
-  // battle-tested wiring untouched.
+  // the archive, the goals-Today special view — and NARROW panes: docked to
+  // the sidebar the pane can be <300px, where three columns are hopeless.
+  // The resize observer in openPanel re-renders when the threshold is
+  // crossed (drag wider / fullscreen → master-detail appears).
+  const bodyW = body.getBoundingClientRect().width || 0;
   const mdMode = _viewMode === 'list' && !_isNotesMobileMode() && !_selectMode
-    && !_showingArchived && _activeFilter !== 'today';
+    && !_showingArchived && _activeFilter !== 'today' && bodyW >= NOTES_MD_MIN_WIDTH;
   if (mdMode) {
     _renderMasterDetail(body, sorted, activeReminderHighlights);
     return;
