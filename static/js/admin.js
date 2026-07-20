@@ -3029,11 +3029,40 @@ function _renderRoadmap() {
         ls[item.line] = ls[item.line].replace(/^- \[[ xX]\]/, cb.checked ? '- [x]' : '- [ ]');
         if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
       });
+      // Markdown screenshots in the entry (or its wrapped lines) render as
+      // small thumbnails — click opens the full image. Upload-URLs only,
+      // so a roadmap line can never make the browser fetch an external host.
+      const IMG_RE = /!\[[^\]]*\]\((\/api\/upload\/[A-Za-z0-9_-]+)\)\s*/g;
+      const imgs = [];
+      const cleanText = item.text.replace(IMG_RE, (_, u) => { imgs.push(u); return ''; }).trim();
+      for (const ex of item.extra) {
+        let m;
+        while ((m = IMG_RE.exec(ex))) imgs.push(m[1]);
+      }
       const span = document.createElement('span');
-      span.textContent = item.text;
+      span.textContent = cleanText;
       if (item.extra.length) span.title = item.extra.join('\n');
       if (item.done) span.style.cssText = 'opacity:0.5;text-decoration:line-through;';
       row.appendChild(cb); row.appendChild(span);
+      if (imgs.length) {
+        const wrap = document.createElement('span');
+        wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-shrink:0;';
+        for (const u of imgs) {
+          const img = document.createElement('img');
+          img.src = u;
+          img.alt = 'screenshot';
+          img.style.cssText = 'height:32px;max-width:64px;object-fit:cover;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;align-self:center;';
+          img.addEventListener('click', (ev) => {
+            // The row is a <label> around the done-checkbox — a plain click
+            // would toggle it instead of opening the screenshot.
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.open(u, '_blank', 'noopener');
+          });
+          wrap.appendChild(img);
+        }
+        row.appendChild(wrap);
+      }
       list.appendChild(row);
     }
   }
@@ -3188,14 +3217,61 @@ function _initBetaButtons() {
 function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
   const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
+  const imgBtn = el('dev-roadmap-img');
   const msg = el('dev-roadmap-msg');
+  // Screenshots attached to the next entry (bug reports need pictures).
+  // Uploaded immediately; the markdown link goes into the entry on Add.
+  let pendingImgs = [];
+  const _syncImgBtn = () => {
+    if (!imgBtn) return;
+    imgBtn.style.color = pendingImgs.length ? 'var(--accent, var(--red))' : '';
+    imgBtn.title = pendingImgs.length
+      ? `${pendingImgs.length} screenshot(s) attached to the next entry`
+      : 'Attach a screenshot (or paste one into the text field)';
+  };
+  const _uploadRoadmapImg = async (file) => {
+    const fd = new FormData();
+    fd.append('files', file);
+    const res = await fetch(`/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
+    const data = await res.json();
+    const fileId = data.files?.[0]?.id;
+    if (!fileId) throw new Error('Upload failed');
+    pendingImgs.push(`/api/upload/${fileId}`);
+    _syncImgBtn();
+    if (msg) { msg.textContent = 'Screenshot attached'; setTimeout(() => { if (msg.textContent === 'Screenshot attached') msg.textContent = ''; }, 2000); }
+  };
+  if (imgBtn) imgBtn.addEventListener('click', () => {
+    const fi = document.createElement('input');
+    fi.type = 'file';
+    fi.accept = 'image/*';
+    fi.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+    document.body.appendChild(fi);
+    fi.addEventListener('change', async () => {
+      const f = fi.files?.[0];
+      fi.remove();
+      if (f) { try { await _uploadRoadmapImg(f); } catch (_) { if (msg) msg.textContent = 'Upload failed'; } }
+    });
+    fi.click();
+  });
+  if (input) input.addEventListener('paste', async (e) => {
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const f = it.getAsFile();
+        if (f) { try { await _uploadRoadmapImg(f); } catch (_) { if (msg) msg.textContent = 'Upload failed'; } }
+        return;
+      }
+    }
+  });
   const doAdd = async () => {
     const text = (input.value || '').trim();
-    if (!text) return;
+    if (!text && !pendingImgs.length) return;
     // New entries always land in Eingang, tagged by type — the developer
     // sorts them into a version when picking them up. Date so age is visible.
     const kind = (typeSel && typeSel.value) || 'Idee';
-    const entry = `- [ ] **${kind}:** ${text} (${new Date().toISOString().slice(0, 10)})`;
+    const imgMd = pendingImgs.map(u => ` ![screenshot](${u})`).join('');
+    const entry = `- [ ] **${kind}:** ${text || '(screenshot)'}${imgMd} (${new Date().toISOString().slice(0, 10)})`;
     const { lines, sections } = _roadmapSections(_roadmapText);
     const sec = sections.find(s => /^Eingang/i.test(s.title));
     let ls;
@@ -3213,6 +3289,8 @@ function initDeveloper() {
     }
     if (await _saveRoadmap(ls.join('\n'), msg)) {
       input.value = '';
+      pendingImgs = [];
+      _syncImgBtn();
       _renderRoadmap();
     }
   };
