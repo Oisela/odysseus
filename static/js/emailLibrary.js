@@ -869,6 +869,7 @@ let _libSyncStatus = {
   loading: false,
 };
 let _libSyncTicker = null;
+let _libStaleRetries = 0;
 
 function _libSyncDateFrom(value) {
   if (!value) return null;
@@ -900,6 +901,9 @@ function _renderEmailSyncStatus() {
   const parts = [];
   const rel = _libRelativeTime(_libSyncStatus.updatedAt);
   if (rel) parts.push(`Last updated: ${rel}`);
+  // Stale-serve: rows came from the server's local index while live IMAP
+  // is still fetching — tell the user a refresh is on its way.
+  if (_libSyncStatus.source === 'index_stale') parts.push('refreshing…');
   el.textContent = parts.join(' · ');
   el.style.visibility = parts.length ? 'visible' : 'hidden';
 }
@@ -3327,6 +3331,20 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       });
       _refreshUnreadBadge();
       if (cacheable) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal, sync });
+      // Stale-serve revalidate: the server answered from its local index
+      // (live IMAP was slow); the live fetch keeps running server-side and
+      // lands in the list cache. Refetch to swap in fresh rows — bounded,
+      // in case IMAP is truly down.
+      if (sync.source === 'index_stale') {
+        if (_libStaleRetries < 3) {
+          _libStaleRetries += 1;
+          setTimeout(() => {
+            if (seq === _libLoadSeq) _loadEmails({ useCache: false });
+          }, 5000);
+        }
+      } else {
+        _libStaleRetries = 0;
+      }
     }
   } catch (e) {
     if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
