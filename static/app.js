@@ -2630,7 +2630,7 @@ function initializeEventListeners() {
     // Per-tool visibility — fine-grained control over which entries show
     // inside the Tools section in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
-    'tool-pomodoro':       '#tool-pomodoro-btn',
+    'tool-pomodoro':       '#pomodoro-section',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
     'tool-research':       '#tool-research-btn',

@@ -819,6 +819,18 @@
         </div>
       </div>
 
+      <!-- Pomodoro promoted from the Tools list to a first-class section
+           (Alessios Wunsch 2026-07-20). Keeps the historic element id so the
+           click wiring, dock-chip registration, and the tool-pomodoro
+           visibility key stay untouched. The status span mirrors the dock
+           chip ('Focus 12:34') while a session runs. -->
+      <div class="section" id="pomodoro-section">
+        <div class="section-header-flex">
+          <span class="section-title" id="tool-pomodoro-btn" style="cursor:pointer;" title="Open pomodoro timer"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg><span>Pomodoro</span></span>
+          <span id="pomodoro-nav-status" style="display:none;font-size:10px;opacity:0.65;white-space:nowrap;align-self:center;"></span>
+        </div>
+      </div>
+
       <div class="section" id="models-section">
         <div class="section-header-flex">
           <span class="section-title"> Models</span>
@@ -872,16 +884,6 @@
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
           <span class="grow">Calendar</span>
-        </div>
-        <div class="list-item" id="tool-pomodoro-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <circle cx="12" cy="13" r="8"/>
-            <path d="M12 9v4l2.5 2.5"/>
-            <path d="M9 2h6"/>
-          </svg>
-          <span class="grow">Pomodoro</span>
         </div>
         <div class="list-item" id="tool-compare-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>

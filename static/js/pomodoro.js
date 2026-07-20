@@ -158,8 +158,6 @@ function _tick() {
  * the static label on dock changes; the next tick corrects it.
  */
 function _updateChip() {
-  const lbl = document.querySelector('.minimized-dock-chip[data-modal-id="pomodoro-modal"] .minimized-dock-label');
-  if (!lbl) return;
   let text = 'Pomodoro';
   if (_run) {
     if (_run.phase === 'overtime') {
@@ -173,6 +171,16 @@ function _updateChip() {
       text = `${word} ${_fmt(remaining)}`;
     }
   }
+  // Sidebar section header mirrors the running state ('Focus 12:34') —
+  // hidden while idle so the header stays a plain nav entry.
+  const nav = document.getElementById('pomodoro-nav-status');
+  if (nav) {
+    const on = !!_run;
+    nav.style.display = on ? '' : 'none';
+    if (on && nav.textContent !== text) nav.textContent = text;
+  }
+  const lbl = document.querySelector('.minimized-dock-chip[data-modal-id="pomodoro-modal"] .minimized-dock-label');
+  if (!lbl) return;
   if (lbl.textContent !== text) lbl.textContent = text;
 }
 
@@ -476,6 +484,9 @@ function _handleAction(action) {
   }
   _save();
   _render();
+  // Keep the sidebar status (and a parked dock chip) in sync for actions
+  // that don't tick afterwards — reset/pause otherwise leave stale text.
+  _updateChip();
 }
 
 // ── Modal ──
