@@ -473,6 +473,21 @@ function _handleAction(action) {
     // Skip the overtime, straight into the break.
     _startPhase(_breakFor(_run.round), _run.round);
     return;
+  } else if (action === 'end') {
+    // End the focus early and RECORD what already ran — the counterpart to
+    // Reset, which discards it. Continues into the round's break like a
+    // completed focus would.
+    const remaining = _run.remainingMs != null ? _run.remainingMs : Math.max(0, _run.endsAt - Date.now());
+    const elapsed = Math.round((_phaseMs('work') - remaining) / 1000);
+    if (elapsed > 0) {
+      _logSeconds(elapsed, {
+        start: new Date(Date.now() - elapsed * 1000).toISOString(),
+        end: new Date().toISOString(),
+        note: 'Focus (ended early)',
+      });
+    }
+    _startPhase(_breakFor(_run.round), _run.round);
+    return;
   } else if (action === 'skip') {
     // End the break early — straight to "ready" for the next focus round.
     _finishBreak();
@@ -607,8 +622,10 @@ function _controlsHtml() {
   }
   const paused = _run.remainingMs != null;
   const inBreak = _run.phase === 'short' || _run.phase === 'long';
+  // Focus offers "End" (log what ran, take the break) next to "Reset"
+  // (discard) — pausing must not be the only exit that keeps the time.
   return btn(paused ? 'resume' : 'pause', paused ? 'Resume' : 'Pause', true)
-       + (inBreak ? btn('skip', 'Skip', false) : '')
+       + (inBreak ? btn('skip', 'Skip', false) : btn('end', 'End', false))
        + btn('reset', 'Reset', false);
 }
 
