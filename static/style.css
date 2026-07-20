@@ -828,6 +828,10 @@ body.bg-pattern-sparkles {
     /* Sidebar list-items are wider — anchor right-aligned vertically centered */
     .list-item.rail-minimized::after { top: 50%; right: 8px; transform: translateY(-50%); }
     #tool-memory-btn.rail-minimized::after { right: 12px; }
+    /* Pomodoro is a section title now and shows the live time to its right —
+       the default right:-10px dot sat ON that text. Park it on the clock
+       icon's top corner instead (icon-rail pattern). */
+    #tool-pomodoro-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
     /* Per-user nudge: the listed tools' minimized dot sits 2px further
        in from the right edge so it doesn't look glued to the border. */
     #tool-theme-btn.rail-minimized::after,
