@@ -930,6 +930,9 @@ export function getUserTemplates() {
  * Get the character name (if set)
  */
 export function getCharacterName() {
+  // Project chats: the project persona owns the identity server-side — the
+  // client-side custom preset must not leak its name into them.
+  if (_projectPersona) return '';
   if (!selectedPreset) return '';
   const custom = presets.custom;
   if (!custom || custom.enabled === false) return '';
@@ -943,7 +946,9 @@ export function getInject() {
   // Only inject when a preset is actually ACTIVE — mirror getCharacterName's
   // gate. Without the selectedPreset/enabled check, any text left in the
   // prefix/suffix fields got injected into every message even though the user
-  // never started/activated the preset.
+  // never started/activated the preset. Project chats never inject: the
+  // prefix/suffix belong to the client preset, which the project replaces.
+  if (_projectPersona) return { prefix: '', suffix: '' };
   if (!selectedPreset) return { prefix: '', suffix: '' };
   const custom = presets.custom;
   if (!custom || custom.enabled === false) return { prefix: '', suffix: '' };
