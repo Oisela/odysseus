@@ -594,7 +594,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Manage notes and checklists (Google Keep-style): list, view, add, update, delete, toggle_item. Use list/search to find candidate notes, then view with the note id when you need the full body. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "description": "Manage notes and checklists (Google Keep-style): list, view, add, update, delete, toggle_item. Use list/search to find candidate notes, then view with the note id when you need the full body. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder. LISTS: `label` is the note's list in the Notes UI sidebar. Conventions: shopping-list items ('setz X auf die Einkaufsliste') = ONE todo/checklist note PER item with label 'Einkauf'; recipes = note_type='recipe' with instructions in `content`, ingredients as `checklist_items`, label 'Recipes'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -605,8 +605,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "query": {"type": "string", "description": "Search text for action='search'"},
                     "title": {"type": "string", "description": "Note title (for add/update)"},
                     "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
-                    "note_type": {"type": "string", "enum": ["note", "checklist"],
-                                  "description": "'note' = freeform text in `content`. 'checklist' = structured to-do items in `checklist_items`. Defaults to 'checklist' if checklist_items is supplied, else 'note'."},
+                    "note_type": {"type": "string", "enum": ["note", "checklist", "recipe"],
+                                  "description": "'note' = freeform text in `content`. 'checklist' = structured to-do items in `checklist_items`. 'recipe' = cooking recipe: instructions in `content`, ingredients in `checklist_items`. Defaults to 'checklist' if checklist_items is supplied, else 'note'."},
                     "checklist_items": {"type": "array",
                                         "items": {"type": "object",
                                                   "properties": {
