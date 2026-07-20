@@ -1089,6 +1089,19 @@ function initializeEventListeners() {
     });
   }
 
+  // Shopping & Recipes section button
+  const toolShoppingBtn = el('tool-shopping-btn');
+  if (toolShoppingBtn) {
+    toolShoppingBtn.addEventListener('click', async () => {
+      const m = await import('./js/shopping.js');
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('shopping-modal')) {
+        if (m.isShoppingOpen()) m.closeShopping();
+        else m.openShopping();
+      }
+    });
+  }
+
   // Pomodoro tool button
   const toolPomodoroBtn = el('tool-pomodoro-btn');
   if (toolPomodoroBtn) {
@@ -2631,6 +2644,7 @@ function initializeEventListeners() {
     // inside the Tools section in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
     'tool-pomodoro':       '#pomodoro-section',
+    'tool-shopping':       '#shopping-section',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
     'tool-research':       '#tool-research-btn',

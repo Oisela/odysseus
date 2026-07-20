@@ -40938,3 +40938,93 @@ body.theme-frosted .modal {
 @media (max-width: 900px) {
   .notes-pane:not(.notes-view-grid) .notes-md-sidebar { width: 104px; }
 }
+
+/* ── Shopping & Recipes module (v3.6) ──────────────────────────────────── */
+#shopping-section .section-collapse-btn { display: none; } /* header-only section */
+.shopping-modal-content {
+  width: min(640px, 94vw);
+  max-height: min(78vh, 760px);
+  display: flex;
+  flex-direction: column;
+}
+.shopping-body { flex: 1; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 10px; }
+.shopping-tabs { display: inline-flex; margin-left: 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.shopping-tab {
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.shopping-tab.active { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); color: var(--accent, var(--red)); }
+.shopping-add-row { display: flex; gap: 6px; }
+.shopping-list { display: flex; flex-direction: column; }
+.shopping-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.shopping-check {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.shopping-check:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.shopping-item.done .shopping-check { border-color: var(--green); background: color-mix(in srgb, var(--green) 30%, transparent); }
+.shopping-item-text { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.shopping-item.done .shopping-item-text { opacity: 0.5; text-decoration: line-through; }
+.shopping-item-owner { flex-shrink: 0; font-size: 10px; opacity: 0.5; }
+.shopping-item-rm { flex-shrink: 0; border: none; background: none; color: var(--fg); opacity: 0; cursor: pointer; padding: 2px; }
+.shopping-item:hover .shopping-item-rm { opacity: 0.55; }
+.shopping-item-rm:hover { opacity: 1 !important; color: var(--red); }
+.shopping-done-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 4px; }
+.shopping-empty { opacity: 0.5; font-size: 12px; text-align: center; padding: 26px 10px; }
+.shopping-text-btn {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.shopping-text-btn:hover { border-color: var(--accent, var(--red)); opacity: 1; }
+.shopping-share-row { display: flex; align-items: center; gap: 7px; font-size: 12px; opacity: 0.8; margin-top: 4px; cursor: pointer; }
+.recipe-grid { display: flex; flex-direction: column; gap: 10px; }
+.recipe-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.recipe-card-img { max-height: 140px; width: 100%; object-fit: cover; border-radius: 8px; }
+.recipe-card-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.recipe-shared-pill {
+  font-size: 9.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: 0.7;
+}
+.recipe-card-sub { font-size: 11px; opacity: 0.55; }
+.recipe-card-instructions { font-size: 12px; opacity: 0.85; white-space: pre-wrap; }
+.recipe-card-ingredients { margin: 2px 0 0 18px; padding: 0; font-size: 12px; opacity: 0.8; }
+.recipe-card-ingredients li { margin: 1px 0; }
+.recipe-card-actions { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+.recipe-form { display: flex; flex-direction: column; gap: 8px; }
