@@ -40385,6 +40385,9 @@ body.theme-frosted .modal {
      description are stacked blocks inside .ask-user-option-main instead. */
   display: block;
   width: 100%;
+  /* The global `button { height: 32px }` rule would pin the box shut —
+     these buttons must grow with their description. */
+  height: auto;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
   text-align: left;
