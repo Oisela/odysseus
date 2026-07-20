@@ -834,6 +834,8 @@ logger.info("Webhook & API token routes initialized")
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
+from routes.shopping_routes import setup_shopping_routes
+app.include_router(setup_shopping_routes())
 
 # Pomodoro (focus timer: ntfy pings + persistent learned-time stats)
 from routes.pomodoro_routes import setup_pomodoro_routes

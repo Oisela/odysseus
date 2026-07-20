@@ -1767,6 +1767,33 @@ class Note(TimestampMixin, Base):
     agent_session_id  = Column(String, nullable=True)
 
 
+class Recipe(TimestampMixin, Base):
+    """A cooking recipe in the Shopping & Recipes module (NOT a note)."""
+    __tablename__ = "recipes"
+
+    id           = Column(String, primary_key=True, index=True)
+    owner        = Column(String, nullable=True, index=True)
+    title        = Column(String, default="")
+    instructions = Column(Text, nullable=True)     # markdown
+    ingredients  = Column(Text, nullable=True)     # JSON list of strings
+    image_url    = Column(String, nullable=True)
+    # v1 sharing: shared recipes are visible to every account (read-only for
+    # non-owners). Per-account grants arrive with the accounts feature.
+    is_shared    = Column(Boolean, default=False)
+
+
+class ShoppingItem(TimestampMixin, Base):
+    """One line on a user's shopping list (checked off while shopping)."""
+    __tablename__ = "shopping_items"
+
+    id         = Column(String, primary_key=True, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    text       = Column(String, default="")
+    done       = Column(Boolean, default=False)
+    recipe_id  = Column(String, nullable=True)     # provenance (added from a recipe)
+    sort_order = Column(Integer, default=0)
+
+
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
     __tablename__ = "calendars"
