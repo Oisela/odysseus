@@ -1974,6 +1974,9 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       <div class="notes-md-rows-col">
         <div class="notes-md-quickadd">
           <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do &middot; Shift+Enter = note" autocomplete="off" />
+          <button type="button" class="notes-md-fullform-btn" title="New note / recipe (full editor)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
         <div class="notes-md-rows"></div>
       </div>
@@ -1981,6 +1984,22 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
     </div>`;
     layout = body.querySelector('.notes-md-layout');
     _wireMdQuickAdd(layout.querySelector('.notes-md-quickadd-input'));
+    // Full composer in the detail pane — the only way to CREATE a recipe
+    // (the quick-add input covers todo/note only, the type pills live in
+    // the full form).
+    layout.querySelector('.notes-md-fullform-btn').addEventListener('click', () => {
+      if (_editingId === '__new__') return;
+      const detail = body.querySelector('.notes-md-detail');
+      if (!detail) return;
+      _editingId = '__new__';
+      const { note: draft, restored } = _applyDraftToNote({ note_type: 'todo', label: (_activeLabel || '') }, '__new__');
+      const form = _buildForm(draft);
+      form.classList.add('note-form-new');
+      detail.innerHTML = '';
+      detail.appendChild(form);
+      form.querySelector('.note-form-title')?.focus();
+      if (restored) uiModule.showToast('Restored unsaved note');
+    });
   }
   _renderListsSidebar(layout.querySelector('.notes-md-sidebar'));
   const rowsEl = layout.querySelector('.notes-md-rows');
