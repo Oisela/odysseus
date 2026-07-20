@@ -35185,9 +35185,9 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   position: absolute;
   top: 0;
   left: 0;
-  /* 4 pills (note / todo / recipe / draw). Slider takes 1/4 of the track
-     and translates by full multiples of itself. */
-  width: 25%;
+  /* 3 pills now (note / todo / draw) — Goal was removed. Slider takes
+     1/3 of the track and translates by full multiples of itself. */
+  width: 33.3333%;
   height: 100%;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   border-radius: 9px;
@@ -35195,8 +35195,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   z-index: 0;
 }
 .note-form-type-seg.is-todo::before { transform: translateX(100%); }
-.note-form-type-seg.is-recipe::before { transform: translateX(200%); }
-.note-form-type-seg.is-draw::before { transform: translateX(300%); }
+.note-form-type-seg.is-draw::before { transform: translateX(200%); }
 .note-form-type-pill {
   background: none;
   border: none;
