@@ -20,7 +20,7 @@ import Storage from './storage.js';
 
 const API_BASE = window.location.origin;
 
-const DEFAULTS = { work: 25, short: 5, long: 15, rounds: 4, ntfy: true };
+const DEFAULTS = { work: 25, short: 5, long: 15, rounds: 4, ntfy: true, sound: true };
 
 const PHASE_LABEL = { work: 'Focus', short: 'Short break', long: 'Long break' };
 
@@ -138,11 +138,13 @@ function _tick() {
   if (!_run) { _stopTicking(); return; }
   if (_run.phase === 'work' && _run.remainingMs == null && _run.endsAt - Date.now() <= 0) {
     _finishWork();
+    _chime('focus');
     _notify('Focus done', 'Extra time is counting — press + to bank it when you take your break.');
   } else if ((_run.phase === 'short' || _run.phase === 'long')
              && _run.remainingMs == null && _run.endsAt - Date.now() <= 0) {
     const nextRound = _run.phase === 'long' ? 1 : _run.round + 1;
     _finishBreak();
+    _chime('break');
     _notify('Break over', `Round ${nextRound} is ready — press Start.`);
   }
   if (_open) _render();
@@ -207,6 +209,34 @@ function _startPhase(phase, round) {
 
 function _breakFor(round) {
   return (round % Math.max(1, _cfg.rounds) === 0) ? 'long' : 'short';
+}
+
+// Phase-end chimes via WebAudio (no audio assets to ship): focus end falls
+// (high→low), break end rises (low→high) so the two are tellable apart
+// without looking. The context is created lazily — every phase starts
+// with a click, so autoplay policy has already been satisfied.
+let _audioCtx = null;
+function _chime(kind) {
+  if (_cfg.sound === false) return;
+  try {
+    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const tones = kind === 'focus' ? [880, 587] : [587, 880];
+    tones.forEach((freq, i) => {
+      const t0 = ctx.currentTime + i * 0.28;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.55);
+    });
+  } catch (e) { /* audio unavailable — notifications still fire */ }
 }
 
 function _notify(title, body) {
@@ -487,6 +517,7 @@ function _getModal() {
           <label>Break (min)<input type="number" class="pomo-input" id="pomo-cfg-short" min="1" max="60"></label>
           <label>Long break (min)<input type="number" class="pomo-input" id="pomo-cfg-long" min="1" max="120"></label>
           <label class="pomo-ntfy-row"><input type="checkbox" id="pomo-cfg-ntfy"><span>Notify phone (ntfy)</span></label>
+          <label class="pomo-ntfy-row"><input type="checkbox" id="pomo-cfg-sound"><span>Sound on phase end</span></label>
           <div class="pomo-manual-row">
             <label>Add focus time (min)<input type="number" class="pomo-input" id="pomo-manual-mins" min="1" max="600" placeholder="25"></label>
             <button type="button" class="pomo-btn" id="pomo-manual-add" title="Add focus time you forgot to track (today)">Log manually</button>
@@ -534,6 +565,11 @@ function _getModal() {
   _modal.querySelector('#pomo-cfg-ntfy').addEventListener('change', (e) => {
     _cfg.ntfy = !!e.target.checked;
     _save();
+  });
+  _modal.querySelector('#pomo-cfg-sound').addEventListener('change', (e) => {
+    _cfg.sound = !!e.target.checked;
+    _save();
+    if (_cfg.sound) _chime('break'); // instant preview so the volume is judgeable
   });
 
   _modal.querySelector('#pomo-manual-add').addEventListener('click', async () => {
@@ -704,6 +740,7 @@ function _syncInputs() {
   _modal.querySelector('#pomo-cfg-long').value = _cfg.long;
   _modal.querySelector('#pomo-cfg-rounds').value = _cfg.rounds;
   _modal.querySelector('#pomo-cfg-ntfy').checked = !!_cfg.ntfy;
+  _modal.querySelector('#pomo-cfg-sound').checked = _cfg.sound !== false;
 }
 
 // ── Public API ──
