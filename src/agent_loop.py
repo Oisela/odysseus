@@ -4496,7 +4496,10 @@ async def stream_agent_loop(
     # own completion notifications via the scheduler).
     if workload == "foreground" and not _is_teacher_run and total_duration >= 120:
         try:
-            from src.settings import get_setting
+            # NOTE: get_setting comes from the module-level import — a local
+            # `from src.settings import get_setting` here would shadow it for
+            # the WHOLE function scope and break earlier uses (learned the
+            # UnboundLocalError way).
             from src.interactive_gate import has_foreground_activity
             if get_setting("ntfy_task_push", True) and not has_foreground_activity():
                 from routes.note_routes import dispatch_reminder
