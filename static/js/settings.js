@@ -1851,6 +1851,15 @@ function initAppearance() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
+  // Language select — persists per account, reload applies the new language
+  var langSelect = modalEl.querySelector('#ui-language-select');
+  if (langSelect) {
+    langSelect.value = (window.getUILang && window.getUILang()) || 'en';
+    langSelect.addEventListener('change', function() {
+      if (window.setUILang) window.setUILang(langSelect.value);
+    });
+  }
+
   // UI mode presets — Simple writes explicit `false` keys only, Full clears
   // the map back to defaults. Both persist per account via saveUIVis.
   var presetSimple = modalEl.querySelector('#ui-preset-simple');
