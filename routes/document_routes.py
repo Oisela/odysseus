@@ -1157,38 +1157,47 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 by_page.setdefault(f["page"], []).append(f)
 
             scale = _PDF_RENDER_SCALE
-            pdf_doc = fitz.open(pdf_path)
-            try:
-                pages_out = []
-                for page_index in range(pdf_doc.page_count):
-                    page = pdf_doc[page_index]
-                    page_no = page_index + 1
-                    pw, ph = page.rect.width, page.rect.height
-                    img_w = int(pw * scale)
-                    img_h = int(ph * scale)
-                    fields_out = []
-                    for f in by_page.get(page_no, []):
-                        x0, y0, x1, y1 = f["rect"]
-                        fields_out.append({
-                            "name": f["name"],
-                            "type": f["type"],
-                            "label": f.get("label") or "",
-                            "options": f.get("options") or [],
-                            "value": values.get(f["name"], f.get("value", "")),
-                            "rect_px": [
-                                int(x0 * scale), int(y0 * scale),
-                                int(x1 * scale), int(y1 * scale),
-                            ],
+
+            # Off-loop: opening + walking a fat PDF here blocked the event
+            # loop and held up every other request ("Loading PDF…" hang).
+            import asyncio as _asyncio
+
+            def _collect_pages():
+                pdf_doc = fitz.open(pdf_path)
+                try:
+                    pages_out = []
+                    for page_index in range(pdf_doc.page_count):
+                        page = pdf_doc[page_index]
+                        page_no = page_index + 1
+                        pw, ph = page.rect.width, page.rect.height
+                        img_w = int(pw * scale)
+                        img_h = int(ph * scale)
+                        fields_out = []
+                        for f in by_page.get(page_no, []):
+                            x0, y0, x1, y1 = f["rect"]
+                            fields_out.append({
+                                "name": f["name"],
+                                "type": f["type"],
+                                "label": f.get("label") or "",
+                                "options": f.get("options") or [],
+                                "value": values.get(f["name"], f.get("value", "")),
+                                "rect_px": [
+                                    int(x0 * scale), int(y0 * scale),
+                                    int(x1 * scale), int(y1 * scale),
+                                ],
+                            })
+                        pages_out.append({
+                            "page": page_no,
+                            "width": img_w,
+                            "height": img_h,
+                            "fields": fields_out,
                         })
-                    pages_out.append({
-                        "page": page_no,
-                        "width": img_w,
-                        "height": img_h,
-                        "fields": fields_out,
-                    })
-                return {"doc_id": doc_id, "scale": scale, "pages": pages_out}
-            finally:
-                pdf_doc.close()
+                    return pages_out
+                finally:
+                    pdf_doc.close()
+
+            pages_out = await _asyncio.to_thread(_collect_pages)
+            return {"doc_id": doc_id, "scale": scale, "pages": pages_out}
         finally:
             db.close()
 
@@ -1216,22 +1225,30 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
-        fitz = _load_pdf_viewer_fitz()
-        pdf_doc = fitz.open(pdf_path)
-        try:
-            if page_no < 1 or page_no > pdf_doc.page_count:
-                raise HTTPException(404, "Page out of range")
-            page = pdf_doc[page_no - 1]
-            mat = fitz.Matrix(_PDF_RENDER_SCALE, _PDF_RENDER_SCALE)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            png_bytes = pix.tobytes("png")
-            return Response(
-                content=png_bytes,
-                media_type="image/png",
-                headers={"Cache-Control": "public, max-age=3600"},
-            )
-        finally:
-            pdf_doc.close()
+        # Rendering blocks — run off-loop. A long PDF fires dozens of these
+        # in parallel; synchronous fitz here used to starve every other
+        # request (the "Loading PDF…" hang on big docs).
+        import asyncio as _asyncio
+
+        def _render() -> bytes:
+            fitz = _load_pdf_viewer_fitz()
+            pdf_doc = fitz.open(pdf_path)
+            try:
+                if page_no < 1 or page_no > pdf_doc.page_count:
+                    raise HTTPException(404, "Page out of range")
+                page = pdf_doc[page_no - 1]
+                mat = fitz.Matrix(_PDF_RENDER_SCALE, _PDF_RENDER_SCALE)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                return pix.tobytes("png")
+            finally:
+                pdf_doc.close()
+
+        png_bytes = await _asyncio.to_thread(_render)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     # ---- LaTeX: compile with tectonic, preview as PNG pages ----
 
@@ -1307,31 +1324,52 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    # Whole-document textmap cache keyed by (path, mtime): the client asks
+    # per page, and reopening a fat PDF for every page starved the server.
+    # ~2 entries is plenty (active doc + one recently open one).
+    _TEXTMAP_CACHE: Dict[str, Any] = {}
+
+    def _extract_textmap(pdf_path: str) -> Dict[int, list]:
+        """All pages' word boxes in one pass (runs in a worker thread)."""
+        mtime = os.path.getmtime(pdf_path)
+        key = f"{pdf_path}:{mtime}"
+        cached = _TEXTMAP_CACHE.get(key)
+        if cached is not None:
+            return cached
+        fitz = _load_pdf_viewer_fitz()
+        pdf_doc = fitz.open(pdf_path)
+        pages: Dict[int, list] = {}
+        try:
+            for i, page in enumerate(pdf_doc, start=1):
+                pw = page.rect.width or 1.0
+                ph = page.rect.height or 1.0
+                words = []
+                # get_text("words") returns reading-order tuples
+                # (x0, y0, x1, y1, text, block_no, line_no, word_no).
+                for x0, y0, x1, y1, text, block, line, _wno in page.get_text("words"):
+                    words.append({
+                        "x": round(x0 / pw, 5), "y": round(y0 / ph, 5),
+                        "w": round((x1 - x0) / pw, 5), "h": round((y1 - y0) / ph, 5),
+                        "t": text, "l": f"{block}:{line}",
+                    })
+                pages[i] = words
+        finally:
+            pdf_doc.close()
+        _TEXTMAP_CACHE.clear()  # keep it tiny — one doc at a time is the real pattern
+        _TEXTMAP_CACHE[key] = pages
+        return pages
+
     @router.get("/api/document/{doc_id}/textmap/{page_no}")
     async def get_page_textmap(request: Request, doc_id: str, page_no: int):
         """Word bounding boxes (relative 0..1, reading order) for one page —
-        lets the text-highlighter snap drag selections to actual words."""
+        lets the text-highlighter snap drag selections to actual words.
+        The PyMuPDF work runs off-loop (a fat PDF must not block the server)."""
+        import asyncio as _asyncio
         pdf_path = _doc_pdf_source(request, doc_id)
-        fitz = _load_pdf_viewer_fitz()
-        pdf_doc = fitz.open(pdf_path)
-        try:
-            if page_no < 1 or page_no > pdf_doc.page_count:
-                raise HTTPException(404, "Page out of range")
-            page = pdf_doc[page_no - 1]
-            pw = page.rect.width or 1.0
-            ph = page.rect.height or 1.0
-            words = []
-            # get_text("words") returns reading-order tuples
-            # (x0, y0, x1, y1, text, block_no, line_no, word_no).
-            for x0, y0, x1, y1, text, block, line, _wno in page.get_text("words"):
-                words.append({
-                    "x": round(x0 / pw, 5), "y": round(y0 / ph, 5),
-                    "w": round((x1 - x0) / pw, 5), "h": round((y1 - y0) / ph, 5),
-                    "t": text, "l": f"{block}:{line}",
-                })
-            return {"page": page_no, "words": words}
-        finally:
-            pdf_doc.close()
+        pages = await _asyncio.to_thread(_extract_textmap, pdf_path)
+        if page_no not in pages:
+            raise HTTPException(404, "Page out of range")
+        return {"page": page_no, "words": pages[page_no]}
 
     @router.get("/api/document/{doc_id}/marks")
     async def get_pdf_marks(request: Request, doc_id: str):
@@ -1514,20 +1552,27 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         pdf_path = _latex_pdf_path(doc_id)
         if not os.path.exists(pdf_path):
             raise HTTPException(404, "Not compiled yet")
-        fitz = _load_pdf_viewer_fitz()
-        pdf_doc = fitz.open(pdf_path)
-        try:
-            if page_no < 1 or page_no > pdf_doc.page_count:
-                raise HTTPException(404, "Page out of range")
-            mat = fitz.Matrix(_PDF_RENDER_SCALE, _PDF_RENDER_SCALE)
-            pix = pdf_doc[page_no - 1].get_pixmap(matrix=mat, alpha=False)
-            return Response(
-                content=pix.tobytes("png"),
-                media_type="image/png",
-                headers={"Cache-Control": "public, max-age=31536000, immutable"},
-            )
-        finally:
-            pdf_doc.close()
+        # Off-loop like /page/{n}.png — see the note there.
+        import asyncio as _asyncio
+
+        def _render() -> bytes:
+            fitz = _load_pdf_viewer_fitz()
+            pdf_doc = fitz.open(pdf_path)
+            try:
+                if page_no < 1 or page_no > pdf_doc.page_count:
+                    raise HTTPException(404, "Page out of range")
+                mat = fitz.Matrix(_PDF_RENDER_SCALE, _PDF_RENDER_SCALE)
+                pix = pdf_doc[page_no - 1].get_pixmap(matrix=mat, alpha=False)
+                return pix.tobytes("png")
+            finally:
+                pdf_doc.close()
+
+        png_bytes = await _asyncio.to_thread(_render)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     # ---- POST /api/document/{doc_id}/ai-fill-annotations ----
     @router.post("/api/document/{doc_id}/ai-fill-annotations")
