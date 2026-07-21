@@ -1157,6 +1157,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const savedPill = document.getElementById('doc-pdf-save-pill');
     pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">Loading PDF…</div>';
     if (savedPill) pane.appendChild(savedPill);
+    pane.dataset.renderedDoc = String(docId);
     let data;
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/render-pages`);
@@ -2575,17 +2576,24 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (langSelect.value !== want) langSelect.value = want;
       }
       if (pdfPane) {
+        // Reconcile BOTH panes unconditionally — the previous early-outs
+        // ("pane already visible → do nothing") left wrap+pane visible at
+        // the same time after certain tab switches (the accidental split
+        // view), and a PDF→PDF tab switch kept showing the old doc's pages.
+        const wrap = document.getElementById('doc-editor-wrap');
         if (active) {
-          if (pdfPane.style.display === 'none') {
-            const wrap = document.getElementById('doc-editor-wrap');
-            if (wrap) wrap.style.display = 'none';
+          if (wrap) wrap.style.display = 'none';
+          const stale = pdfPane.dataset.renderedDoc !== String(activeDocId);
+          if (pdfPane.style.display === 'none' || stale) {
             pdfPane.style.display = '';
             _renderPdfPane();
           }
-        } else if (pdfPane.style.display !== 'none') {
-          pdfPane.style.display = 'none';
-          pdfPane.innerHTML = '';
-          const wrap = document.getElementById('doc-editor-wrap');
+        } else {
+          if (pdfPane.style.display !== 'none') {
+            pdfPane.style.display = 'none';
+            pdfPane.innerHTML = '';
+            delete pdfPane.dataset.renderedDoc;
+          }
           if (wrap) wrap.style.display = '';
         }
       }
