@@ -802,6 +802,9 @@ body.bg-pattern-sparkles {
       animation: rail-notes-pulse 1.6s ease-in-out infinite;
       pointer-events: none;
     }
+    /* In the section-title (no flex/auto-margin context) the reminder dot
+       sits right after the "Notes" text with a small gap instead. */
+    #tool-notes-btn .tool-notes-dot { margin-left: 6px; left: 0; }
     /* Individual card — subtle accent border tint when a reminder has fired */
     .note-card.note-card-reminder-due .note-card-reminder {
       background: color-mix(in srgb, var(--red) 22%, transparent);
@@ -828,10 +831,11 @@ body.bg-pattern-sparkles {
     /* Sidebar list-items are wider — anchor right-aligned vertically centered */
     .list-item.rail-minimized::after { top: 50%; right: 8px; transform: translateY(-50%); }
     #tool-memory-btn.rail-minimized::after { right: 12px; }
-    /* Pomodoro is a section title now and shows the live time to its right —
-       the default right:-10px dot sat ON that text. Park it on the clock
-       icon's top corner instead (icon-rail pattern). */
-    #tool-pomodoro-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
+    /* Pomodoro/Notes are section titles now — the default right:-10px dot
+       sat on adjacent text. Park it on the icon's top corner instead
+       (icon-rail pattern). */
+    #tool-pomodoro-btn.rail-minimized::after,
+    #tool-notes-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
     /* Header-only sections (Pomodoro, Shopping, ...) — collapsing them
        hides nothing, so no chevron. */
     .section-header-only .section-collapse-btn { display: none; }
@@ -839,7 +843,6 @@ body.bg-pattern-sparkles {
        in from the right edge so it doesn't look glued to the border. */
     #tool-theme-btn.rail-minimized::after,
     #tool-tasks-btn.rail-minimized::after,
-    #tool-notes-btn.rail-minimized::after,
     #tool-library-btn.rail-minimized::after,
     #tool-gallery-btn.rail-minimized::after,
     #tool-compare-btn.rail-minimized::after,

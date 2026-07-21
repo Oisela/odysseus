@@ -2655,7 +2655,7 @@ function initializeEventListeners() {
     'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
-    'tool-notes':          '#tool-notes-btn',
+    'tool-notes':          '#notes-section',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
@@ -2687,6 +2687,48 @@ function initializeEventListeners() {
 
   function saveUIVis(state) {
     Storage.setJSON(UI_VIS_KEY, state);
+    // Per-account: mirror to server prefs so the layout follows the login
+    // onto every device (localStorage stays as boot cache / offline copy).
+    try {
+      fetch('/api/prefs/ui_visibility', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: state }),
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  // Simple mode: hide everything except chat, notes, calendar and shopping.
+  // Only writes explicit `false` keys — everything else keeps its default,
+  // so users can re-enable single pieces via the Appearance switches.
+  const UI_SIMPLE_OFF = [
+    'projects-section', 'email-section', 'models-section',
+    'tool-pomodoro', 'tool-compare', 'tool-cookbook', 'tool-research',
+    'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks', 'tool-theme',
+    'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
+    'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
+  ];
+  function uiSimpleState() {
+    const s = {};
+    UI_SIMPLE_OFF.forEach((k) => { s[k] = false; });
+    return s;
+  }
+
+  async function syncUIVisFromServer() {
+    try {
+      const r = await fetch('/api/prefs/ui_visibility', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.value && typeof d.value === 'object') {
+        Storage.setJSON(UI_VIS_KEY, d.value);
+        applyUIVis(d.value);
+      } else if (d && d.value == null) {
+        // First run after the per-account migration: seed the server with
+        // whatever this browser already had configured.
+        const local = loadUIVis();
+        if (Object.keys(local).length) saveUIVis(local);
+      }
+    } catch (_) {}
   }
 
   function applyUIVis(state) {
@@ -2938,12 +2980,15 @@ function initializeEventListeners() {
   window.loadUIVis = loadUIVis;
   window.saveUIVis = saveUIVis;
   window.applyUIVis = applyUIVis;
+  window.uiSimpleState = uiSimpleState;
   window.UI_VIS_ADMIN_ONLY = UI_VIS_ADMIN_ONLY;
   window.UI_VIS_DEFAULT_OFF = UI_VIS_DEFAULT_OFF;
 
   (function initUIVisibility() {
-    // Apply saved visibility on load
+    // Apply saved visibility on load (localStorage cache first for a
+    // flicker-free boot), then reconcile with the per-account server copy.
     applyUIVis(loadUIVis());
+    syncUIVisFromServer();
 
     // The only two modals without a per-module makeWindowDraggable call. Wire
     // them onto the shared helper, drag-only, to match their old behavior.

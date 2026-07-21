@@ -79,6 +79,19 @@ async function loadUsers() {
             <label class="admin-switch" style="transform:scale(0.85);"><input type="checkbox" data-priv="${key}" data-user="${esc(u.username)}" ${checked}><span class="admin-slider"></span></label>
           </div>`;
         }
+        // UI preset — writes the account's ui_visibility pref server-side;
+        // takes effect on the user's next load on any device.
+        html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">Interface</div>';
+        html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+          <div>
+            <span style="font-size:12px;">UI preset</span>
+            <div style="font-size:10px;opacity:0.4;">Simple = chat, notes, calendar &amp; shopping only</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="admin-btn-sm" data-ui-preset="simple" data-user="${esc(u.username)}" style="font-size:11px;">Simple</button>
+            <button class="admin-btn-sm" data-ui-preset="full" data-user="${esc(u.username)}" style="font-size:11px;">Full</button>
+          </div>
+        </div>`;
         // Rate limit
         html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">Limits</div>';
         const maxMsg = (u.privileges && u.privileges.max_messages_per_day) || 0;
@@ -128,6 +141,24 @@ async function loadUsers() {
             _modelsLoaded = true;
             _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
           }
+        });
+
+        // Wire the per-account UI preset buttons
+        privPanel.querySelectorAll('[data-ui-preset]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const value = btn.dataset.uiPreset === 'simple'
+              ? (window.uiSimpleState ? window.uiSimpleState() : {})
+              : {};
+            try {
+              const r = await fetch(`/api/prefs/admin/${encodeURIComponent(btn.dataset.user)}/ui_visibility`, {
+                method: 'PUT', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value }),
+              });
+              if (!r.ok) throw new Error(String(r.status));
+              uiModule.showToast(`${btn.dataset.uiPreset === 'simple' ? 'Simple' : 'Full'} UI set for ${btn.dataset.user} — applies on their next load.`);
+            } catch (e) { uiModule.showError('Failed to set UI preset'); }
+          });
         });
 
         // Wire privilege changes (boolean + number inputs, not model checkboxes)

@@ -1851,6 +1851,25 @@ function initAppearance() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
+  // UI mode presets — Simple writes explicit `false` keys only, Full clears
+  // the map back to defaults. Both persist per account via saveUIVis.
+  var presetSimple = modalEl.querySelector('#ui-preset-simple');
+  var presetFull = modalEl.querySelector('#ui-preset-full');
+  if (presetSimple) presetSimple.addEventListener('click', function() {
+    var s = window.uiSimpleState ? window.uiSimpleState() : {};
+    window.saveUIVis(s);
+    window.applyUIVis(s);
+    syncAppearanceCheckboxes();
+    if (uiModule && uiModule.showToast) uiModule.showToast('Simple UI — chat, notes, calendar & shopping. Use the switches below to bring things back.', 5000);
+  });
+  if (presetFull) presetFull.addEventListener('click', function() {
+    var s = {};
+    window.saveUIVis(s);
+    window.applyUIVis(s);
+    syncAppearanceCheckboxes();
+    if (uiModule && uiModule.showToast) uiModule.showToast('Full UI restored.');
+  });
+
   modalEl.querySelectorAll('[data-ui-key]').forEach(function(chk) {
     chk.addEventListener('change', async function() {
       var key = chk.dataset.uiKey;
