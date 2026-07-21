@@ -4336,6 +4336,7 @@ body.bg-pattern-sparkles {
         z-index: 400;
         width: 80% !important;
         max-width: 340px;
+        padding-top: env(safe-area-inset-top, 0px);
         box-shadow: 4px 0 20px rgba(0,0,0,0.5);
         transition: transform 0.25s ease, opacity 0.25s ease !important;
         opacity: 1 !important;
@@ -4451,7 +4452,9 @@ body.bg-pattern-sparkles {
         padding: 1px 8px;
         min-height: 14px;
         margin-top: -31px;
-        padding-top: 31px;
+        /* Keep the title row below the iOS status bar (viewport-fit=cover
+           lets the page extend underneath it). */
+        padding-top: calc(31px + env(safe-area-inset-top, 0px));
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
@@ -4464,7 +4467,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4481,6 +4484,7 @@ body.bg-pattern-sparkles {
         top: 0; bottom: 0; left: 0;
         z-index: 200;
         width: 48px;
+        padding-top: calc(48px + env(safe-area-inset-top, 0px));
         box-shadow: 2px 0 12px rgba(0,0,0,0.4);
       }
       .icon-rail.mobile-mini.right-side {
@@ -4526,7 +4530,7 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
@@ -4541,7 +4545,7 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: 8px;
         z-index: 210;
         width: 32px;
@@ -7023,6 +7027,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
+      #shopping-modal .shopping-modal-content,
       #doclib-modal .doclib-modal-content {
         max-height: 100vh !important;
         max-height: 100dvh !important;
@@ -7090,6 +7095,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
+      #shopping-modal,
       #tasks-modal {
         padding-top: 0 !important;
         align-items: stretch !important;
@@ -40987,7 +40993,11 @@ body.theme-frosted .modal {
 .shopping-item-rm { flex-shrink: 0; border: none; background: none; color: var(--fg); opacity: 0; cursor: pointer; padding: 2px; }
 .shopping-item:hover .shopping-item-rm { opacity: 0.55; }
 .shopping-item-rm:hover { opacity: 1 !important; color: var(--red); }
-.shopping-done-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 4px; }
+.shopping-done-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 4px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.shopping-done-head:hover { opacity: 1; }
+.shopping-done-head > span { display: inline-flex; align-items: center; gap: 4px; }
+.shopping-done-chev { transition: transform 0.15s; }
+.shopping-done-head.open .shopping-done-chev { transform: rotate(90deg); }
 .shopping-empty { opacity: 0.5; font-size: 12px; text-align: center; padding: 26px 10px; }
 .shopping-text-btn {
   border: 1px solid var(--border);
@@ -41072,7 +41082,9 @@ body.theme-frosted .modal {
 .recipe-f-ing-rm { flex-shrink: 0; border: none; background: none; color: var(--fg); opacity: 0.45; cursor: pointer; padding: 2px; }
 .recipe-f-ing-rm:hover { opacity: 1; color: var(--red); }
 @media (max-width: 768px) {
-  .shopping-modal-content { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  /* Fullscreen height/anchoring comes from the shared tool-modal mobile
+     rules (#shopping-modal in the ID lists next to #email-lib-modal). */
+  .shopping-modal-content { width: 100vw; border-radius: 0; }
   .shopping-tabs { margin-left: 8px; }
 }
 
