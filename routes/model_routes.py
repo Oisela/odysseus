@@ -1490,13 +1490,52 @@ def setup_model_routes(model_discovery):
                 _is_admin = bool(auth_mgr.is_admin(owner))
         except Exception:
             _is_admin = False
+        def _apply_model_privileges(result):
+            """Non-admins with an allowed_models restriction (or block_all)
+            only get their allowlisted models in the picker. Enforcement at
+            chat time already existed — this closes the listing leak.
+            Applied AFTER the cache so privilege edits act immediately."""
+            if _is_admin or not owner:
+                return result
+            mgr = getattr(request.app.state, "auth_manager", None)
+            if mgr is None:
+                return result
+            try:
+                privs = mgr.get_privileges(owner) or {}
+            except Exception:
+                return result
+            block_all = bool(privs.get("block_all_models"))
+            allowed_raw = privs.get("allowed_models")
+            allowed = set(allowed_raw) if isinstance(allowed_raw, list) else set()
+            restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
+            if not (block_all or restricted):
+                return result
+            import copy as _copy
+            out = _copy.deepcopy(result)
+            kept_items = []
+            for it in out.get("items", []):
+                for key in ("models", "models_extra"):
+                    ids = it.get(key) or []
+                    disp = it.get(f"{key}_display") or []
+                    disp = disp + [""] * (len(ids) - len(disp))
+                    pairs = [
+                        (m, d) for m, d in zip(ids, disp)
+                        if not block_all and m in allowed
+                    ]
+                    it[key] = [m for m, _ in pairs]
+                    it[f"{key}_display"] = [d for _, d in pairs]
+                if it.get("models") or it.get("models_extra"):
+                    kept_items.append(it)
+            out["items"] = kept_items
+            return out
+
         now = _time.time()
         # Cache key includes the admin flag so a demotion / promotion doesn't
         # serve the wrong scoped view from cache.
         _cache_key = (owner, _is_admin)
         cache_entry = _models_cache.get(_cache_key)
         if not refresh and cache_entry is not None and (now - cache_entry["time"]) < _MODELS_CACHE_TTL:
-            return cache_entry["data"]
+            return _apply_model_privileges(cache_entry["data"])
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
         # Kick off background refresh to update caches from live endpoints.
@@ -1504,7 +1543,7 @@ def setup_model_routes(model_discovery):
         # not start endpoint probes against slow/offline model servers.
         if background or refresh:
             _refresh_caches_bg(force=refresh)
-        return result
+        return _apply_model_privileges(result)
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # endpoint health checks every time. 8s TTL — long enough to amortize cost,

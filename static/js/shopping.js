@@ -102,7 +102,7 @@ function _getModal() {
   // and flash the card so it's findable.
   _modal.querySelector('#shopping-share-btn').addEventListener('click', () => {
     import('./settings.js').then((m) => {
-      (m.default || m).open('ai');
+      (m.default || m).open('account');
       setTimeout(() => {
         const card = document.getElementById('set-shoppingShareToggle')?.closest('.admin-card');
         if (card) {

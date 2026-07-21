@@ -2701,10 +2701,12 @@ function initializeEventListeners() {
   // Simple mode: hide everything except chat, notes, calendar and shopping.
   // Only writes explicit `false` keys — everything else keeps its default,
   // so users can re-enable single pieces via the Appearance switches.
+  // tool-theme stays visible: even simple users pick their design
+  // (Alessio 2026-07-21).
   const UI_SIMPLE_OFF = [
     'projects-section', 'email-section', 'models-section',
     'tool-pomodoro', 'tool-compare', 'tool-cookbook', 'tool-research',
-    'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks', 'tool-theme',
+    'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks',
     'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
     'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
   ];
