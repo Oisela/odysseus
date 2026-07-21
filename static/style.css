@@ -41158,7 +41158,8 @@ body.theme-frosted .modal {
   white-space: pre;
   line-height: 1;
   font-family: sans-serif;
-  overflow: hidden;
+  /* No overflow:hidden — glyphs are scaleX-fitted to the box (see
+     _buildTextLayer) and clipping would cut the selection paint. */
 }
 .doc-tl-word::selection {
   background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
