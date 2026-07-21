@@ -310,11 +310,23 @@ def setup_shopping_routes():
             raise HTTPException(403, "not your recipe")
         return r
 
+    def _editable_recipe(db, request, recipe_id: str) -> Recipe:
+        """Own recipes plus recipes whose owner shares their collection —
+        shared means the whole household may edit them (Alessio 2026-07-21).
+        Deleting stays owner-only (see delete_recipe)."""
+        me = get_current_user(request)
+        r = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+        if not r:
+            raise HTTPException(404, "recipe not found")
+        if me is not None and r.owner != me and r.owner not in _pref_sharers("recipes_shared", exclude=me):
+            raise HTTPException(403, "recipe is not shared with you")
+        return r
+
     @router.put("/recipes/{recipe_id}")
     def update_recipe(request: Request, recipe_id: str, body: RecipeBody):
         db = SessionLocal()
         try:
-            r = _own_recipe(db, request, recipe_id)
+            r = _editable_recipe(db, request, recipe_id)
             r.title = body.title or ""
             if body.instructions is not None:
                 r.instructions = body.instructions
@@ -331,10 +343,10 @@ def setup_shopping_routes():
 
     @router.post("/recipes/{recipe_id}/ingredients/{index}/toggle")
     def toggle_ingredient(request: Request, recipe_id: str, index: int):
-        """Check an ingredient off while cooking (owner only)."""
+        """Check an ingredient off while cooking (owner or shared-with)."""
         db = SessionLocal()
         try:
-            r = _own_recipe(db, request, recipe_id)
+            r = _editable_recipe(db, request, recipe_id)
             try:
                 ingredients = _normalize_ingredients(json.loads(r.ingredients or "[]"))
             except Exception:

@@ -234,7 +234,7 @@ function _renderRecipes(body) {
         ${(r.instructions || '').trim() ? `<div class="recipe-card-instructions">${_instrHtml(r.instructions)}</div>` : ''}
         ${(r.ingredients || []).length ? `<div class="recipe-ingredients">${r.ingredients.map((z, i) => `
           <div class="recipe-ing${z.done ? ' done' : ''}" data-idx="${i}">
-            <button type="button" class="shopping-check" ${r.mine ? '' : 'disabled'} title="${r.mine ? 'Check off while cooking' : 'Shared recipe — only the owner checks'}"></button>
+            <button type="button" class="shopping-check" title="Check off while cooking"></button>
             <span class="recipe-ing-text">${_esc(z.text)}</span>
           </div>`).join('')}</div>` : ''}
       </div>
@@ -242,9 +242,8 @@ function _renderRecipes(body) {
         <button type="button" class="pomo-btn pomo-primary recipe-to-shopping" title="Every ingredient becomes one item on your shopping list">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Add to shopping list
         </button>
-        ${r.mine ? `
-        <button type="button" class="shopping-text-btn recipe-edit">Edit</button>
-        <button type="button" class="shopping-text-btn recipe-delete">Delete</button>` : ''}
+        <button type="button" class="shopping-text-btn recipe-edit" title="${r.mine ? 'Edit' : 'Shared recipes may be edited by everyone'}">Edit</button>
+        ${r.mine ? `<button type="button" class="shopping-text-btn recipe-delete">Delete</button>` : ''}
       </div>
     </div>`;
   body.innerHTML = `
@@ -270,7 +269,8 @@ function _renderRecipes(body) {
         await _loadShopping();
       } catch { btn.disabled = false; }
     });
-    // Cooking mode: tick ingredients off directly on the card (owner only).
+    // Cooking mode: tick ingredients off directly on the card (shared
+    // recipes: everyone may tick/edit — server checks the share pref).
     // Toggle the one row in place — a full re-render would re-decode every
     // recipe image per click.
     el.querySelectorAll('.recipe-ing .shopping-check:not([disabled])').forEach(cb => {
