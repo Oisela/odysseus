@@ -305,6 +305,20 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "delegate",
+            "description": "Hand a self-contained subtask to the configured cheaper worker model (summarize, extract, transform, draft, review). Include ALL needed context in the task — the worker has no tools and cannot ask follow-ups. Verify the result before using it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The complete, self-contained subtask, with any needed file excerpts inlined"}
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_session",
             "description": "Create a new chat for ongoing conversations with a specific model. (The UI calls these 'chats'; 'session' is the internal term.)",
             "parameters": {
@@ -580,7 +594,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Manage notes and checklists (Google Keep-style): list, view, add, update, delete, toggle_item. Use list/search to find candidate notes, then view with the note id when you need the full body. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "description": "Manage notes and checklists (Google Keep-style): list, view, add, update, delete, toggle_item. Use list/search to find candidate notes, then view with the note id when you need the full body. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder. LISTS: `label` is the note's list in the Notes UI sidebar. Do NOT use notes for shopping lists or recipes — those live in the dedicated Shopping & Recipes module — add items via app_api: POST /api/shopping {\"text\": ...}, ONE call per product (duplicates merge server-side).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1403,6 +1417,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = args.get("query", "")
     elif tool_type == "chat_with_model":
         content = args.get("model", "") + "\n" + args.get("message", "")
+    elif tool_type == "delegate":
+        content = args.get("task", "")
     elif tool_type == "create_session":
         content = args.get("name", "Untitled") + "\n" + args.get("model", "")
     elif tool_type == "list_sessions":

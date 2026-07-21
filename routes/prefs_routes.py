@@ -2,7 +2,7 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
 
@@ -87,5 +87,19 @@ def setup_prefs_routes():
         prefs[key] = body.get("value")
         _save_for_user(user, prefs)
         return {"key": key, "value": prefs[key]}
+
+    @router.put("/admin/{username}/{key}")
+    async def admin_set_pref(request: Request, username: str, key: str, body: dict):
+        """Admin writes a pref for another account (e.g. the Simple-UI preset)."""
+        user = get_current_user(request)
+        auth_manager = getattr(request.app.state, "auth_manager", None)
+        if not user or auth_manager is None or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        if username not in auth_manager.users:
+            raise HTTPException(404, "User not found")
+        prefs = _load_for_user(username)
+        prefs[key] = body.get("value")
+        _save_for_user(username, prefs)
+        return {"user": username, "key": key, "value": prefs[key]}
 
     return router

@@ -12,6 +12,7 @@ from core.models import ChatMessage
 from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
+from src.constants import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.model_context import estimate_tokens
@@ -645,6 +646,7 @@ async def build_chat_context(
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
     project_prompt: str = None,
+    project_params: dict = None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -657,7 +659,18 @@ async def build_chat_context(
         # Project chats: the project's template + instructions replace the
         # client-selected preset. The project defines the persona, so a stale
         # client-side selection can't leak a different voice into the project.
+        # Sampling params and memory scope must not leak either: the project
+        # template owns temperature/max_tokens/character name (defaults when
+        # the template sets none) — not whatever preset the client last had.
+        pp = project_params or {}
         preset.system_prompt = project_prompt
+        preset.temperature = (
+            pp["temperature"] if pp.get("temperature") is not None else DEFAULT_TEMPERATURE
+        )
+        preset.max_tokens = (
+            pp["max_tokens"] if pp.get("max_tokens") is not None else DEFAULT_MAX_TOKENS
+        )
+        preset.character_name = pp.get("character_name") or ""
         logger.info(f"[project] persona+instructions applied ({len(project_prompt)} chars)")
 
     # Preprocess message (CoT, YouTube, VL images, build content). The

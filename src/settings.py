@@ -156,6 +156,11 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    # Model work-sharing: the lead agent model hands subtasks to this cheaper
+    # worker via the `delegate` tool. Same "model@endpoint_name" spec as the
+    # teacher; the enabled flag gates execution without losing the selection.
+    "delegate_worker_model": "",
+    "delegate_enabled": False,
     "teacher_tier2_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
@@ -170,6 +175,12 @@ DEFAULT_SETTINGS = {
     "reminder_llm_synthesis": False,
     "reminder_llm_persona": "",
     "reminder_ntfy_topic": "Reminders",
+    # Phone pings for finished/failed scheduled tasks and long agent runs
+    # (>2 min with no browser active). Rides the reminder ntfy config.
+    "ntfy_task_push": True,
+    # Every booked pomodoro focus block becomes an event in the local
+    # "Focus" calendar (auto-created per owner).
+    "pomodoro_calendar_log": True,
     "reminder_email_to": "",
     # Generic outbound webhook channel: pick any saved Integration as the
     # target and supply a JSON payload template. Use {{title}} and {{message}}

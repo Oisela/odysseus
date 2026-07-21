@@ -1193,8 +1193,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Lock the wrap to the page's exact aspect ratio so percentage-positioned
       // inputs stay aligned no matter how wide the panel is rendered.
       const pageWrap = document.createElement('div');
+      pageWrap.className = 'doc-pdf-pagewrap';
+      pageWrap.dataset.page = String(page.page);
       pageWrap.style.cssText = `position:relative;margin:0 auto 16px auto;width:${page.width}px;max-width:calc(100% - 24px);aspect-ratio:${page.width} / ${page.height};background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.4);container-type:size;`;
       const img = document.createElement('img');
+      img.className = 'doc-pdf-page';
+      img.dataset.page = String(page.page);
       img.src = `${API_BASE}/api/document/${docId}/page/${page.page}.png`;
       img.style.cssText = 'display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none;pointer-events:none;';
       img.draggable = false;
@@ -1384,6 +1388,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       pane.appendChild(pageWrap);
     }
     _pdfPaneFieldsByDoc.set(docId, fieldRefs);
+    _renderDocMarks('doc-pdf-view');
+    _wireTextLayers('doc-pdf-view');
   }
 
   // Render one annotation as a positioned wrapper with type-appropriate
@@ -2060,11 +2066,85 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!res.ok) throw new Error('latex-pdf-pages failed');
       const data = await res.json();
       const v = data.compiled_at || _latexStampByDoc.get(activeDocId) || 0;
+      // Each page sits in a positioned wrapper so persistent marks can
+      // overlay it with percentage coordinates (same trick as the form
+      // overlays in the PDF pane). The wrapper takes over the page's
+      // sizing; the img fills it.
       pane.innerHTML = (data.pages || []).map(p =>
-        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">`
+        `<div class="doc-page-wrap" data-page="${p.page}" style="position:relative;margin:0 auto 16px;width:min(820px, calc(100% - 32px));">` +
+        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" style="width:100%;margin:0;" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">` +
+        `</div>`
       ).join('');
+      _renderDocMarks('doc-latex-view');
+      _wireTextLayers('doc-latex-view');
     } catch (e) {
       pane.innerHTML = '<div class="doc-latex-hint">Could not load the compiled PDF.</div>';
+    }
+  }
+
+  // ── Persistent PDF marks: overlays + sidecar CRUD (v3.6) ──
+  // Marks live server-side (sidecar per PDF); each carries the chat it was
+  // created from — clicking a saved mark jumps to that session.
+  async function _renderDocMarks(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane || !activeDocId) return;
+    const docAtStart = activeDocId;
+    let marks = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/marks`, { credentials: 'same-origin' });
+      if (!res.ok) return;
+      marks = (await res.json()).marks || [];
+    } catch (e) { return; }
+    if (docAtStart !== activeDocId) return;
+    pane.querySelectorAll('.doc-mark').forEach(m => m.remove());
+    const wraps = new Map();
+    pane.querySelectorAll('[data-page]').forEach(w => {
+      if (w.tagName !== 'IMG') wraps.set(String(w.dataset.page), w);
+    });
+    for (const m of marks) {
+      const w = wraps.get(String(m.page));
+      if (!w) continue;
+      const isHl = m.kind === 'highlight' && Array.isArray(m.rects) && m.rects.length;
+      // Highlights carry one rect per text line; boxes have their single rect.
+      const rects = isHl ? m.rects : [{ x: m.x, y: m.y, w: m.w, h: m.h }];
+      rects.forEach((q, qi) => {
+        const el = document.createElement('div');
+        el.className = isHl ? `doc-mark doc-hl doc-hl-${m.color || 'yellow'}` : 'doc-mark';
+        el.dataset.markId = m.id;
+        el.style.left = `${q.x * 100}%`;
+        el.style.top = `${q.y * 100}%`;
+        el.style.width = `${q.w * 100}%`;
+        el.style.height = `${q.h * 100}%`;
+        const preview = isHl && m.text ? `„${m.text.slice(0, 120)}${m.text.length > 120 ? '…' : ''}“` : 'Marked region';
+        el.title = m.session_id
+          ? `${preview} — click to open the chat it was discussed in`
+          : preview;
+        if (m.session_id) {
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (sessionModule && sessionModule.selectSession) sessionModule.selectSession(m.session_id);
+          });
+        }
+        // Highlight line-rects beyond the first must not intercept the
+        // pointer — dragging a new selection across an old highlight would
+        // stall and flicker. The first rect keeps tooltip/click/delete.
+        if (isHl && qi > 0) el.style.pointerEvents = 'none';
+        if (qi === 0) {
+          const rm = document.createElement('button');
+          rm.className = 'doc-mark-rm';
+          rm.title = 'Remove mark';
+          rm.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+          rm.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            pane.querySelectorAll(`.doc-mark[data-mark-id="${m.id}"]`).forEach((n) => n.remove());
+            await fetch(`${API_BASE}/api/document/${activeDocId}/marks/${m.id}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            }).catch(() => {});
+          });
+          el.appendChild(rm);
+        }
+        w.appendChild(el);
+      });
     }
   }
 
@@ -2086,6 +2166,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const data = await res.json();
         _latexErrorByDoc.delete(activeDocId);
         _latexStampByDoc.set(activeDocId, data.compiled_at || Date.now());
+        // Recompiling changes the PDF — cached word boxes are stale.
+        [..._textmapCache.keys()].forEach((k) => {
+          if (k.startsWith(`${activeDocId}:`)) _textmapCache.delete(k);
+        });
       } else {
         let log = 'LaTeX compile failed';
         try {
@@ -2112,11 +2196,213 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _setLatexMarkMode(on) {
     _latexMarkMode = on;
     document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
+    document.getElementById('doc-pdf-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
   }
 
-  function _wireLatexMarking() {
-    const pane = document.getElementById('doc-latex-view');
+  // ── Text highlighter: word boxes per page, cached per doc ──
+  const _textmapCache = new Map();  // `${docId}:${page}` → {words:[...]} | null
+
+  async function _getTextmap(page) {
+    const key = `${activeDocId}:${page}`;
+    if (_textmapCache.has(key)) return _textmapCache.get(key);
+    let data = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/textmap/${page}`, { credentials: 'same-origin' });
+      if (res.ok) data = await res.json();
+    } catch (e) { /* stays null */ }
+    _textmapCache.set(key, data);
+    return data;
+  }
+
+  // ── Native text selection (v3.6): a transparent word-span layer over
+  // each page image — same trick as PDF.js. Text selects and copies like
+  // in any browser PDF viewer; on mouseup a small popup offers highlight
+  // colors that persist the selection as a mark + quote it in the chat.
+
+  function _wireTextLayers(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane) return;
+    if (pane._tlObserver) pane._tlObserver.disconnect();
+    // Build layers lazily — a 50-page script would otherwise mean tens of
+    // thousands of spans up front.
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        io.unobserve(en.target);
+        _buildTextLayer(en.target);
+      });
+    }, { root: pane, rootMargin: '600px' });
+    pane.querySelectorAll('[data-page]').forEach((w) => {
+      if (w.tagName !== 'IMG') io.observe(w);
+    });
+    pane._tlObserver = io;
+    // Keep the invisible glyphs proportional to the rendered page height
+    // (spans size their font via --tl-h — see _buildTextLayer).
+    if (!pane._tlResize) {
+      pane._tlResize = new ResizeObserver((entries) => {
+        entries.forEach((en) => {
+          en.target.style.setProperty('--tl-h', `${en.contentRect.height}px`);
+        });
+      });
+    }
+    pane.querySelectorAll('[data-page]').forEach((w) => {
+      if (w.tagName !== 'IMG') pane._tlResize.observe(w);
+    });
+    _wireSelectionPopup(paneId);
+  }
+
+  async function _buildTextLayer(wrap) {
+    if (wrap.querySelector('.doc-text-layer')) return;
+    const page = Number(wrap.dataset.page || 0);
+    const docAtStart = activeDocId;
+    const tm = await _getTextmap(page);
+    if (docAtStart !== activeDocId) return;
+    if (!tm || !Array.isArray(tm.words) || !tm.words.length) return;
+    if (wrap.querySelector('.doc-text-layer')) return;
+    wrap.style.setProperty('--tl-h', `${wrap.getBoundingClientRect().height || 800}px`);
+    const layer = document.createElement('div');
+    layer.className = 'doc-text-layer';
+    const frag = document.createDocumentFragment();
+    tm.words.forEach((w) => {
+      const sp = document.createElement('span');
+      sp.className = 'doc-tl-word';
+      sp.style.left = `${w.x * 100}%`;
+      sp.style.top = `${w.y * 100}%`;
+      sp.style.width = `${w.w * 100}%`;
+      sp.style.height = `${w.h * 100}%`;
+      sp.style.fontSize = `calc(var(--tl-h, 800px) * ${(w.h * 0.85).toFixed(5)})`;
+      sp.dataset.line = w.l;
+      sp.textContent = w.t + ' ';
+      frag.appendChild(sp);
+    });
+    layer.appendChild(frag);
+    // Right after the page img, BEFORE form-field overlays and marks —
+    // those must stay clickable above the selection layer.
+    wrap.insertBefore(layer, wrap.children[1] || null);
+    // Fit each invisible word to its exact box via scaleX (the PDF.js
+    // trick). Without this the glyphs overflow into neighboring words,
+    // and the overlapping hit-targets make the native selection jitter
+    // while dragging. One read pass, then one write pass — no thrash.
+    // The ratio survives resizes: font-size (via --tl-h) and box width
+    // scale with the same page aspect.
+    requestAnimationFrame(() => {
+      const boxW = wrap.clientWidth || 800;
+      const reads = [];
+      layer.querySelectorAll('.doc-tl-word').forEach((sp) => {
+        reads.push([sp, sp.scrollWidth, (parseFloat(sp.style.width) / 100) * boxW]);
+      });
+      reads.forEach(([sp, glyphW, targetW]) => {
+        if (glyphW > 0 && targetW > 0) {
+          const k = targetW / glyphW;
+          if (k > 0.15 && k < 8) {
+            sp.style.transformOrigin = '0 0';
+            sp.style.transform = `scaleX(${k.toFixed(4)})`;
+          }
+        }
+      });
+    });
+  }
+
+  function _wireSelectionPopup(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane || pane._selPopupWired) return;
+    pane._selPopupWired = true;
+    const hide = () => { pane.querySelectorAll('.doc-sel-popup').forEach((p) => p.remove()); };
+    pane.addEventListener('scroll', hide);
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) hide();
+    });
+    pane.addEventListener('mouseup', (e) => {
+      // Let the browser finalize the selection first.
+      setTimeout(() => {
+        hide();
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        const anchor = range.commonAncestorContainer;
+        const layerEl = (anchor.nodeType === 1 ? anchor : anchor.parentElement)?.closest?.('.doc-text-layer');
+        if (!layerEl || !pane.contains(layerEl)) return;
+        const wrap = layerEl.parentElement;
+        const spans = [...layerEl.querySelectorAll('.doc-tl-word')].filter((sp) => sel.containsNode(sp, true));
+        if (!spans.length) return;
+        const popup = document.createElement('div');
+        popup.className = 'doc-sel-popup';
+        ['yellow', 'green', 'blue', 'pink'].forEach((c) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'doc-mark-tool';
+          b.dataset.marktool = c;
+          b.title = `Highlight + quote in chat (${c})`;
+          b.addEventListener('mousedown', (ev) => ev.preventDefault());  // keep the selection alive
+          b.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            _highlightSpans(paneId, wrap, spans, c);
+            hide();
+            try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
+          });
+          popup.appendChild(b);
+        });
+        const pr = pane.getBoundingClientRect();
+        popup.style.left = `${Math.max(4, Math.min(e.clientX - pr.left + pane.scrollLeft - 60, pane.scrollWidth - 140))}px`;
+        popup.style.top = `${e.clientY - pr.top + pane.scrollTop + 16}px`;
+        pane.appendChild(popup);
+      }, 0);
+    });
+  }
+
+  function _highlightSpans(paneId, wrap, spans, color) {
+    const page = Number(wrap.dataset.page || 0);
+    const lines = new Map();  // insertion order = reading order
+    spans.forEach((sp) => {
+      const x = parseFloat(sp.style.left) / 100;
+      const y = parseFloat(sp.style.top) / 100;
+      const w = parseFloat(sp.style.width) / 100;
+      const h = parseFloat(sp.style.height) / 100;
+      const g = lines.get(sp.dataset.line);
+      if (!g) lines.set(sp.dataset.line, { x0: x, y0: y, x1: x + w, y1: y + h, parts: [sp.textContent.trim()] });
+      else {
+        g.x0 = Math.min(g.x0, x); g.y0 = Math.min(g.y0, y);
+        g.x1 = Math.max(g.x1, x + w); g.y1 = Math.max(g.y1, y + h);
+        g.parts.push(sp.textContent.trim());
+      }
+    });
+    const rects = [], textParts = [];
+    lines.forEach((g) => {
+      rects.push({ x: g.x0, y: g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 });
+      textParts.push(g.parts.join(' '));
+    });
+    const text = textParts.join('\n');
+    const msg = document.getElementById('message');
+    if (msg && text) {
+      const quote = text.split('\n').map((l) => '> ' + l).join('\n');
+      msg.value = (msg.value ? msg.value.replace(/\s*$/, '\n\n') : '') + quote + `\n> — p. ${page}\n\n`;
+      msg.dispatchEvent(new Event('input', { bubbles: true }));
+      msg.focus();
+    }
+    if (uiModule && uiModule.showToast) uiModule.showToast(`Highlighted text (page ${page}) quoted in chat`);
+    let bx0 = 1, by0 = 1, bx1 = 0, by1 = 0;
+    rects.forEach((q) => {
+      bx0 = Math.min(bx0, q.x); by0 = Math.min(by0, q.y);
+      bx1 = Math.max(bx1, q.x + q.w); by1 = Math.max(by1, q.y + q.h);
+    });
+    const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
+    fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        page,
+        x: Math.max(0, bx0), y: Math.max(0, by0),
+        w: Math.max(0.001, bx1 - bx0), h: Math.max(0.001, by1 - by0),
+        kind: 'highlight', color, rects, text,
+        session_id: _sid,
+      }),
+    }).then(() => _renderDocMarks(paneId)).catch(() => {});
+  }
+
+  function _wireLatexMarking(paneId = 'doc-latex-view', imgSelector = 'img.doc-latex-page') {
+    const pane = document.getElementById(paneId);
     if (!pane || pane._markWired) return;
     pane._markWired = true;
 
@@ -2162,7 +2448,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Crop from the page image with the largest overlap. The PNGs are
       // same-origin, so the canvas stays untainted.
       let best = null, bestArea = 0;
-      pane.querySelectorAll('img.doc-latex-page').forEach((img) => {
+      pane.querySelectorAll(imgSelector).forEach((img) => {
         const r = img.getBoundingClientRect();
         const w = Math.min(sel.right, r.right) - Math.max(sel.left, r.left);
         const h = Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top);
@@ -2191,6 +2477,24 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (uiModule && uiModule.showToast) uiModule.showToast(`Marked region (page ${page}) attached to chat`);
         document.getElementById('message')?.focus();
       }, 'image/png');
+
+      // Persist the mark (v3.6): relative rect on the page + the chat it
+      // came from, so reopening the PDF shows it and clicking jumps back.
+      const _mx = (Math.max(sel.left, r.left) - r.left) / r.width;
+      const _my = (Math.max(sel.top, r.top) - r.top) / r.height;
+      const _mw = (Math.min(sel.right, r.right) - Math.max(sel.left, r.left)) / r.width;
+      const _mh = (Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top)) / r.height;
+      const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
+      fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: Number(img.dataset.page || 0),
+          x: Math.max(0, _mx), y: Math.max(0, _my),
+          w: Math.max(0.001, _mw), h: Math.max(0.001, _mh),
+          session_id: _sid,
+        }),
+      }).then(() => _renderDocMarks(paneId)).catch(() => {});
     });
 
     pane.addEventListener('pointercancel', cancelDrag);
@@ -2375,6 +2679,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.querySelectorAll('.md-toolbar-latex-only').forEach(el => {
         el.style.display = _isLatexLang(lang) ? 'inline-flex' : 'none';
       });
+      // Mark works for imported/form-backed PDFs too (persistent marks
+      // v3.6) — un-hide just that one button for them.
+      if (!_isLatexLang(lang)) {
+        const _mb = document.getElementById('doc-latex-mark-btn');
+        const _c = (docs.get(activeDocId) || {}).content || '';
+        if (_mb && _isFormBackedDoc(_c)) _mb.style.display = 'inline-flex';
+      }
       if (_latexActive && !_isLatexLang(lang)) _setLatexViewActive(false);
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
@@ -5942,7 +6253,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
     document.getElementById('doc-latex-compile-btn')?.addEventListener('click', _compileLatex);
     document.getElementById('doc-latex-mark-btn')?.addEventListener('click', () => {
-      _wireLatexMarking();
+      _wireLatexMarking('doc-latex-view', 'img.doc-latex-page');
+      _wireLatexMarking('doc-pdf-view', 'img.doc-pdf-page');
       _setLatexMarkMode(!_latexMarkMode);
     });
 

@@ -422,6 +422,16 @@ class TaskScheduler:
         # Cap at 50 to avoid unbounded growth
         if len(self._pending_notifications) > 50:
             self._pending_notifications = self._pending_notifications[-50:]
+        # Phone leg (v3.6): mirror the notification to ntfy so finished or
+        # failed runs reach the phone when no browser is open. Per-task
+        # gating already happened at the call sites (notifications_enabled);
+        # errors always come through there too.
+        try:
+            from routes.note_routes import ntfy_push
+            title = f"Task done: {task_name}" if status == "success" else f"Task {status}: {task_name}"
+            ntfy_push(title, body or "", f"task-{task_id or task_name}", owner=owner or "")
+        except Exception:
+            logger.debug("ntfy task push skipped", exc_info=True)
 
     def pop_notifications(self, owner: str = None) -> list:
         """Return and clear pending notifications.

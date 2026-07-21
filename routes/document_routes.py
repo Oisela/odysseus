@@ -1,6 +1,7 @@
 """Document routes — CRUD for living documents with version history."""
 
 import asyncio
+import json
 import os
 import re
 import uuid
@@ -1241,6 +1242,166 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     def _latex_pdf_path(doc_id: str) -> str:
         return os.path.join(_latex_dir(doc_id), "main.pdf")
+
+    # ── Persistent PDF marks (v3.6) ────────────────────────────────────
+    # Marks (page + relative rect + originating chat) live in a sidecar:
+    # next to the source PDF for imported/form-backed docs (they travel
+    # with the file, like the .fields.json sidecar), in the LaTeX build
+    # dir for compiled docs (the PDF there is a build artifact anyway).
+
+    def _marks_path(request: Request, doc, user) -> str:
+        from src.pdf_form_doc import find_source_upload_id
+        upload_id = find_source_upload_id(doc.current_content or "")
+        if upload_id:
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
+            if pdf_path:
+                return str(pdf_path) + ".marks.json"
+        return os.path.join(_latex_dir(doc.id), "marks.json")
+
+    def _load_marks(path: str) -> list:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, list) else []
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def _save_marks(path: str, marks: list) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(marks, fh, indent=2)
+
+    def _marks_ctx(request: Request, doc_id: str):
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            return _marks_path(request, doc, user)
+        finally:
+            db.close()
+
+    def _doc_pdf_source(request: Request, doc_id: str) -> str:
+        """Absolute path of the rendered PDF behind a document — the source
+        upload for imported/form-backed docs, the tectonic build artifact
+        for LaTeX docs."""
+        from src.pdf_form_doc import find_source_upload_id
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            upload_id = find_source_upload_id(doc.current_content or "")
+            if upload_id:
+                pdf_path = _locate_current_user_upload(request, upload_id, user)
+                if pdf_path:
+                    return str(pdf_path)
+            latex_pdf = _latex_pdf_path(doc.id)
+            if os.path.exists(latex_pdf):
+                return latex_pdf
+            raise HTTPException(404, "No rendered PDF for this document")
+        finally:
+            db.close()
+
+    @router.get("/api/document/{doc_id}/textmap/{page_no}")
+    async def get_page_textmap(request: Request, doc_id: str, page_no: int):
+        """Word bounding boxes (relative 0..1, reading order) for one page —
+        lets the text-highlighter snap drag selections to actual words."""
+        pdf_path = _doc_pdf_source(request, doc_id)
+        fitz = _load_pdf_viewer_fitz()
+        pdf_doc = fitz.open(pdf_path)
+        try:
+            if page_no < 1 or page_no > pdf_doc.page_count:
+                raise HTTPException(404, "Page out of range")
+            page = pdf_doc[page_no - 1]
+            pw = page.rect.width or 1.0
+            ph = page.rect.height or 1.0
+            words = []
+            # get_text("words") returns reading-order tuples
+            # (x0, y0, x1, y1, text, block_no, line_no, word_no).
+            for x0, y0, x1, y1, text, block, line, _wno in page.get_text("words"):
+                words.append({
+                    "x": round(x0 / pw, 5), "y": round(y0 / ph, 5),
+                    "w": round((x1 - x0) / pw, 5), "h": round((y1 - y0) / ph, 5),
+                    "t": text, "l": f"{block}:{line}",
+                })
+            return {"page": page_no, "words": words}
+        finally:
+            pdf_doc.close()
+
+    @router.get("/api/document/{doc_id}/marks")
+    async def get_pdf_marks(request: Request, doc_id: str):
+        return {"marks": _load_marks(_marks_ctx(request, doc_id))}
+
+    @router.post("/api/document/{doc_id}/marks")
+    async def add_pdf_mark(request: Request, doc_id: str):
+        path = _marks_ctx(request, doc_id)
+        body = await request.json()
+        try:
+            page = int(body.get("page"))
+            x, y = float(body.get("x")), float(body.get("y"))
+            w, h = float(body.get("w")), float(body.get("h"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "page + relative x/y/w/h required")
+        if not all(0.0 <= v <= 1.0 for v in (x, y)) or not (0.0 < w <= 1.0) or not (0.0 < h <= 1.0):
+            raise HTTPException(400, "rect must be relative (0..1)")
+        kind = str(body.get("kind") or "box")
+        if kind not in ("box", "highlight"):
+            raise HTTPException(400, "kind must be box or highlight")
+        color = str(body.get("color") or ("red" if kind == "box" else "yellow"))
+        if color not in ("red", "yellow", "green", "blue", "pink"):
+            raise HTTPException(400, "unknown color")
+        # Highlights snap to text: one rect per text line plus the extracted
+        # wording; the top-level x/y/w/h stays the bounding box so old
+        # clients still render something sensible.
+        clean_rects = None
+        if kind == "highlight":
+            rects = body.get("rects")
+            if not isinstance(rects, list) or not rects or len(rects) > 400:
+                raise HTTPException(400, "highlight needs 1..400 rects")
+            clean_rects = []
+            for r in rects:
+                try:
+                    rx, ry = float(r.get("x")), float(r.get("y"))
+                    rw, rh = float(r.get("w")), float(r.get("h"))
+                except (AttributeError, TypeError, ValueError):
+                    raise HTTPException(400, "invalid rect in rects")
+                if not all(0.0 <= v <= 1.0 for v in (rx, ry)) or not (0.0 < rw <= 1.0) or not (0.0 < rh <= 1.0):
+                    raise HTTPException(400, "rect must be relative (0..1)")
+                clean_rects.append({
+                    "x": round(rx, 5), "y": round(ry, 5),
+                    "w": round(rw, 5), "h": round(rh, 5),
+                })
+        mark = {
+            "id": uuid.uuid4().hex[:12],
+            "page": page,
+            "x": round(x, 5), "y": round(y, 5),
+            "w": round(w, 5), "h": round(h, 5),
+            "kind": kind,
+            "color": color,
+            "rects": clean_rects,
+            "text": str(body.get("text") or "")[:2000] or None,
+            "session_id": str(body.get("session_id") or "")[:64] or None,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+        marks = _load_marks(path)
+        marks.append(mark)
+        _save_marks(path, marks)
+        return {"ok": True, "mark": mark}
+
+    @router.delete("/api/document/{doc_id}/marks/{mark_id}")
+    async def delete_pdf_mark(request: Request, doc_id: str, mark_id: str):
+        path = _marks_ctx(request, doc_id)
+        marks = _load_marks(path)
+        kept = [m for m in marks if m.get("id") != mark_id]
+        if len(kept) == len(marks):
+            raise HTTPException(404, "mark not found")
+        _save_marks(path, kept)
+        return {"ok": True}
 
     def _run_tectonic(doc_id: str, source: str) -> Dict[str, Any]:
         """Blocking compile: write main.tex, run tectonic, return ok/log.

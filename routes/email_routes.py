@@ -471,27 +471,163 @@ def _email_index_rows(owner: str, account_id: str | None, folder: str, uids: lis
         return {}
     out: dict[str, dict] = {}
     for row in rows:
-        uid, message_id, subject, from_name, from_address, to_text, cc_text, date_iso, date_display, date_epoch, size, flags, has_attachments = row
-        flags = flags or ""
-        out[str(uid)] = {
-            "uid": str(uid),
-            "message_id": (message_id or "").strip(),
-            "subject": subject or "(no subject)",
-            "from_name": from_name or from_address or "",
-            "from_address": from_address or "",
-            "to": to_text or "",
-            "cc": cc_text or "",
-            "date": date_iso or "",
-            "date_display": date_display or "",
-            "date_epoch": float(date_epoch or 0),
-            "size": int(size or 0),
-            "is_read": "\\Seen" in flags,
-            "is_answered": "\\Answered" in flags,
-            "is_flagged": "\\Flagged" in flags,
-            "flags": flags,
-            "has_attachments": bool(has_attachments),
-        }
+        item = _index_row_to_email(row)
+        out[item["uid"]] = item
     return out
+
+
+def _index_row_to_email(row) -> dict:
+    """Map an email_message_index row (13-column SELECT order used by
+    _email_index_rows/_email_index_list_fallback) to the list-item shape."""
+    uid, message_id, subject, from_name, from_address, to_text, cc_text, date_iso, date_display, date_epoch, size, flags, has_attachments = row
+    flags = flags or ""
+    return {
+        "uid": str(uid),
+        "message_id": (message_id or "").strip(),
+        "subject": subject or "(no subject)",
+        "from_name": from_name or from_address or "",
+        "from_address": from_address or "",
+        "to": to_text or "",
+        "cc": cc_text or "",
+        "date": date_iso or "",
+        "date_display": date_display or "",
+        "date_epoch": float(date_epoch or 0),
+        "size": int(size or 0),
+        "is_read": "\\Seen" in flags,
+        "is_answered": "\\Answered" in flags,
+        "is_flagged": "\\Flagged" in flags,
+        "flags": flags,
+        "has_attachments": bool(has_attachments),
+    }
+
+
+# Filters the local index can answer from its flags column alone. Anything
+# else (tag:, reminders, date-window filters) needs IMAP and never
+# stale-serves.
+_STALE_LIST_FILTERS = {"all", "unread", "favorites", "undone", "unanswered"}
+
+# Strong refs for detached live-fetch finishers (asyncio keeps only weak
+# refs to tasks — without this the GC can drop one mid-flight and the
+# fresh result never reaches the list cache).
+_EMAIL_LIST_BG_TASKS: set = set()
+
+
+def _attach_local_email_tags(emails: list, folder: str, account_id: str | None, owner: str) -> None:
+    """Merge locally cached tags/spam verdicts (email_tags) into email dicts
+    in place — shared by the live index-search path and the stale-serve
+    fallback so the two can't drift."""
+    if not emails:
+        return
+    try:
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            owner_clause, owner_params = _email_tag_owner_clause(account_id, owner)
+            account_clause, account_params = _email_tag_account_clause(account_id)
+            uid_vals = [str(e.get("uid") or "") for e in emails if e.get("uid")]
+            mid_vals = [(e.get("message_id") or "").strip() for e in emails if e.get("message_id")]
+            clauses = []
+            params = [folder, *owner_params, *account_params]
+            if uid_vals:
+                clauses.append("uid IN (" + ",".join("?" * len(uid_vals)) + ")")
+                params.extend(uid_vals)
+            if mid_vals:
+                clauses.append("message_id IN (" + ",".join("?" * len(mid_vals)) + ")")
+                params.extend(mid_vals)
+            tag_by_uid: dict = {}
+            tag_by_mid: dict = {}
+            if clauses:
+                for uid_i, mid_i, tags_raw, spam_i in conn.execute(
+                    f"SELECT uid, message_id, tags, spam_verdict FROM email_tags "
+                    f"WHERE folder=? AND {owner_clause} AND {account_clause} AND ({' OR '.join(clauses)})",
+                    params,
+                ).fetchall():
+                    try:
+                        tags_i = json.loads(tags_raw or "[]")
+                    except Exception:
+                        tags_i = []
+                    entry = {"tags": tags_i if isinstance(tags_i, list) else [], "spam": bool(spam_i)}
+                    if uid_i:
+                        tag_by_uid[str(uid_i)] = entry
+                    if mid_i:
+                        tag_by_mid[str(mid_i).strip()] = entry
+        finally:
+            conn.close()
+        for e in emails:
+            entry = tag_by_mid.get((e.get("message_id") or "").strip()) or tag_by_uid.get(str(e.get("uid") or ""))
+            if entry:
+                e["tags"] = _sanitize_visible_email_tags(entry.get("tags", []), is_answered=bool(e.get("is_answered")))
+                e["is_spam_verdict"] = entry.get("spam", False)
+    except Exception as e:
+        logger.debug(f"local email tag attach skipped: {e}")
+
+
+def _email_index_list_fallback(owner: str, account_id: str | None, folder: str,
+                               filter_: str, limit: int, offset: int,
+                               from_addr: str | None, has_attachments_only: bool) -> dict | None:
+    """Serve a folder listing from the local message index.
+
+    Used when the live IMAP fetch exceeds its soft deadline: stale-but-
+    instant beats skeleton rows for 30s+ while a dead pooled connection
+    times out. Returns None when the index can't answer (unsupported
+    filter or empty index) — the caller then waits for IMAP. Total counts
+    reflect indexed messages only, so the payload is marked
+    sync.source="index_stale" and the client revalidates.
+    """
+    if (filter_ or "all") not in _STALE_LIST_FILTERS:
+        return None
+    try:
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            where = ["owner=?", "account_key=?", "folder=?"]
+            params: list = [owner or "", _account_cache_key(account_id, owner), folder]
+            if filter_ == "unread":
+                where.append("(flags IS NULL OR instr(flags, '\\Seen') = 0)")
+            elif filter_ == "favorites":
+                where.append("instr(COALESCE(flags,''), '\\Flagged') > 0")
+            elif filter_ == "undone":
+                where.append("instr(COALESCE(flags,''), '\\Answered') = 0")
+            elif filter_ == "unanswered":
+                where.append("(flags IS NULL OR instr(flags, '\\Seen') = 0)")
+                where.append("instr(COALESCE(flags,''), '\\Answered') = 0")
+            if from_addr:
+                where.append("(from_address LIKE ? OR from_name LIKE ?)")
+                like = f"%{from_addr}%"
+                params.extend([like, like])
+            if has_attachments_only:
+                where.append("has_attachments=1")
+            wsql = " AND ".join(where)
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM email_message_index WHERE {wsql}", params
+            ).fetchone()[0] or 0)
+            if not total:
+                return None
+            rows = conn.execute(
+                f"""
+                SELECT uid, message_id, subject, from_name, from_address, to_text, cc_text,
+                       date_iso, date_display, date_epoch, size, flags, has_attachments
+                FROM email_message_index WHERE {wsql}
+                ORDER BY date_epoch DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, max(1, int(limit)), max(0, int(offset))],
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"email index list fallback skipped: {e}")
+        return None
+    emails = [_index_row_to_email(r) for r in rows]
+    # Tags/spam verdicts live locally too — attach them so stale rows look
+    # like live rows (calendar links are skipped; the revalidate adds them).
+    _attach_local_email_tags(emails, folder, account_id, owner)
+    _hide_unlinked_calendar_tags(emails)
+    return {
+        "emails": emails,
+        "total": total,
+        "folder": folder,
+        "offset": offset,
+        "sync": {"source": "index_stale"},
+    }
 
 
 def _email_index_search(owner: str, account_id: str | None, folder: str, query: str, limit: int, global_search: bool = True) -> tuple[list[dict], int, str | None]:
@@ -1724,49 +1860,7 @@ def setup_email_routes():
                 emails.sort(key=lambda x: x.get("date_epoch") or 0.0, reverse=True)
 
             if emails:
-                try:
-                    import sqlite3 as _sql3i
-                    _ci = _sql3i.connect(SCHEDULED_DB)
-                    _owner_clause_i, _owner_params_i = _email_tag_owner_clause(account_id, owner)
-                    _account_clause_i, _account_params_i = _email_tag_account_clause(account_id)
-                    uid_vals = [str(e.get("uid") or "") for e in emails if e.get("uid")]
-                    mid_vals = [(e.get("message_id") or "").strip() for e in emails if e.get("message_id")]
-                    clauses = []
-                    params = [folder, *_owner_params_i, *_account_params_i]
-                    if uid_vals:
-                        clauses.append("uid IN (" + ",".join("?" * len(uid_vals)) + ")")
-                        params.extend(uid_vals)
-                    if mid_vals:
-                        clauses.append("message_id IN (" + ",".join("?" * len(mid_vals)) + ")")
-                        params.extend(mid_vals)
-                    tag_by_uid = {}
-                    tag_by_mid = {}
-                    if clauses:
-                        rows_i = _ci.execute(
-                            f"SELECT uid, message_id, tags, spam_verdict FROM email_tags "
-                            f"WHERE folder=? AND {_owner_clause_i} AND {_account_clause_i} AND ({' OR '.join(clauses)})",
-                            params,
-                        ).fetchall()
-                        for uid_i, mid_i, tags_raw_i, spam_i in rows_i:
-                            try:
-                                tags_i = json.loads(tags_raw_i or "[]")
-                            except Exception:
-                                tags_i = []
-                            if isinstance(tags_i, list):
-                                tags_i = _sanitize_visible_email_tags(tags_i)
-                            entry_i = {"tags": tags_i if isinstance(tags_i, list) else [], "spam": bool(spam_i)}
-                            if uid_i:
-                                tag_by_uid[str(uid_i)] = entry_i
-                            if mid_i:
-                                tag_by_mid[str(mid_i).strip()] = entry_i
-                    _ci.close()
-                    for e in emails:
-                        tag_entry = tag_by_mid.get((e.get("message_id") or "").strip()) or tag_by_uid.get(str(e.get("uid") or ""))
-                        if tag_entry:
-                            e["tags"] = _sanitize_visible_email_tags(tag_entry.get("tags", []), is_answered=bool(e.get("is_answered")))
-                            e["is_spam_verdict"] = tag_entry.get("spam", False)
-                except Exception as e:
-                    logger.debug(f"email index tag merge skipped: {e}")
+                _attach_local_email_tags(emails, folder, account_id, owner)
 
                 try:
                     import sqlite3 as _sql3c
@@ -1955,15 +2049,53 @@ def setup_email_routes():
                         owner, account_id or "", folder, filter, limit, offset, elapsed_ms,
                     )
                 return cached
-        result = await _asyncio.to_thread(
+        # Soft deadline: live IMAP normally answers in well under a second,
+        # but a silently-dead pooled connection (bridge restart, network
+        # hiccup) stalls each IMAP op for up to the 30s socket timeout —
+        # the UI then shows skeleton rows for half a minute+. After the
+        # deadline we serve the local index (stale) and let the live fetch
+        # finish in the background, landing in the list cache for the
+        # client's revalidate.
+        live = _asyncio.ensure_future(_asyncio.to_thread(
             _list_emails_sync, folder, limit, offset, filter, account_id, from_addr,
             bool(has_attachments), owner,
-        )
-        if result and not result.get("error"):
-            if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
-                _record_email_received_events(owner, account_id, folder, result.get("emails") or [])
-                _schedule_recent_email_warm(result.get("emails") or [], folder, account_id, owner)
-            _list_cache_put(ck, result)
+        ))
+
+        def _absorb_live(res) -> None:
+            if res and not res.get("error"):
+                if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
+                    _record_email_received_events(owner, account_id, folder, res.get("emails") or [])
+                    _schedule_recent_email_warm(res.get("emails") or [], folder, account_id, owner)
+                _list_cache_put(ck, res)
+
+        try:
+            result = await _asyncio.wait_for(_asyncio.shield(live), timeout=2.5)
+        except _asyncio.TimeoutError:
+            stale = await _asyncio.to_thread(
+                _email_index_list_fallback, owner, account_id, folder, filter,
+                limit, offset, from_addr, bool(has_attachments),
+            )
+            if stale is None:
+                # Nothing indexed locally — waiting is the only option.
+                result = await live
+            else:
+                async def _finish_live():
+                    try:
+                        res = await live
+                    except Exception:
+                        logger.warning("background email list fetch failed", exc_info=True)
+                        return
+                    _absorb_live(res)
+                bg = _asyncio.create_task(_finish_live())
+                _EMAIL_LIST_BG_TASKS.add(bg)
+                bg.add_done_callback(_EMAIL_LIST_BG_TASKS.discard)
+                logger.warning(
+                    "email list slow — served %s stale index rows owner=%s account=%s folder=%s filter=%s",
+                    len(stale.get("emails") or []), owner, account_id or "", folder, filter,
+                )
+                return stale
+        if result is not None:
+            _absorb_live(result)
         elapsed_ms = int((_time.monotonic() - started_at) * 1000)
         if elapsed_ms > 1500:
             logger.warning(

@@ -1,6 +1,7 @@
 # routes/note_routes.py
 """Google Keep-style notes / checklists API."""
 
+import asyncio
 import json
 import uuid
 import logging
@@ -134,6 +135,42 @@ def _reminder_text_from_note(note: Note) -> tuple[str, str]:
 # push a parallel in-app notification (frontend polls the scheduler's queue
 # and fires real browser Notification(...) popups). Optional; works without it.
 _scheduler_ref = None
+
+
+# Strong refs for fire-and-forget phone pushes — asyncio keeps only weak
+# refs to tasks, so without this the GC can drop one mid-send.
+_NTFY_PUSH_TASKS: set = set()
+
+
+def ntfy_push(title: str, body: str, tag_id: str, owner: str = "") -> None:
+    """Fire-and-forget phone ping via the reminder ntfy channel.
+
+    The one place that owns the `ntfy_task_push` gate, pins the channel and
+    skips LLM synthesis (a "Task done" push must not get persona-rewritten
+    like a reminder would). Safe to call without a running event loop — it
+    just no-ops there and the in-app notification remains.
+    """
+    from src.settings import get_setting
+    try:
+        if not get_setting("ntfy_task_push", True):
+            return
+        task = asyncio.create_task(dispatch_reminder(
+            title,
+            (body or "")[:400],
+            tag_id,
+            owner=owner or "",
+            queue_browser=False,
+            settings_override={
+                "reminder_channel": "ntfy",
+                "reminder_llm_synthesis": False,
+            },
+        ))
+        _NTFY_PUSH_TASKS.add(task)
+        task.add_done_callback(_NTFY_PUSH_TASKS.discard)
+    except RuntimeError:
+        pass
+    except Exception:
+        logger.debug("ntfy push skipped", exc_info=True)
 
 
 async def dispatch_reminder(

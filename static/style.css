@@ -802,6 +802,9 @@ body.bg-pattern-sparkles {
       animation: rail-notes-pulse 1.6s ease-in-out infinite;
       pointer-events: none;
     }
+    /* In the section-title (no flex/auto-margin context) the reminder dot
+       sits right after the "Notes" text with a small gap instead. */
+    #tool-notes-btn .tool-notes-dot { margin-left: 6px; left: 0; }
     /* Individual card — subtle accent border tint when a reminder has fired */
     .note-card.note-card-reminder-due .note-card-reminder {
       background: color-mix(in srgb, var(--red) 22%, transparent);
@@ -828,11 +831,18 @@ body.bg-pattern-sparkles {
     /* Sidebar list-items are wider — anchor right-aligned vertically centered */
     .list-item.rail-minimized::after { top: 50%; right: 8px; transform: translateY(-50%); }
     #tool-memory-btn.rail-minimized::after { right: 12px; }
+    /* Pomodoro/Notes are section titles now — the default right:-10px dot
+       sat on adjacent text. Park it on the icon's top corner instead
+       (icon-rail pattern). */
+    #tool-pomodoro-btn.rail-minimized::after,
+    #tool-notes-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
+    /* Header-only sections (Pomodoro, Shopping, ...) — collapsing them
+       hides nothing, so no chevron. */
+    .section-header-only .section-collapse-btn { display: none; }
     /* Per-user nudge: the listed tools' minimized dot sits 2px further
        in from the right edge so it doesn't look glued to the border. */
     #tool-theme-btn.rail-minimized::after,
     #tool-tasks-btn.rail-minimized::after,
-    #tool-notes-btn.rail-minimized::after,
     #tool-library-btn.rail-minimized::after,
     #tool-gallery-btn.rail-minimized::after,
     #tool-compare-btn.rail-minimized::after,
@@ -4329,6 +4339,7 @@ body.bg-pattern-sparkles {
         z-index: 400;
         width: 80% !important;
         max-width: 340px;
+        padding-top: env(safe-area-inset-top, 0px);
         box-shadow: 4px 0 20px rgba(0,0,0,0.5);
         transition: transform 0.25s ease, opacity 0.25s ease !important;
         opacity: 1 !important;
@@ -4444,7 +4455,9 @@ body.bg-pattern-sparkles {
         padding: 1px 8px;
         min-height: 14px;
         margin-top: -31px;
-        padding-top: 31px;
+        /* Keep the title row below the iOS status bar (viewport-fit=cover
+           lets the page extend underneath it). */
+        padding-top: calc(31px + env(safe-area-inset-top, 0px));
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
@@ -4457,7 +4470,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4474,6 +4487,7 @@ body.bg-pattern-sparkles {
         top: 0; bottom: 0; left: 0;
         z-index: 200;
         width: 48px;
+        padding-top: calc(48px + env(safe-area-inset-top, 0px));
         box-shadow: 2px 0 12px rgba(0,0,0,0.4);
       }
       .icon-rail.mobile-mini.right-side {
@@ -4519,7 +4533,7 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
@@ -4534,7 +4548,7 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: 8px;
         z-index: 210;
         width: 32px;
@@ -7016,6 +7030,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
+      #shopping-modal .shopping-modal-content,
       #doclib-modal .doclib-modal-content {
         max-height: 100vh !important;
         max-height: 100dvh !important;
@@ -7083,6 +7098,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
+      #shopping-modal,
       #tasks-modal {
         padding-top: 0 !important;
         align-items: stretch !important;
@@ -40372,11 +40388,15 @@ body.theme-frosted .modal {
   gap: 8px;
 }
 .ask-user-option {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  /* Plain block, NOT flex: single-select rows are <button>s, and Chrome
+     miscalculates a button's height once flex children wrap — the
+     description then bled out of the box over the next option. Label and
+     description are stacked blocks inside .ask-user-option-main instead. */
+  display: block;
   width: 100%;
+  /* The global `button { height: 32px }` rule would pin the box shut —
+     these buttons must grow with their description. */
+  height: auto;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
   text-align: left;
@@ -40389,13 +40409,28 @@ body.theme-frosted .modal {
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
+/* Multi rows are <label>s (no button quirk): checkbox beside the text block. */
+.ask-user-option-multi {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ask-user-option-multi input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; }
+.ask-user-option-main { display: block; flex: 1; min-width: 0; }
 .ask-user-option:hover:not(:disabled) {
   border-color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
 }
 .ask-user-option:disabled { cursor: default; }
-.ask-user-option-label { font-weight: 500; }
-.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+.ask-user-option-label { display: block; font-weight: 500; }
+.ask-user-option-desc {
+  /* Own full-width line under the label. */
+  display: block;
+  margin-top: 2px;
+  opacity: 0.65;
+  font-size: 12px;
+  line-height: 1.4;
+}
 /* Free-text "Other" row: input + send, on one line. */
 .ask-user-other {
   display: flex;
@@ -40755,3 +40790,504 @@ body.theme-frosted .modal {
 .quote-ask-btn:hover {
   background: color-mix(in srgb, var(--fg) 8%, var(--card));
 }
+
+/* ── Notes master-detail (TickTick-style list view, v3.6) ─────────────────
+   Lists sidebar + compact rows + detail pane. The detail pane hosts the
+   regular .note-card / .note-form, so card styling below stays untouched. */
+.notes-pane-body.notes-pane-body-md { padding: 0; gap: 0; overflow: hidden; }
+.notes-md-layout { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+.notes-md-sidebar {
+  width: 128px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.notes-md-sidebar-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  padding: 10px 8px 3px;
+}
+/* Mirrors .settings-nav-item — same sidebar language as the Settings modal. */
+.notes-list-entry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+  min-width: 0;
+}
+.notes-list-entry:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.notes-list-entry.active { background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent); color: var(--accent, var(--red)); }
+.notes-list-entry-icon { flex-shrink: 0; display: inline-flex; opacity: 0.7; }
+.notes-list-entry.active .notes-list-entry-icon { opacity: 1; }
+.notes-list-entry-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.notes-list-count { flex-shrink: 0; font-size: 10px; opacity: 0.5; }
+.notes-md-newlist-input {
+  margin: 2px 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.notes-md-rows-col {
+  width: 262px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notes-md-quickadd { padding: 8px 8px 4px; display: flex; gap: 6px; align-items: center; }
+.notes-md-fullform-btn {
+  flex-shrink: 0;
+  width: 31px;
+  height: 31px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  opacity: 0.7;
+  cursor: pointer;
+}
+.notes-md-fullform-btn:hover { border-color: var(--accent, var(--red)); opacity: 1; }
+.notes-md-quickadd-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.notes-md-quickadd-input:focus { outline: none; border-color: var(--accent, var(--red)); }
+.notes-md-rows { flex: 1; overflow-y: auto; scrollbar-width: thin; padding: 4px 0 8px; }
+.note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  transition: background 0.1s;
+}
+.note-row:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.note-row.active { background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+/* TickTick-style completion circle — matches .note-check-dot's language. */
+.note-row-check {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.note-row-check:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.note-row-check.all-done { border-color: var(--green); background: color-mix(in srgb, var(--green) 25%, transparent); }
+.note-row-icon { flex-shrink: 0; margin-top: 1px; opacity: 0.55; display: inline-flex; }
+.note-row-main { flex: 1; min-width: 0; }
+.note-row-title { font-size: 12.5px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-row-sub {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.note-row-pin { flex-shrink: 0; margin-top: 2px; color: var(--accent, var(--red)); opacity: 0.8; display: inline-flex; }
+.note-row-meta { flex-shrink: 0; font-size: 10px; opacity: 0.6; margin-top: 2px; white-space: nowrap; }
+.note-row-meta.overdue { color: var(--red); opacity: 1; }
+
+.notes-md-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 10px 12px;
+}
+.notes-md-detail .note-card { cursor: default; }
+.notes-md-empty {
+  opacity: 0.5;
+  font-size: 12px;
+  text-align: center;
+  padding: 34px 12px;
+  line-height: 1.6;
+}
+/* Narrow window: the sidebar is the first thing to give way. */
+@media (max-width: 900px) {
+  .notes-pane:not(.notes-view-grid) .notes-md-sidebar { width: 104px; }
+}
+
+/* ── Shopping & Recipes module (v3.6) ──────────────────────────────────── */
+.shopping-modal-content {
+  width: min(640px, 94vw);
+  max-height: min(78vh, 760px);
+  display: flex;
+  flex-direction: column;
+}
+.shopping-body { flex: 1; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 10px; }
+/* Header layout must stay [title][tabs]……[share][_][X] no matter what the
+   minimize-button injector or a hidden sibling does: the tabs own the
+   auto-margin, everything after them groups tight on the right. */
+.shopping-modal-content .modal-header { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.shopping-modal-content .modal-header h4 { margin: 0; flex-shrink: 0; display: inline-flex; align-items: center; }
+.shopping-modal-content .modal-header .modal-minimize-btn,
+.shopping-modal-content .modal-header .minimize-btn { margin-left: 0 !important; }
+.shopping-header-icon-btn {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.shopping-header-icon-btn:hover { opacity: 1; border-color: var(--accent, var(--red)); }
+.shopping-tabs { display: inline-flex; margin-left: 6px; margin-right: auto; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.shopping-tab {
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.shopping-tab.active { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); color: var(--accent, var(--red)); }
+.shopping-add-row { display: flex; gap: 6px; }
+.shopping-list { display: flex; flex-direction: column; }
+.shopping-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.shopping-check {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.shopping-check:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.shopping-item.done .shopping-check { border-color: var(--green); background: color-mix(in srgb, var(--green) 30%, transparent); }
+.shopping-item-text { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.shopping-item.done .shopping-item-text { opacity: 0.5; text-decoration: line-through; }
+.shopping-item-owner { flex-shrink: 0; font-size: 10px; opacity: 0.5; }
+.shopping-item-rm { flex-shrink: 0; border: none; background: none; color: var(--fg); opacity: 0; cursor: pointer; padding: 2px; }
+.shopping-item:hover .shopping-item-rm { opacity: 0.55; }
+.shopping-item-rm:hover { opacity: 1 !important; color: var(--red); }
+.shopping-done-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; opacity: 0.7; margin-top: 4px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.shopping-done-head:hover { opacity: 1; }
+.shopping-done-head > span { display: inline-flex; align-items: center; gap: 4px; }
+.shopping-done-chev { transition: transform 0.15s; }
+.shopping-done-head.open .shopping-done-chev { transform: rotate(90deg); }
+.shopping-empty { opacity: 0.5; font-size: 12px; text-align: center; padding: 26px 10px; }
+.shopping-text-btn {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.shopping-text-btn:hover { border-color: var(--accent, var(--red)); opacity: 1; }
+.shopping-share-row { display: flex; align-items: center; gap: 7px; font-size: 12px; opacity: 0.8; margin-top: 4px; cursor: pointer; }
+.recipe-grid { display: flex; flex-direction: column; gap: 10px; }
+.recipe-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.recipe-card-img { max-height: 140px; width: 100%; object-fit: cover; border-radius: 8px; }
+.recipe-card-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.recipe-shared-pill {
+  font-size: 9.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: 0.7;
+}
+.recipe-card-sub { font-size: 11px; opacity: 0.55; }
+.recipe-card-instructions { font-size: 12px; opacity: 0.85; white-space: pre-wrap; }
+.recipe-card-ingredients { margin: 2px 0 0 18px; padding: 0; font-size: 12px; opacity: 0.8; }
+.recipe-card-ingredients li { margin: 1px 0; }
+.recipe-card-actions { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+.recipe-form { display: flex; flex-direction: column; gap: 8px; }
+
+/* Recipe cooking checklist + pasted instruction images (v3.6 follow-up) */
+.recipe-ingredients { display: flex; flex-direction: column; margin-top: 2px; }
+.recipe-ing {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+.recipe-ing:last-child { border-bottom: none; }
+.recipe-ing .shopping-check[disabled] { opacity: 0.35; cursor: default; }
+.recipe-ing.done .shopping-check { border-color: var(--green); background: color-mix(in srgb, var(--green) 30%, transparent); }
+.recipe-ing-text { flex: 1; min-width: 0; font-size: 12.5px; }
+.recipe-ing.done .recipe-ing-text { opacity: 0.5; text-decoration: line-through; }
+.recipe-instr-img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 6px 0;
+}
+
+/* Recipe form: todo-style ingredient rows + mobile fullscreen sheet */
+.recipe-f-ingredients { display: flex; flex-direction: column; gap: 4px; }
+.recipe-f-ing-row { display: flex; align-items: center; gap: 8px; }
+.recipe-f-ing-row .shopping-check { cursor: default; }
+.recipe-f-ing-row .shopping-check.checked { border-color: var(--green); background: color-mix(in srgb, var(--green) 30%, transparent); }
+.recipe-f-ing-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.recipe-f-ing-row input[type="text"]:focus { outline: none; border-color: var(--accent, var(--red)); }
+.recipe-f-ing-rm { flex-shrink: 0; border: none; background: none; color: var(--fg); opacity: 0.45; cursor: pointer; padding: 2px; }
+.recipe-f-ing-rm:hover { opacity: 1; color: var(--red); }
+@media (max-width: 768px) {
+  /* Fullscreen height/anchoring comes from the shared tool-modal mobile
+     rules (#shopping-modal in the ID lists next to #email-lib-modal). */
+  .shopping-modal-content { width: 100vw; border-radius: 0; }
+  .shopping-tabs { margin-left: 8px; }
+}
+
+/* Persistent PDF marks (v3.6): saved rectangles over the page wrappers. */
+.doc-mark {
+  position: absolute;
+  border: 2px solid color-mix(in srgb, var(--red) 75%, transparent);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  z-index: 4;
+}
+.doc-mark:hover { background: color-mix(in srgb, var(--red) 16%, transparent); }
+.doc-mark-rm {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0;
+}
+.doc-mark:hover .doc-mark-rm { display: inline-flex; }
+#doc-pdf-view.latex-marking { cursor: crosshair; }
+/* ── Native text selection layer (v3.6) — transparent word spans over the
+   page images, PDF.js-style. Text selects/copies like in any browser PDF
+   viewer; the selection popup offers highlighter colors. */
+.doc-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.doc-tl-word {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  line-height: 1;
+  font-family: sans-serif;
+  /* No overflow:hidden — glyphs are scaleX-fitted to the box (see
+     _buildTextLayer) and clipping would cut the selection paint. */
+}
+.doc-tl-word::selection {
+  background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  color: transparent;
+}
+img.doc-latex-page { user-select: none; -webkit-user-select: none; }
+/* Box-mark mode draws a marquee — the text layer must not swallow it. */
+.latex-marking .doc-text-layer { pointer-events: none; user-select: none; }
+/* Selection popup with the highlighter colors */
+.doc-sel-popup {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
+.doc-mark-tool {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--red);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+.doc-mark-tool:hover { opacity: 1; }
+.doc-mark-tool.active { opacity: 1; box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+.doc-mark-tool[data-marktool="yellow"] { background: #ffd43b; }
+.doc-mark-tool[data-marktool="green"]  { background: #69db7c; }
+.doc-mark-tool[data-marktool="blue"]   { background: #74c0fc; }
+.doc-mark-tool[data-marktool="pink"]   { background: #f783ac; }
+/* Highlight marks — translucent marker strokes over the page image.
+   multiply keeps the text underneath readable like a real marker. */
+.doc-mark.doc-hl {
+  border: none;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+.doc-hl-yellow { background: rgba(255, 212, 59, 0.5); }
+.doc-hl-green  { background: rgba(105, 219, 124, 0.45); }
+.doc-hl-blue   { background: rgba(116, 192, 252, 0.45); }
+.doc-hl-pink   { background: rgba(247, 131, 172, 0.45); }
+.doc-mark.doc-hl:hover { filter: brightness(0.92); }
+
+/* Persona editor — prompt-document checkbox list (v3.6): scrolls and
+   filters instead of flooding a dropdown; single-select semantics live
+   in JS (checking one unchecks the rest). */
+.char-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 110px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.char-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.char-doc-row:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.char-doc-row.on {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.char-doc-row input { flex-shrink: 0; accent-color: var(--accent, var(--red)); margin: 0; }
+.char-doc-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Persona editor — linked-skills chip box (v3.6) */
+.char-skills-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 92px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.char-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  opacity: 0.75;
+  -webkit-tap-highlight-color: transparent;
+}
+.char-skill-chip input { display: none; }
+.char-skill-chip:hover { opacity: 1; }
+.char-skill-chip.on {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+/* Prompt/Persona window is user-resizable (Alessio 2026-07-21) — long
+   persona prompts need room. The inner panel scrolls; the system-prompt
+   textarea keeps its own vertical resizer on top of this. */
+#custom-preset-modal .modal-content {
+  resize: both;
+  overflow: auto;
+  min-width: 420px;
+  min-height: 380px;
+  max-width: 96vw;
+  max-height: 94vh;
+}
+#custom-preset-modal #custom-system-prompt { min-height: 90px; }
+#doc-pdf-view.latex-marking .doc-mark,
+#doc-latex-view.latex-marking .doc-mark { pointer-events: none; }

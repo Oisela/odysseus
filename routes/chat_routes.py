@@ -169,28 +169,32 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
 
 
 def _project_context_for_session(session_id, chat_handler):
-    """If the session belongs to a project, return (workspace, prompt, name).
+    """If the session belongs to a project, return (workspace, prompt, name, params).
 
     The project defines workspace + persona template + extra instructions for
     ALL its chats server-side: a fresh client (new browser, phone) needs no
     per-chat setup, and a stale client-side preset/workspace can't leak into
-    project chats. Returns (None, None, None) for project-less sessions.
+    project chats. ``params`` carries the template's sampling config
+    (temperature/max_tokens) and display name so build_chat_context can scope
+    the whole preset — not just the prompt — to the project. Returns
+    (None, None, None, None) for project-less sessions.
     """
     if not session_id:
-        return None, None, None
+        return None, None, None, None
     try:
         from core.database import Project as DbProject, Session as DbSess
         db = SessionLocal()
         try:
             row = db.query(DbSess.project_id).filter(DbSess.id == session_id).first()
             if not row or not row.project_id:
-                return None, None, None
+                return None, None, None, None
             proj = db.query(DbProject).filter(DbProject.id == row.project_id).first()
         finally:
             db.close()
         if not proj or proj.archived:
-            return None, None, None
+            return None, None, None, None
         parts = []
+        params = {}
         if proj.template_id:
             try:
                 # User templates first, then built-in presets (code_analyze,
@@ -201,6 +205,12 @@ def _project_context_for_session(session_id, chat_handler):
                     builtin = chat_handler.preset_manager.presets.get(proj.template_id)
                     if isinstance(builtin, dict):
                         tpl = builtin
+                if tpl:
+                    params = {
+                        "temperature": tpl.get("temperature"),
+                        "max_tokens": tpl.get("max_tokens"),
+                        "character_name": tpl.get("character_name") or tpl.get("name") or "",
+                    }
                 if tpl and tpl.get("system_prompt"):
                     parts.append(str(tpl["system_prompt"]).strip())
                 else:
@@ -241,10 +251,10 @@ def _project_context_for_session(session_id, chat_handler):
                 logger.warning("[project] PROJEKT.md read failed", exc_info=True)
         parts.append("\n".join(extra))
         prompt = "\n\n".join(p for p in parts if p)
-        return (proj.workspace or None), prompt, proj.name
+        return (proj.workspace or None), prompt, proj.name, params
     except Exception:
         logger.warning("[project] context resolution failed", exc_info=True)
-        return None, None, None
+        return None, None, None, None
 
 
 def _apply_project_default_model(sess, session_id: str, owner: str | None = None) -> bool:
@@ -604,7 +614,7 @@ def setup_chat_routes(
             return {"response": memory_response}
 
         # Build shared context (preset, preprocess, preface, compact)
-        _, _json_project_prompt, _ = _project_context_for_session(session, chat_handler)
+        _, _json_project_prompt, _, _json_project_params = _project_context_for_session(session, chat_handler)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
             message=message,
@@ -616,6 +626,7 @@ def setup_chat_routes(
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
             project_prompt=_json_project_prompt,
+            project_params=_json_project_params,
         )
 
         # Research injection
@@ -711,7 +722,7 @@ def setup_chat_routes(
         # Project chats: the project's workspace wins over whatever the client
         # last had selected — switching to a project chat must never require
         # manual workspace fiddling (that's the feature's whole point).
-        _proj_ws, project_prompt, _proj_name = _project_context_for_session(session, chat_handler)
+        _proj_ws, project_prompt, _proj_name, project_params = _project_context_for_session(session, chat_handler)
         if _proj_ws:
             _pws, _prej = _resolve_request_workspace(request, _proj_ws)
             if _pws:
@@ -924,6 +935,7 @@ def setup_chat_routes(
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
             project_prompt=project_prompt,
+            project_params=project_params,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope

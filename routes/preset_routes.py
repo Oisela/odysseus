@@ -21,6 +21,11 @@ class UserTemplateRequest(BaseModel):
     system_prompt: str = Field("", max_length=10000)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_tokens: int = Field(0, ge=0, le=65536)
+    # Structured personas (v3.6): linked skills (injected as an instruction
+    # to load them via manage_skills) and an optional Library document whose
+    # content becomes the system prompt at persona start.
+    skills: List[str] = Field(default_factory=list, max_length=6)
+    prompt_doc_id: str = Field("", max_length=64)
 
 
 def setup_preset_routes(preset_manager) -> APIRouter:
@@ -30,21 +35,46 @@ def setup_preset_routes(preset_manager) -> APIRouter:
     async def get_presets() -> Dict[str, Any]:
         return preset_manager.presets
 
-    @router.post("/api/presets/custom")
-    async def update_custom_preset(preset_update: PresetUpdateRequest, _admin: None = Depends(require_admin)) -> Dict[str, Any]:
+    def _resolve_prompt_doc(request: Request, doc_id: str) -> str:
+        """Content of a Library document as the persona's system prompt.
+        Resolved at persona start, so editing the document and restarting
+        the persona always picks up the latest text."""
+        from core.database import SessionLocal, Document
+        user = effective_user(request)
+        db = SessionLocal()
         try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Prompt document not found")
+            owner = getattr(doc, "owner", None)
+            if owner and user and owner != user:
+                raise HTTPException(403, "Not your document")
+            return (doc.current_content or "")[:10000]
+        finally:
+            db.close()
+
+    @router.post("/api/presets/custom")
+    async def update_custom_preset(preset_update: PresetUpdateRequest, request: Request, _admin: None = Depends(require_admin)) -> Dict[str, Any]:
+        try:
+            system_prompt = preset_update.system_prompt
+            if preset_update.prompt_doc_id:
+                system_prompt = _resolve_prompt_doc(request, preset_update.prompt_doc_id)
             success = preset_manager.update_custom(
                 preset_update.temperature,
                 preset_update.max_tokens,
-                preset_update.system_prompt,
+                system_prompt,
                 preset_update.name,
                 preset_update.enabled,
                 preset_update.inject_prefix,
                 preset_update.inject_suffix,
+                skills=preset_update.skills,
+                prompt_doc_id=preset_update.prompt_doc_id,
             )
             if success:
                 return {"success": True, "message": "Custom preset updated"}
             return {"success": False, "message": "Failed to save preset"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Preset update error: {e}")
             raise HTTPException(500, "Failed to update custom preset")

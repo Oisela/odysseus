@@ -113,6 +113,59 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
         return {"error": f"Teacher call failed ({model_spec}): {e}"}
 
 
+_DELEGATE_SYSTEM_PROMPT = (
+    "You are a worker model. The lead model delegated a self-contained subtask to you. "
+    "Execute it completely and return ONLY the deliverable — no preamble, no questions, "
+    "no meta-commentary. If the task cannot be completed with the given context, state "
+    "precisely what is missing instead of guessing."
+)
+
+
+async def delegate(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Hand a self-contained subtask to the configured worker model.
+
+    Content is the task text itself (optionally with inlined file excerpts) —
+    unlike chat_with_model there is NO model line: the worker is fixed in
+    settings (``delegate_worker_model``, "model@endpoint_name" like the
+    teacher), so the lead model can delegate without knowing the fleet.
+    """
+    from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
+    from src.llm_core import llm_call_async
+    from src.settings import get_setting
+
+    task = (content or "").strip()
+    if not task:
+        return {"error": "No task provided. Content = the complete, self-contained subtask (inline any needed file excerpts — the worker has no tools and cannot ask follow-ups)."}
+
+    if not get_setting("delegate_enabled", False):
+        return {"error": "Delegation is disabled. Enable it and pick a worker model in Settings → Delegate worker."}
+    model_spec = get_setting("delegate_worker_model", "")
+    if not model_spec:
+        return {"error": "No worker model configured. Pick one in Settings → Delegate worker."}
+
+    try:
+        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        response = await llm_call_async(
+            url, model,
+            [
+                {"role": "system", "content": _DELEGATE_SYSTEM_PROMPT},
+                {"role": "user", "content": task},
+            ],
+            headers=headers,
+            timeout=AI_CHAT_TIMEOUT,
+        )
+        if len(response) > 12000:
+            response = response[:12000] + "\n... (truncated)"
+        return {"model": model, "response": response, "delegated": True}
+    except Exception as e:
+        logger.error(f"delegate failed: {e}")
+        return {"error": f"Delegation to {model_spec} failed: {e}"}
+
+
 async def list_models(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """List all available models across configured endpoints.
 
@@ -202,6 +255,11 @@ class ChatWithModelTool:
 class AskTeacherTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         return await ask_teacher(content, ctx.get("session_id"), owner=ctx.get("owner"))
+
+
+class DelegateTool:
+    async def execute(self, content: str, ctx: dict) -> Dict:
+        return await delegate(content, ctx.get("session_id"), owner=ctx.get("owner"))
 
 
 class ListModelsTool:

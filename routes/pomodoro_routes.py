@@ -161,6 +161,47 @@ def setup_pomodoro_routes():
             },
         )
 
+    def _create_focus_event(owner, entry, seconds: int) -> None:
+        from datetime import timezone
+        from core.database import SessionLocal, CalendarCal, CalendarEvent
+        db = SessionLocal()
+        try:
+            cal = (
+                db.query(CalendarCal)
+                .filter(CalendarCal.owner == owner, CalendarCal.name == "Focus")
+                .first()
+            )
+            if not cal:
+                cal = CalendarCal(
+                    id=uuid.uuid4().hex[:12], owner=owner, name="Focus",
+                    color="#e06c75", source="local",
+                )
+                db.add(cal)
+                db.flush()
+
+            def _naive_utc(s: str):
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt
+
+            mins = max(1, round(seconds / 60))
+            note = entry.get("note") or "Focus"
+            db.add(CalendarEvent(
+                uid=uuid.uuid4().hex,
+                calendar_id=cal.id,
+                summary=f"{note} · {mins} min",
+                description="Pomodoro",
+                dtstart=_naive_utc(entry["start"]),
+                dtend=_naive_utc(entry["end"]),
+                all_day=False,
+                is_utc=True,
+                rrule="",
+            ))
+            db.commit()
+        finally:
+            db.close()
+
     @router.post("/log")
     async def pomodoro_log(request: Request) -> Dict[str, Any]:
         """Add focus seconds to the ledger.
@@ -209,6 +250,18 @@ def setup_pomodoro_routes():
         }
         mine["entries"].append(entry)
         atomic_write_json(POMODORO_LOG_FILE, log, indent=2)
+
+        # v3.6: every booked focus block also lands in the calendar (local
+        # "Focus" calendar, auto-created per owner) — the day plan then
+        # shows real learn time. Manual back-fills without start/end skip
+        # this; a calendar failure must never lose the log entry.
+        if entry["start"] and entry["end"]:
+            try:
+                from src.settings import get_setting
+                if get_setting("pomodoro_calendar_log", True):
+                    _create_focus_event(_owner(request), entry, seconds)
+            except Exception:
+                logger.debug("focus calendar log skipped", exc_info=True)
 
         days = _day_seconds(mine)
         stats = compute_stats(days, datetime.now().date())

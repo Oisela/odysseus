@@ -740,6 +740,125 @@ async function initTeacherModel() {
   });
 }
 
+/* ── Delegate Worker ── */
+// Cheaper model the agent hands self-contained subtasks to via the
+// `delegate` tool. Mirrors the teacher card: stored as one
+// `delegate_worker_model` string in `model@endpoint_name` form (backend
+// _resolve_model dispatches it directly), with a separate
+// `delegate_enabled` master switch so pausing keeps the selection.
+async function initDelegateWorker() {
+  var enabledToggle = el('set-delegateEnabledToggle');
+  var epSel = el('set-delegateEpSelect');
+  var modelSel = el('set-delegateModelSelect');
+  var msg = el('set-delegateMsg');
+  if (!epSel || !modelSel) return;
+  var _endpoints = [];
+
+  try {
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+  } catch (e) { console.warn('Failed to load endpoints for delegate worker', e); }
+
+  function refreshModels(selectedModel) {
+    var epId = epSel.value;
+    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
+  }
+
+  function syncEnabled() {
+    var off = enabledToggle ? !enabledToggle.checked : true;
+    var card = enabledToggle ? enabledToggle.closest('.admin-card') : null;
+    if (card) card.style.opacity = off ? '0.7' : '';
+  }
+
+  try {
+    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settings = await res.json();
+    if (enabledToggle) enabledToggle.checked = !!settings.delegate_enabled;
+    // Split "model@endpoint_name" on the LAST `@` so model ids that
+    // contain @ aren't mangled (same rule as the teacher spec).
+    var spec = settings.delegate_worker_model || '';
+    var savedModel = spec;
+    var savedEpName = '';
+    var at = spec.lastIndexOf('@');
+    if (at >= 0) {
+      savedModel = spec.slice(0, at);
+      savedEpName = spec.slice(at + 1);
+    }
+    if (savedEpName) {
+      var match = _endpoints.find(function(ep) {
+        return ep.name && ep.name.toLowerCase().indexOf(savedEpName.toLowerCase()) >= 0;
+      });
+      if (match) epSel.value = match.id;
+    }
+    refreshModels(savedModel);
+    syncEnabled();
+  } catch (e) { console.warn('Failed to load delegate worker settings', e); }
+
+  async function saveDelegate() {
+    try {
+      var spec = '';
+      if (epSel.value && modelSel.value) {
+        var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
+        spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
+      }
+      var enabled = enabledToggle ? !!enabledToggle.checked : false;
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delegate_enabled: enabled, delegate_worker_model: spec })
+      });
+      msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
+      msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
+      setTimeout(function() { msg.textContent = ''; }, 2000);
+    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+  }
+
+  if (enabledToggle) {
+    enabledToggle.addEventListener('change', function() {
+      syncEnabled();
+      saveDelegate();
+    });
+  }
+  epSel.addEventListener('change', function() { refreshModels(''); saveDelegate(); });
+  modelSel.addEventListener('change', saveDelegate);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
+}
+
+/* ── Shopping list sharing ── */
+// The share toggle lives here (Alessios Wunsch) — the shopping window
+// itself stays purely about items. Backed by /api/shopping/share.
+async function initShoppingSettings() {
+  var listToggle = el('set-shoppingShareToggle');
+  var recipesToggle = el('set-recipesShareToggle');
+  var msg = el('set-shoppingShareMsg');
+  if (!listToggle && !recipesToggle) return;
+  // Both flags are plain per-user prefs — read/write them directly.
+  var wire = async function(toggle, prefKey, onText, offText) {
+    if (!toggle) return;
+    try {
+      var res = await fetch('/api/prefs/' + prefKey, { credentials: 'same-origin' });
+      var data = await res.json();
+      toggle.checked = !!data.value;
+    } catch (e) { /* endpoint unavailable — leave unchecked */ }
+    toggle.addEventListener('change', async function() {
+      try {
+        await fetch('/api/prefs/' + prefKey, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: toggle.checked })
+        });
+        if (msg) { msg.textContent = toggle.checked ? onText : offText; setTimeout(function() { msg.textContent = ''; }, 2500); }
+      } catch (e) { if (msg) msg.textContent = 'Failed to save'; }
+    });
+  };
+  wire(listToggle, 'shopping_list_shared', 'List shared with all accounts', 'List is private again');
+  wire(recipesToggle, 'recipes_shared', 'Recipes shared with all accounts', 'Recipes are private again');
+}
+
 /* ── Image Generation ── */
 async function initImageSettings() {
   const modelSel = el('set-imgModelSelect');
@@ -1732,6 +1851,34 @@ function initAppearance() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
+  // Language select — persists per account, reload applies the new language
+  var langSelect = modalEl.querySelector('#ui-language-select');
+  if (langSelect) {
+    langSelect.value = (window.getUILang && window.getUILang()) || 'en';
+    langSelect.addEventListener('change', function() {
+      if (window.setUILang) window.setUILang(langSelect.value);
+    });
+  }
+
+  // UI mode presets — Simple writes explicit `false` keys only, Full clears
+  // the map back to defaults. Both persist per account via saveUIVis.
+  var presetSimple = modalEl.querySelector('#ui-preset-simple');
+  var presetFull = modalEl.querySelector('#ui-preset-full');
+  if (presetSimple) presetSimple.addEventListener('click', function() {
+    var s = window.uiSimpleState ? window.uiSimpleState() : {};
+    window.saveUIVis(s);
+    window.applyUIVis(s);
+    syncAppearanceCheckboxes();
+    if (uiModule && uiModule.showToast) uiModule.showToast('Simple UI — chat, notes, calendar & shopping. Use the switches below to bring things back.', 5000);
+  });
+  if (presetFull) presetFull.addEventListener('click', function() {
+    var s = {};
+    window.saveUIVis(s);
+    window.applyUIVis(s);
+    syncAppearanceCheckboxes();
+    if (uiModule && uiModule.showToast) uiModule.showToast('Full UI restored.');
+  });
+
   modalEl.querySelectorAll('[data-ui-key]').forEach(function(chk) {
     chk.addEventListener('change', async function() {
       var key = chk.dataset.uiKey;
@@ -2325,6 +2472,8 @@ function initAll() {
   initialized = true;
   initDefaultChat();
   initTeacherModel();
+  initDelegateWorker();
+  initShoppingSettings();
   initUtilityModel();
   initImageSettings();
   initVisionSettings();

@@ -4490,6 +4490,26 @@ async def stream_agent_loop(
     metrics["requested_model"] = requested_model
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
+    # Phone ping for long runs (v3.6): the user who kicked off a multi-minute
+    # agent run has usually walked away — ping ntfy when it finishes while no
+    # browser is active. Foreground runs only (background tasks have their
+    # own completion notifications via the scheduler).
+    if workload == "foreground" and not _is_teacher_run and total_duration >= 120:
+        try:
+            from src.interactive_gate import has_foreground_activity
+            if not has_foreground_activity():
+                from routes.note_routes import ntfy_push
+                _mins = int(total_duration // 60)
+                _preview = (full_response or "").strip().replace("\n", " ")[:200]
+                ntfy_push(
+                    f"Agent run finished ({_mins} min)",
+                    _preview or "The agent completed its work.",
+                    f"agent-run-{session_id or 'unknown'}",
+                    owner=owner or "",
+                )
+        except Exception:
+            logger.debug("agent-run ntfy ping skipped", exc_info=True)
+
     # Teacher-escalation: inline takeover visible in the chat stream.
     # The student just finished; if Tier 1 flags failure, the teacher
     # gets a turn (with its own tool calls forwarded to the user) and

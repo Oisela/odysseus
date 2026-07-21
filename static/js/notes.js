@@ -27,6 +27,24 @@ let _activeFilter = null; // null | 'default' | 'reminders' | 'no-reminders'
 let _reminderChipNext = 'reminders';
 let _searchQuery = '';
 let _viewMode = (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-view')) || 'list'; // 'list' or 'grid'
+// Master-detail state (TickTick-style list view, v3.6): the row selected in
+// the middle column, and the user's named lists. Lists are label tags — the
+// prefs registry only exists so freshly created (still empty) lists survive.
+let _selectedNoteId = null;
+let _prefLists = [];
+// Below this pane-body width the list view falls back to the legacy flat
+// cards — three columns don't fit a sidebar-docked pane.
+const NOTES_MD_MIN_WIDTH = 560;
+let _notesMdResizeObserver = null;
+
+// Due today or overdue — date-only due dates and datetime reminders alike.
+// Shared by the 'due-today' filter and the sidebar's Today count.
+function _isDueByEndOfToday(n) {
+  if (!n.due_date) return false;
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  return new Date(n.due_date) <= endOfToday;
+}
 let _showingArchived = false;
 let _selectMode = false;
 let _reminderTimer = null;
@@ -1305,6 +1323,9 @@ export function openPanel() {
       try { localStorage.setItem('odysseus-notes-view', _viewMode); } catch {}
       pane.classList.toggle('notes-view-grid', _viewMode === 'grid');
       _setViewLabel();
+      // List and grid are different DOM now (master-detail vs cards) — a
+      // class toggle alone would leave the wrong structure on screen.
+      _renderNotes();
       requestAnimationFrame(() => _applyMasonry(document.querySelector('#notes-pane .notes-pane-body')));
     });
   }
@@ -1418,6 +1439,28 @@ export function openPanel() {
     _startReminderLoop();
     _showNotesFirstOpenHint(pane);
   });
+  // Named-list registry (master-detail sidebar) — loads in parallel and
+  // re-renders once; empty lists live only here, tagged notes carry the rest.
+  _loadPrefLists().then(() => { if (_open) _renderNotes(); });
+
+  // Re-render when the pane crosses the master-detail width threshold
+  // (dragged wider, docked, fullscreened) — the two layouts are different
+  // DOM, a CSS media query can't switch them.
+  try {
+    if (_notesMdResizeObserver) _notesMdResizeObserver.disconnect();
+    let lastMd = null;
+    // Observe the body itself and read the observer-delivered size — a
+    // querySelector + getBoundingClientRect per tick would force layout
+    // on every drag-resize frame.
+    _notesMdResizeObserver = new ResizeObserver((entries) => {
+      const w = entries[0] && entries[0].contentRect ? entries[0].contentRect.width : 0;
+      const md = w >= NOTES_MD_MIN_WIDTH;
+      if (lastMd === null) { lastMd = md; return; }
+      if (md !== lastMd) { lastMd = md; _renderNotes(); }
+    });
+    const bodyEl = pane.querySelector('.notes-pane-body');
+    _notesMdResizeObserver.observe(bodyEl || pane);
+  } catch { /* ResizeObserver unavailable — layout just stays as opened */ }
 }
 
 function _renderLoadingSkeleton() {
@@ -1626,6 +1669,10 @@ export function closePanel(direction) {
 
   // Drop the document keydown listener and the 30s reminder interval —
   // both leaked across open/close cycles in the v2 review.
+  if (_notesMdResizeObserver) {
+    _notesMdResizeObserver.disconnect();
+    _notesMdResizeObserver = null;
+  }
   if (_notesKeydownHandler) {
     document.removeEventListener('keydown', _notesKeydownHandler);
     _notesKeydownHandler = null;
@@ -1740,6 +1787,10 @@ function _renderNotes() {
   } else if (_activeFilter === 'today') {
     // Today view: only goals that still have an unchecked step.
     filtered = filtered.filter(n => n.note_type === 'goal' && !n.archived && _nextGoalStep(n));
+  } else if (_activeFilter === 'due-today') {
+    // Smart list "Today" (master-detail sidebar): everything due today or
+    // overdue — date-only due dates and datetime reminders alike.
+    filtered = filtered.filter(_isDueByEndOfToday);
   }
   if (_searchQuery) {
     filtered = filtered.filter(n => {
@@ -1774,6 +1825,29 @@ function _renderNotes() {
     if (so !== 0) return so;
     return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
   });
+
+  // TickTick-style master-detail is the list view's default layout (v3.6).
+  // The legacy flat-card render remains for grid view, mobile, select mode,
+  // the archive, the goals-Today special view — and NARROW panes: docked to
+  // the sidebar the pane can be <300px, where three columns are hopeless.
+  // The resize observer in openPanel re-renders when the threshold is
+  // crossed (drag wider / fullscreen → master-detail appears).
+  const bodyW = body.getBoundingClientRect().width || 0;
+  const mdMode = _viewMode === 'list' && !_isNotesMobileMode() && !_selectMode
+    && !_showingArchived && _activeFilter !== 'today' && bodyW >= NOTES_MD_MIN_WIDTH;
+  if (mdMode) {
+    _renderMasterDetail(body, sorted, activeReminderHighlights);
+    return;
+  }
+  body.classList.remove('notes-pane-body-md');
+  // 'due-today' exists only in the master-detail sidebar — falling back to
+  // the legacy layout (narrow pane, mobile) would otherwise keep filtering
+  // with no visible chip to clear it. Reset and re-render unfiltered.
+  if (_activeFilter === 'due-today') {
+    _activeFilter = null;
+    _renderNotes();
+    return;
+  }
 
   let html = '';
   // Today view: render a compact card listing the next-unchecked step from
@@ -1814,7 +1888,305 @@ function _renderNotes() {
   }
   for (const note of sorted) {
     if (_editingId === note.id) continue; // skip — form is shown instead
-    const borderColor = COLOR_HEX[note.color || ''] || 'var(--border)';
+    html += _buildCardHtml(note, activeReminderHighlights);
+  }
+
+  // Always render quick-add at top (collapsed unless user is typing)
+  const existingForm = body.querySelector('.note-form');
+  if (existingForm && _editingId === '__new__') {
+    // Keep the expanded form, replace cards after it
+    const next = [...body.children].filter(c => c !== existingForm);
+    next.forEach(c => c.remove());
+    if (sorted.length === 0) {
+      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
+    } else {
+      existingForm.insertAdjacentHTML('afterend', html);
+    }
+  } else {
+    body.innerHTML = '';
+    _renderLabelsInto(body);
+    _renderQuickAdd(body);
+    if (sorted.length === 0) {
+      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes yet <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
+    } else {
+      body.insertAdjacentHTML('beforeend', html);
+    }
+  }
+
+  _bindCardEvents(body);
+  _animateReflow(prevPositions);
+  _applyMasonry(body);
+}
+
+// ── Master-detail (TickTick-style) list view ────────────────────────────
+// Left: lists sidebar (smart + named). Middle: compact rows. Right: the
+// selected note as the SAME .note-card the legacy views render — so every
+// existing card interaction (checklist, pin, colors, reminder, agent, edit
+// form) works unchanged inside the detail pane.
+
+async function _loadPrefLists() {
+  try {
+    const res = await fetch(`${API_BASE}/api/prefs/note_lists`, { credentials: 'same-origin' });
+    const data = await res.json();
+    _prefLists = Array.isArray(data.value) ? data.value.filter(v => typeof v === 'string' && v.trim()) : [];
+  } catch { _prefLists = []; }
+}
+
+function _savePrefLists() {
+  fetch(`${API_BASE}/api/prefs/note_lists`, {
+    method: 'PUT', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: _prefLists }),
+  }).catch(() => {});
+}
+
+function _renderMasterDetail(body, sorted, activeReminderHighlights) {
+  if (!sorted.some(n => n.id === _selectedNoteId)) {
+    _selectedNoteId = sorted.length ? sorted[0].id : null;
+    if (_editingId && _editingId !== '__new__') _editingId = null;
+  }
+  let layout = body.querySelector('.notes-md-layout');
+  if (!layout) {
+    body.classList.add('notes-pane-body-md');
+    body.innerHTML = `<div class="notes-md-layout">
+      <div class="notes-md-sidebar"></div>
+      <div class="notes-md-rows-col">
+        <div class="notes-md-quickadd">
+          <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do &middot; Shift+Enter = note" autocomplete="off" />
+          <button type="button" class="notes-md-fullform-btn" title="New note (full editor — reminder, photo, drawing)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <div class="notes-md-rows"></div>
+      </div>
+      <div class="notes-md-detail"></div>
+    </div>`;
+    layout = body.querySelector('.notes-md-layout');
+    _wireMdQuickAdd(layout.querySelector('.notes-md-quickadd-input'));
+    // Full composer in the detail pane — for anything the quick-add can't
+    // do (reminder, photo, drawing). Recipes live in the Shopping module.
+    layout.querySelector('.notes-md-fullform-btn').addEventListener('click', () => {
+      if (_editingId === '__new__') return;
+      const detail = body.querySelector('.notes-md-detail');
+      if (!detail) return;
+      _editingId = '__new__';
+      const { note: draft, restored } = _applyDraftToNote({ note_type: 'todo', label: (_activeLabel || '') }, '__new__');
+      const form = _buildForm(draft);
+      form.classList.add('note-form-new');
+      detail.innerHTML = '';
+      detail.appendChild(form);
+      form.querySelector('.note-form-title')?.focus();
+      if (restored) uiModule.showToast('Restored unsaved note');
+    });
+  }
+  _renderListsSidebar(layout.querySelector('.notes-md-sidebar'));
+  const rowsEl = layout.querySelector('.notes-md-rows');
+  rowsEl.innerHTML = sorted.length
+    ? sorted.map(n => _buildRowHtml(n)).join('')
+    : '<div class="notes-md-empty">Nothing here yet</div>';
+  _bindRowEvents(rowsEl);
+
+  const detail = layout.querySelector('.notes-md-detail');
+  // An open edit form owns the detail pane — don't wipe it mid-typing.
+  if (_editingId && detail.querySelector('.note-form')) return;
+  const note = _notes.find(n => n.id === _selectedNoteId);
+  if (!note) {
+    detail.innerHTML = '<div class="notes-md-empty">Select an entry on the left<br>or add one above the list</div>';
+    return;
+  }
+  detail.innerHTML = _buildCardHtml(note, activeReminderHighlights);
+  _bindCardEvents(detail);
+}
+
+function _buildRowHtml(note) {
+  const isTodo = _hasItems(note);
+  const items = Array.isArray(note.items) ? note.items : [];
+  const doneCount = items.filter(it => it.done).length;
+  let sub = '';
+  if (isTodo) {
+    const firstOpen = items.find(it => !it.done);
+    if (items.length) sub = `${doneCount}/${items.length}` + (firstOpen ? ' · ' + (firstOpen.text || '') : '');
+  } else {
+    sub = (note.content || '').split('\n').find(l => l.trim()) || '';
+  }
+  const dueFmt = _formatDueDate(note.due_date);
+  const overdue = _isDueOverdue(note.due_date);
+  const allDone = isTodo && items.length > 0 && doneCount === items.length;
+  const icon = isTodo
+    ? `<button type="button" class="note-row-check${allDone ? ' all-done' : ''}" data-note-id="${note.id}" title="Complete (moves to archive)" aria-label="Complete to-do"></button>`
+    : `<span class="note-row-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/></svg></span>`;
+  const pin = note.pinned
+    ? `<span class="note-row-pin" title="Pinned"><svg width="10" height="10" viewBox="0 0 24 28" fill="currentColor"><g transform="rotate(0 12 14)"><line x1="12" y1="17" x2="12" y2="27" stroke="currentColor" stroke-width="2"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></g></svg></span>`
+    : '';
+  return `<div class="note-row${note.id === _selectedNoteId ? ' active' : ''}" data-note-id="${note.id}">
+    ${icon}
+    <div class="note-row-main">
+      <div class="note-row-title">${_esc(note.title || (isTodo ? '(untitled to-do)' : '(untitled note)'))}</div>
+      ${sub ? `<div class="note-row-sub">${_esc(sub)}</div>` : ''}
+    </div>
+    ${pin}
+    ${dueFmt ? `<span class="note-row-meta${overdue ? ' overdue' : ''}">${_esc(dueFmt)}</span>` : ''}
+  </div>`;
+}
+
+function _bindRowEvents(rowsEl) {
+  rowsEl.querySelectorAll('.note-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.note-row-check')) return;
+      const id = row.dataset.noteId;
+      if (id === _selectedNoteId) return;
+      if (_editingId && _editingId !== '__new__') _editingId = null;
+      _selectedNoteId = id;
+      _renderNotes();
+    });
+  });
+  rowsEl.querySelectorAll('.note-row-check').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.noteId;
+      const idx = _notes.findIndex(n => n.id === id);
+      if (idx < 0) return;
+      const note = _notes[idx];
+      // Same semantics as the card's checkmark corner: complete = archive.
+      _notes.splice(idx, 1);
+      _pushUndo({ run: () => _undoArchive(note, idx) });
+      if (_selectedNoteId === id) _selectedNoteId = null;
+      _renderNotes();
+      _patchNote(id, { archived: true }).catch(() => {
+        _notes.splice(idx, 0, note);
+        _renderNotes();
+        uiModule.showError('Archive failed');
+      });
+      uiModule.showToast('Done — archived (Ctrl+Z to undo)');
+    });
+  });
+}
+
+function _renderListsSidebar(el) {
+  // One pass over the notes collects tag set, per-tag counts and the
+  // smart-list counts — this runs on every master-detail render.
+  const counts = new Map();
+  const tagSet = new Set(_prefLists);
+  let activeCount = 0, todayCount = 0, remindersCount = 0;
+  for (const n of _notes) {
+    if (n.archived) continue;
+    activeCount++;
+    if (_isDueByEndOfToday(n)) todayCount++;
+    if (n.due_date && _hasTimeComponent(n.due_date)) remindersCount++;
+    for (const t of _visibleNoteTags(n)) {
+      tagSet.add(t);
+      counts.set(t, (counts.get(t) || 0) + 1);
+    }
+  }
+  const tags = [...tagSet].sort((a, b) => a.localeCompare(b));
+  const countFor = (t) => counts.get(t) || 0;
+
+  const entry = (attrs, svg, label, count, active) =>
+    `<button type="button" class="notes-list-entry${active ? ' active' : ''}" ${attrs}>
+      <span class="notes-list-entry-icon">${svg}</span>
+      <span class="notes-list-entry-label">${_esc(label)}</span>
+      ${count != null ? `<span class="notes-list-count">${count}</span>` : ''}
+    </button>`;
+  const SVG = {
+    all: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
+    today: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+    reminders: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+    completed: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+    list: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+    plus: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  };
+  el.innerHTML = [
+    entry('data-smart="all"', SVG.all, 'All', activeCount, !_activeLabel && !_activeFilter),
+    entry('data-smart="due-today"', SVG.today, 'Today', todayCount, _activeFilter === 'due-today'),
+    entry('data-smart="reminders"', SVG.reminders, 'Reminders', remindersCount, _activeFilter === 'reminders'),
+    entry('data-smart="completed"', SVG.completed, 'Completed', null, false),
+    '<div class="notes-md-sidebar-label">Lists</div>',
+    ...tags.map(t => entry(`data-list="${_attrEsc(t)}"`, SVG.list, t, countFor(t), _activeLabel === t)),
+    entry('data-add-list="1"', SVG.plus, 'New list', null, false),
+  ].join('');
+
+  el.querySelectorAll('.notes-list-entry').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.addList) {
+        btn.outerHTML = '<input type="text" class="notes-md-newlist-input" placeholder="List name…" maxlength="40" />';
+        const inp = el.querySelector('.notes-md-newlist-input');
+        inp.focus();
+        const commit = () => {
+          const name = inp.value.trim().replace(/\s+/g, '-');
+          if (name && !_prefLists.includes(name)) {
+            _prefLists.push(name);
+            _savePrefLists();
+            _activeLabel = name;
+            _activeFilter = null;
+          }
+          _renderNotes();
+        };
+        inp.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') commit();
+          if (ev.key === 'Escape') _renderNotes();
+        });
+        inp.addEventListener('blur', () => _renderNotes());
+        return;
+      }
+      if (btn.dataset.smart === 'completed') {
+        // Completed = the archive — reuse the header toggle's full flow
+        // (fetch archived, tint, X-to-exit).
+        document.getElementById('notes-archive-toggle')?.click();
+        return;
+      }
+      if (btn.dataset.smart) {
+        _activeLabel = null;
+        _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
+      } else if (btn.dataset.list != null) {
+        _activeLabel = btn.dataset.list;
+        _activeFilter = null;
+      }
+      _selectedNoteId = null;
+      _renderNotes();
+    });
+  });
+}
+
+function _wireMdQuickAdd(input) {
+  input.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    const text = input.value.trim();
+    if (!text) return;
+    e.preventDefault();
+    const type = e.shiftKey ? 'note' : 'todo';
+    input.value = '';
+    input.disabled = true;
+    try {
+      // New entries land in the active named list (TickTick behavior).
+      const saved = await _saveNote({
+        title: text,
+        note_type: type,
+        content: '',
+        items: type === 'todo' ? [] : undefined,
+        label: (_activeLabel || '') || undefined,
+      });
+      // The POST returns the created note — insert locally, no full refetch.
+      const created = saved && saved.id ? saved : (saved && saved.note) || null;
+      if (created && created.id) {
+        _notes.unshift(created);
+        _selectedNoteId = created.id;
+      } else {
+        await _fetchNotes();
+      }
+      _renderNotes();
+    } catch (err) {
+      uiModule.showError('Failed to add');
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+  });
+}
+
+// Full card markup for one note — the historic card template, extracted so
+// both the legacy card views and the master-detail pane render THE SAME
+// card (same classes → _bindCardEvents keeps working everywhere).
+function _buildCardHtml(note, activeReminderHighlights) {
     const dueFmt = _formatDueDate(note.due_date);
     const overdue = _isDueOverdue(note.due_date);
 
@@ -1885,7 +2257,7 @@ function _renderNotes() {
           Goal${_goalProgress(note)}
         </span>`
       : '';
-    html += `<div class="note-card${note.pinned ? ' note-card-pinned' : ''}${cc}${sel}${goalClass}${reminderGlowClass}${_selectMode ? ' note-card-selectmode' : ''}" draggable="${(_selectMode || _isNotesMobileMode()) ? 'false' : 'true'}" data-note-id="${note.id}"${cardStyle}>
+    return `<div class="note-card${note.pinned ? ' note-card-pinned' : ''}${cc}${sel}${goalClass}${reminderGlowClass}${_selectMode ? ' note-card-selectmode' : ''}" draggable="${(_selectMode || _isNotesMobileMode()) ? 'false' : 'true'}" data-note-id="${note.id}"${cardStyle}>
       ${_selectMode ? `<input type="checkbox" class="memory-select-cb note-card-cb" data-note-id="${note.id}" ${_selectedIds.has(note.id) ? 'checked' : ''} />` : ''}
       ${goalPill}
       <button class="note-card-pin${note.pinned ? ' active' : ''}" data-note-id="${note.id}" title="${note.pinned ? 'Unpin' : 'Pin'}">
@@ -1938,33 +2310,6 @@ function _renderNotes() {
         </button>`}
       </div>
     </div>`;
-  }
-
-  // Always render quick-add at top (collapsed unless user is typing)
-  const existingForm = body.querySelector('.note-form');
-  if (existingForm && _editingId === '__new__') {
-    // Keep the expanded form, replace cards after it
-    const next = [...body.children].filter(c => c !== existingForm);
-    next.forEach(c => c.remove());
-    if (sorted.length === 0) {
-      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
-    } else {
-      existingForm.insertAdjacentHTML('afterend', html);
-    }
-  } else {
-    body.innerHTML = '';
-    _renderLabelsInto(body);
-    _renderQuickAdd(body);
-    if (sorted.length === 0) {
-      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes yet <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
-    } else {
-      body.insertAdjacentHTML('beforeend', html);
-    }
-  }
-
-  _bindCardEvents(body);
-  _animateReflow(prevPositions);
-  _applyMasonry(body);
 }
 
 // In grid view, lay out the cards as masonry by
