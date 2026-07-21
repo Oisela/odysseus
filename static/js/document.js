@@ -1193,8 +1193,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Lock the wrap to the page's exact aspect ratio so percentage-positioned
       // inputs stay aligned no matter how wide the panel is rendered.
       const pageWrap = document.createElement('div');
+      pageWrap.className = 'doc-pdf-pagewrap';
+      pageWrap.dataset.page = String(page.page);
       pageWrap.style.cssText = `position:relative;margin:0 auto 16px auto;width:${page.width}px;max-width:calc(100% - 24px);aspect-ratio:${page.width} / ${page.height};background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.4);container-type:size;`;
       const img = document.createElement('img');
+      img.className = 'doc-pdf-page';
+      img.dataset.page = String(page.page);
       img.src = `${API_BASE}/api/document/${docId}/page/${page.page}.png`;
       img.style.cssText = 'display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none;pointer-events:none;';
       img.draggable = false;
@@ -1384,6 +1388,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       pane.appendChild(pageWrap);
     }
     _pdfPaneFieldsByDoc.set(docId, fieldRefs);
+    _renderDocMarks('doc-pdf-view');
   }
 
   // Render one annotation as a positioned wrapper with type-appropriate
@@ -2060,11 +2065,71 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!res.ok) throw new Error('latex-pdf-pages failed');
       const data = await res.json();
       const v = data.compiled_at || _latexStampByDoc.get(activeDocId) || 0;
+      // Each page sits in a positioned wrapper so persistent marks can
+      // overlay it with percentage coordinates (same trick as the form
+      // overlays in the PDF pane). The wrapper takes over the page's
+      // sizing; the img fills it.
       pane.innerHTML = (data.pages || []).map(p =>
-        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">`
+        `<div class="doc-page-wrap" data-page="${p.page}" style="position:relative;margin:0 auto 16px;width:min(820px, calc(100% - 32px));">` +
+        `<img class="doc-latex-page" draggable="false" data-page="${p.page}" style="width:100%;margin:0;" src="${API_BASE}/api/document/${activeDocId}/latex-page/${p.page}.png?v=${v}" alt="Page ${p.page}">` +
+        `</div>`
       ).join('');
+      _renderDocMarks('doc-latex-view');
     } catch (e) {
       pane.innerHTML = '<div class="doc-latex-hint">Could not load the compiled PDF.</div>';
+    }
+  }
+
+  // ── Persistent PDF marks: overlays + sidecar CRUD (v3.6) ──
+  // Marks live server-side (sidecar per PDF); each carries the chat it was
+  // created from — clicking a saved mark jumps to that session.
+  async function _renderDocMarks(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane || !activeDocId) return;
+    const docAtStart = activeDocId;
+    let marks = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/marks`, { credentials: 'same-origin' });
+      if (!res.ok) return;
+      marks = (await res.json()).marks || [];
+    } catch (e) { return; }
+    if (docAtStart !== activeDocId) return;
+    pane.querySelectorAll('.doc-mark').forEach(m => m.remove());
+    const wraps = new Map();
+    pane.querySelectorAll('[data-page]').forEach(w => {
+      if (w.tagName !== 'IMG') wraps.set(String(w.dataset.page), w);
+    });
+    for (const m of marks) {
+      const w = wraps.get(String(m.page));
+      if (!w) continue;
+      const el = document.createElement('div');
+      el.className = 'doc-mark';
+      el.style.left = `${m.x * 100}%`;
+      el.style.top = `${m.y * 100}%`;
+      el.style.width = `${m.w * 100}%`;
+      el.style.height = `${m.h * 100}%`;
+      el.title = m.session_id
+        ? 'Marked region — click to open the chat it was discussed in'
+        : 'Marked region';
+      if (m.session_id) {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (sessionModule && sessionModule.selectSession) sessionModule.selectSession(m.session_id);
+        });
+      }
+      const rm = document.createElement('button');
+      rm.className = 'doc-mark-rm';
+      rm.title = 'Remove mark';
+      rm.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      rm.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        el.remove();
+        await fetch(`${API_BASE}/api/document/${activeDocId}/marks/${m.id}`, {
+          method: 'DELETE', credentials: 'same-origin',
+        }).catch(() => {});
+      });
+      el.appendChild(rm);
+      w.appendChild(el);
     }
   }
 
@@ -2112,11 +2177,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _setLatexMarkMode(on) {
     _latexMarkMode = on;
     document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
+    document.getElementById('doc-pdf-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
   }
 
-  function _wireLatexMarking() {
-    const pane = document.getElementById('doc-latex-view');
+  function _wireLatexMarking(paneId = 'doc-latex-view', imgSelector = 'img.doc-latex-page') {
+    const pane = document.getElementById(paneId);
     if (!pane || pane._markWired) return;
     pane._markWired = true;
 
@@ -2162,7 +2228,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Crop from the page image with the largest overlap. The PNGs are
       // same-origin, so the canvas stays untainted.
       let best = null, bestArea = 0;
-      pane.querySelectorAll('img.doc-latex-page').forEach((img) => {
+      pane.querySelectorAll(imgSelector).forEach((img) => {
         const r = img.getBoundingClientRect();
         const w = Math.min(sel.right, r.right) - Math.max(sel.left, r.left);
         const h = Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top);
@@ -2191,6 +2257,24 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (uiModule && uiModule.showToast) uiModule.showToast(`Marked region (page ${page}) attached to chat`);
         document.getElementById('message')?.focus();
       }, 'image/png');
+
+      // Persist the mark (v3.6): relative rect on the page + the chat it
+      // came from, so reopening the PDF shows it and clicking jumps back.
+      const _mx = (Math.max(sel.left, r.left) - r.left) / r.width;
+      const _my = (Math.max(sel.top, r.top) - r.top) / r.height;
+      const _mw = (Math.min(sel.right, r.right) - Math.max(sel.left, r.left)) / r.width;
+      const _mh = (Math.min(sel.bottom, r.bottom) - Math.max(sel.top, r.top)) / r.height;
+      const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
+      fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: Number(img.dataset.page || 0),
+          x: Math.max(0, _mx), y: Math.max(0, _my),
+          w: Math.max(0.001, _mw), h: Math.max(0.001, _mh),
+          session_id: _sid,
+        }),
+      }).then(() => _renderDocMarks(paneId)).catch(() => {});
     });
 
     pane.addEventListener('pointercancel', cancelDrag);
@@ -2375,6 +2459,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.querySelectorAll('.md-toolbar-latex-only').forEach(el => {
         el.style.display = _isLatexLang(lang) ? 'inline-flex' : 'none';
       });
+      // Mark works for imported/form-backed PDFs too (persistent marks
+      // v3.6) — un-hide just that one button for them.
+      if (!_isLatexLang(lang)) {
+        const _mb = document.getElementById('doc-latex-mark-btn');
+        const _c = (docs.get(activeDocId) || {}).content || '';
+        if (_mb && _isFormBackedDoc(_c)) _mb.style.display = 'inline-flex';
+      }
       if (_latexActive && !_isLatexLang(lang)) _setLatexViewActive(false);
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
@@ -5942,7 +6033,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-pdf-refresh-btn')?.addEventListener('click', () => _renderPdfPane());
     document.getElementById('doc-latex-compile-btn')?.addEventListener('click', _compileLatex);
     document.getElementById('doc-latex-mark-btn')?.addEventListener('click', () => {
-      _wireLatexMarking();
+      _wireLatexMarking('doc-latex-view', 'img.doc-latex-page');
+      _wireLatexMarking('doc-pdf-view', 'img.doc-pdf-page');
       _setLatexMarkMode(!_latexMarkMode);
     });
 
