@@ -359,9 +359,11 @@ function _populateCharSelect() {
 let _libDocsCache = null;
 let _skillsIndexCache = null;
 
+let _charPromptDocId = '';
+
 async function _populatePromptDocSelect() {
-  const sel = document.getElementById('char-prompt-doc');
-  if (!sel) return;
+  const box = document.getElementById('char-prompt-doc-list');
+  if (!box) return;
   if (!_libDocsCache) {
     // The library endpoint caps limit at 50 — page until done (500 max).
     try {
@@ -375,29 +377,60 @@ async function _populatePromptDocSelect() {
         if (batch.length < 50 || all.length >= (d.total || 0)) break;
       }
       _libDocsCache = all;
-    } catch (e) { _libDocsCache = []; }
+    } catch (e) { _libDocsCache = null; }
   }
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">— use the text above —</option>';
-  _libDocsCache.forEach(d => {
-    const o = document.createElement('option');
-    o.value = d.id;
-    o.textContent = d.title || '(untitled)';
-    sel.appendChild(o);
-  });
-  if (cur) sel.value = cur;
-  if (!sel._wired) {
-    sel._wired = true;
-    sel.addEventListener('change', _syncPromptDocState);
+  const search = document.getElementById('char-prompt-doc-search');
+  if (search && !search._wired) {
+    search._wired = true;
+    search.addEventListener('input', _renderPromptDocList);
   }
+  _renderPromptDocList();
   _syncPromptDocState();
 }
 
+// Checkbox list instead of a <select> — a big library would flood a
+// dropdown; this one scrolls, filters via the search field, and
+// single-selects (checking a doc unchecks the previous one).
+function _renderPromptDocList() {
+  const box = document.getElementById('char-prompt-doc-list');
+  if (!box) return;
+  const q = (document.getElementById('char-prompt-doc-search')?.value || '').trim().toLowerCase();
+  const docs = (_libDocsCache || []).filter(d => !q || (d.title || '').toLowerCase().includes(q));
+  box.innerHTML = '';
+  if (!(_libDocsCache || []).length) {
+    box.innerHTML = '<span style="opacity:0.4;font-size:11px;">No Library documents yet — create one in Library first.</span>';
+    return;
+  }
+  if (q && !docs.length) {
+    box.innerHTML = '<span style="opacity:0.4;font-size:11px;">No match.</span>';
+    return;
+  }
+  docs.slice(0, 80).forEach(d => {
+    const row = document.createElement('label');
+    row.className = 'char-doc-row' + (_charPromptDocId === d.id ? ' on' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = _charPromptDocId === d.id;
+    cb.addEventListener('change', () => {
+      _charPromptDocId = cb.checked ? d.id : '';
+      _renderPromptDocList();
+      _syncPromptDocState();
+    });
+    const span = document.createElement('span');
+    span.textContent = d.title || '(untitled)';
+    row.appendChild(cb);
+    row.appendChild(span);
+    box.appendChild(row);
+  });
+  if (docs.length > 80) {
+    box.insertAdjacentHTML('beforeend', '<span style="opacity:0.4;font-size:11px;">…more hidden — narrow the search</span>');
+  }
+}
+
 function _syncPromptDocState() {
-  const sel = document.getElementById('char-prompt-doc');
   const ta = document.getElementById('custom-system-prompt');
-  if (!sel || !ta) return;
-  const usingDoc = !!sel.value;
+  if (!ta) return;
+  const usingDoc = !!_charPromptDocId;
   ta.disabled = usingDoc;
   ta.style.opacity = usingDoc ? '0.45' : '';
   ta.placeholder = usingDoc
@@ -451,13 +484,8 @@ function _charSelectedSkills() {
 }
 
 function _setCharSkillsAndDoc(skills, promptDocId) {
-  const sel = document.getElementById('char-prompt-doc');
-  if (sel) {
-    _populatePromptDocSelect().then(() => {
-      sel.value = promptDocId || '';
-      _syncPromptDocState();
-    });
-  }
+  _charPromptDocId = promptDocId || '';
+  _populatePromptDocSelect();
   _populateSkillsBox(skills || []);
 }
 
@@ -894,7 +922,7 @@ export async function saveCustomPreset(showToast, showError) {
 
   const _prefixInput = document.getElementById('inject-prefix');
   const _suffixInput = document.getElementById('inject-suffix');
-  const prompt_doc_id = _isInjectStart ? '' : (document.getElementById('char-prompt-doc')?.value || '');
+  const prompt_doc_id = _isInjectStart ? '' : _charPromptDocId;
   const skills = _isInjectStart ? [] : _charSelectedSkills().slice(0, 6);
 
   const config = {

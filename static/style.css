@@ -40962,7 +40962,8 @@ body.theme-frosted .modal {
    auto-margin, everything after them groups tight on the right. */
 .shopping-modal-content .modal-header { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 .shopping-modal-content .modal-header h4 { margin: 0; flex-shrink: 0; display: inline-flex; align-items: center; }
-.shopping-modal-content .modal-header .modal-minimize-btn { margin-left: 0 !important; }
+.shopping-modal-content .modal-header .modal-minimize-btn,
+.shopping-modal-content .modal-header .minimize-btn { margin-left: 0 !important; }
 .shopping-header-icon-btn {
   flex-shrink: 0;
   width: 24px; height: 24px;
@@ -41209,6 +41210,39 @@ img.doc-latex-page { user-select: none; -webkit-user-select: none; }
 .doc-hl-blue   { background: rgba(116, 192, 252, 0.45); }
 .doc-hl-pink   { background: rgba(247, 131, 172, 0.45); }
 .doc-mark.doc-hl:hover { filter: brightness(0.92); }
+
+/* Persona editor — prompt-document checkbox list (v3.6): scrolls and
+   filters instead of flooding a dropdown; single-select semantics live
+   in JS (checking one unchecks the rest). */
+.char-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 110px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.char-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.char-doc-row:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.char-doc-row.on {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.char-doc-row input { flex-shrink: 0; accent-color: var(--accent, var(--red)); margin: 0; }
+.char-doc-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Persona editor — linked-skills chip box (v3.6) */
 .char-skills-box {
