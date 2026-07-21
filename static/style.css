@@ -41119,5 +41119,41 @@ body.theme-frosted .modal {
 }
 .doc-mark:hover .doc-mark-rm { display: inline-flex; }
 #doc-pdf-view.latex-marking { cursor: crosshair; }
+/* Marking tool palette — shown next to the Mark button while mark mode
+   is armed. Box tool keeps the red-rectangle behavior; color dots are
+   the text highlighter. */
+.doc-mark-tools { display: none; align-items: center; gap: 4px; margin-left: 2px; }
+.doc-mark-tools.open { display: inline-flex; }
+.doc-mark-tool {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--red);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+.doc-mark-tool:hover { opacity: 1; }
+.doc-mark-tool.active { opacity: 1; box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+.doc-mark-tool[data-marktool="yellow"] { background: #ffd43b; }
+.doc-mark-tool[data-marktool="green"]  { background: #69db7c; }
+.doc-mark-tool[data-marktool="blue"]   { background: #74c0fc; }
+.doc-mark-tool[data-marktool="pink"]   { background: #f783ac; }
+/* Highlight marks — translucent marker strokes over the page image.
+   multiply keeps the text underneath readable like a real marker. */
+.doc-mark.doc-hl {
+  border: none;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+.doc-hl-yellow { background: rgba(255, 212, 59, 0.5); }
+.doc-hl-green  { background: rgba(105, 219, 124, 0.45); }
+.doc-hl-blue   { background: rgba(116, 192, 252, 0.45); }
+.doc-hl-pink   { background: rgba(247, 131, 172, 0.45); }
+.doc-mark.doc-hl:hover { filter: brightness(0.92); }
 #doc-pdf-view.latex-marking .doc-mark,
 #doc-latex-view.latex-marking .doc-mark { pointer-events: none; }

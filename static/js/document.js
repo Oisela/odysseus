@@ -2102,34 +2102,43 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     for (const m of marks) {
       const w = wraps.get(String(m.page));
       if (!w) continue;
-      const el = document.createElement('div');
-      el.className = 'doc-mark';
-      el.style.left = `${m.x * 100}%`;
-      el.style.top = `${m.y * 100}%`;
-      el.style.width = `${m.w * 100}%`;
-      el.style.height = `${m.h * 100}%`;
-      el.title = m.session_id
-        ? 'Marked region — click to open the chat it was discussed in'
-        : 'Marked region';
-      if (m.session_id) {
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (sessionModule && sessionModule.selectSession) sessionModule.selectSession(m.session_id);
-        });
-      }
-      const rm = document.createElement('button');
-      rm.className = 'doc-mark-rm';
-      rm.title = 'Remove mark';
-      rm.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-      rm.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        el.remove();
-        await fetch(`${API_BASE}/api/document/${activeDocId}/marks/${m.id}`, {
-          method: 'DELETE', credentials: 'same-origin',
-        }).catch(() => {});
+      const isHl = m.kind === 'highlight' && Array.isArray(m.rects) && m.rects.length;
+      // Highlights carry one rect per text line; boxes have their single rect.
+      const rects = isHl ? m.rects : [{ x: m.x, y: m.y, w: m.w, h: m.h }];
+      rects.forEach((q, qi) => {
+        const el = document.createElement('div');
+        el.className = isHl ? `doc-mark doc-hl doc-hl-${m.color || 'yellow'}` : 'doc-mark';
+        el.dataset.markId = m.id;
+        el.style.left = `${q.x * 100}%`;
+        el.style.top = `${q.y * 100}%`;
+        el.style.width = `${q.w * 100}%`;
+        el.style.height = `${q.h * 100}%`;
+        const preview = isHl && m.text ? `„${m.text.slice(0, 120)}${m.text.length > 120 ? '…' : ''}“` : 'Marked region';
+        el.title = m.session_id
+          ? `${preview} — click to open the chat it was discussed in`
+          : preview;
+        if (m.session_id) {
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (sessionModule && sessionModule.selectSession) sessionModule.selectSession(m.session_id);
+          });
+        }
+        if (qi === 0) {
+          const rm = document.createElement('button');
+          rm.className = 'doc-mark-rm';
+          rm.title = 'Remove mark';
+          rm.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+          rm.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            pane.querySelectorAll(`.doc-mark[data-mark-id="${m.id}"]`).forEach((n) => n.remove());
+            await fetch(`${API_BASE}/api/document/${activeDocId}/marks/${m.id}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            }).catch(() => {});
+          });
+          el.appendChild(rm);
+        }
+        w.appendChild(el);
       });
-      el.appendChild(rm);
-      w.appendChild(el);
     }
   }
 
@@ -2151,6 +2160,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const data = await res.json();
         _latexErrorByDoc.delete(activeDocId);
         _latexStampByDoc.set(activeDocId, data.compiled_at || Date.now());
+        // Recompiling changes the PDF — cached word boxes are stale.
+        [..._textmapCache.keys()].forEach((k) => {
+          if (k.startsWith(`${activeDocId}:`)) _textmapCache.delete(k);
+        });
       } else {
         let log = 'LaTeX compile failed';
         try {
@@ -2173,12 +2186,71 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // send it — the vision model sees exactly the marked spot.
 
   let _latexMarkMode = false;
+  // Active marking tool: 'box' = red rectangle + image crop (original
+  // behavior), any color = text highlighter that snaps to words.
+  let _markTool = 'box';
 
   function _setLatexMarkMode(on) {
     _latexMarkMode = on;
     document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-pdf-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
+    const tools = document.getElementById('doc-mark-tools');
+    if (tools) tools.classList.toggle('open', on);
+  }
+
+  // ── Text highlighter: word boxes per page, cached per doc ──
+  const _textmapCache = new Map();  // `${docId}:${page}` → {words:[...]} | null
+
+  async function _getTextmap(page) {
+    const key = `${activeDocId}:${page}`;
+    if (_textmapCache.has(key)) return _textmapCache.get(key);
+    let data = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${activeDocId}/textmap/${page}`, { credentials: 'same-origin' });
+      if (res.ok) data = await res.json();
+    } catch (e) { /* stays null */ }
+    _textmapCache.set(key, data);
+    return data;
+  }
+
+  // Selection semantics like a real text marker: nearest word to the drag
+  // start → nearest word to the drag end, everything between in reading
+  // order (the server delivers words in reading order), merged into one
+  // rect per text line.
+  function _wordsToHighlight(words, rel) {
+    const d2 = (w, px, py) => {
+      const dx = Math.max(w.x - px, 0, px - (w.x + w.w));
+      const dy = Math.max(w.y - py, 0, py - (w.y + w.h));
+      return dx * dx + dy * dy;
+    };
+    let a = -1, b = -1, da = Infinity, db = Infinity;
+    words.forEach((w, i) => {
+      const ds = d2(w, rel.x0, rel.y0);
+      const de = d2(w, rel.x1, rel.y1);
+      if (ds < da) { da = ds; a = i; }
+      if (de < db) { db = de; b = i; }
+    });
+    // Both endpoints must land near text (≤ ~5% of the page away) —
+    // otherwise the drag was over margin/whitespace.
+    if (a < 0 || b < 0 || da > 0.0025 || db > 0.0025) return null;
+    if (a > b) { const t = a; a = b; b = t; }
+    const lines = new Map();  // line key → union box + words (insertion = reading order)
+    words.slice(a, b + 1).forEach((w) => {
+      const g = lines.get(w.l);
+      if (!g) lines.set(w.l, { x0: w.x, y0: w.y, x1: w.x + w.w, y1: w.y + w.h, parts: [w.t] });
+      else {
+        g.x0 = Math.min(g.x0, w.x); g.y0 = Math.min(g.y0, w.y);
+        g.x1 = Math.max(g.x1, w.x + w.w); g.y1 = Math.max(g.y1, w.y + w.h);
+        g.parts.push(w.t);
+      }
+    });
+    const rects = [], parts = [];
+    lines.forEach((g) => {
+      rects.push({ x: g.x0, y: g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 });
+      parts.push(g.parts.join(' '));
+    });
+    return { rects, text: parts.join('\n') };
   }
 
   function _wireLatexMarking(paneId = 'doc-latex-view', imgSelector = 'img.doc-latex-page') {
@@ -2236,6 +2308,54 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
       if (!best) return;
       const { img, r } = best;
+
+      // Highlighter tools: snap to words, quote the text in the composer.
+      if (_markTool !== 'box') {
+        const page = Number(img.dataset.page || 0);
+        const color = _markTool;
+        const rel = {
+          x0: (Math.max(sel.left, r.left) - r.left) / r.width,
+          y0: (Math.max(sel.top, r.top) - r.top) / r.height,
+          x1: (Math.min(sel.right, r.right) - r.left) / r.width,
+          y1: (Math.min(sel.bottom, r.bottom) - r.top) / r.height,
+        };
+        _getTextmap(page).then((tm) => {
+          const hl = (tm && Array.isArray(tm.words) && tm.words.length)
+            ? _wordsToHighlight(tm.words, rel) : null;
+          if (!hl) {
+            if (uiModule && uiModule.showToast) uiModule.showToast('No selectable text there — use the box tool for scans/figures');
+            return;
+          }
+          const msg = document.getElementById('message');
+          if (msg) {
+            const quote = hl.text.split('\n').map((l) => '> ' + l).join('\n');
+            msg.value = (msg.value ? msg.value.replace(/\s*$/, '\n\n') : '')
+              + quote + `\n> — p. ${page}\n\n`;
+            msg.dispatchEvent(new Event('input', { bubbles: true }));
+            msg.focus();
+          }
+          if (uiModule && uiModule.showToast) uiModule.showToast(`Highlighted text (page ${page}) quoted in chat`);
+          let bx0 = 1, by0 = 1, bx1 = 0, by1 = 0;
+          hl.rects.forEach((q) => {
+            bx0 = Math.min(bx0, q.x); by0 = Math.min(by0, q.y);
+            bx1 = Math.max(bx1, q.x + q.w); by1 = Math.max(by1, q.y + q.h);
+          });
+          const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
+          fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              page,
+              x: Math.max(0, bx0), y: Math.max(0, by0),
+              w: Math.max(0.001, bx1 - bx0), h: Math.max(0.001, by1 - by0),
+              kind: 'highlight', color, rects: hl.rects, text: hl.text,
+              session_id: _sid,
+            }),
+          }).then(() => _renderDocMarks(paneId)).catch(() => {});
+        });
+        return;
+      }
+
       const scale = img.naturalWidth / r.width;
       const sx = Math.max(0, (Math.max(sel.left, r.left) - r.left) * scale);
       const sy = Math.max(0, (Math.max(sel.top, r.top) - r.top) * scale);
@@ -5222,6 +5342,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <button type="button" id="doc-pdf-refresh-btn" class="md-toolbar-pdf-only" title="Reload PDF view" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
           <button type="button" id="doc-latex-compile-btn" class="md-toolbar-latex-only" title="Compile LaTeX to PDF (tectonic)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></svg><span style="font-size:11px;">Compile</span></button>
           <button type="button" id="doc-latex-mark-btn" class="md-toolbar-latex-only" title="Mark a region of the PDF and attach it to the chat" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg><span style="font-size:11px;">Mark</span></button>
+          <span class="doc-mark-tools" id="doc-mark-tools">
+            <button type="button" class="doc-mark-tool active" data-marktool="box" title="Box — red rectangle, image crop to chat"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="4" y="6" width="16" height="12" rx="2"/></svg></button>
+            <button type="button" class="doc-mark-tool" data-marktool="yellow" title="Highlighter yellow — snaps to text, quotes it in chat"></button>
+            <button type="button" class="doc-mark-tool" data-marktool="green" title="Highlighter green — snaps to text, quotes it in chat"></button>
+            <button type="button" class="doc-mark-tool" data-marktool="blue" title="Highlighter blue — snaps to text, quotes it in chat"></button>
+            <button type="button" class="doc-mark-tool" data-marktool="pink" title="Highlighter pink — snaps to text, quotes it in chat"></button>
+          </span>
         </div>
         <div class="md-toolbar-overflow-wrapper" id="md-toolbar-overflow-wrapper" style="display:none">
           <button class="md-toolbar-overflow-toggle" id="md-toolbar-overflow-toggle" title="More formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
@@ -6036,6 +6163,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _wireLatexMarking('doc-latex-view', 'img.doc-latex-page');
       _wireLatexMarking('doc-pdf-view', 'img.doc-pdf-page');
       _setLatexMarkMode(!_latexMarkMode);
+    });
+    document.getElementById('doc-mark-tools')?.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-marktool]');
+      if (!b) return;
+      _markTool = b.dataset.marktool;
+      b.parentElement.querySelectorAll('[data-marktool]').forEach((x) => x.classList.toggle('active', x === b));
     });
 
     // Markdown formatting toolbar
