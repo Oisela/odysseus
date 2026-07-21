@@ -178,6 +178,9 @@ DEFAULT_SETTINGS = {
     # Phone pings for finished/failed scheduled tasks and long agent runs
     # (>2 min with no browser active). Rides the reminder ntfy config.
     "ntfy_task_push": True,
+    # Every booked pomodoro focus block becomes an event in the local
+    # "Focus" calendar (auto-created per owner).
+    "pomodoro_calendar_log": True,
     "reminder_email_to": "",
     # Generic outbound webhook channel: pick any saved Integration as the
     # target and supply a JSON payload template. Use {{title}} and {{message}}
