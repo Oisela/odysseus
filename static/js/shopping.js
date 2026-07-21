@@ -11,8 +11,35 @@
 
 import { makeWindowDraggable } from './windowDrag.js';
 import * as Modals from './modalManager.js';
+import uiModule from './ui.js';
 
 const API_BASE = window.location.origin;
+
+// Small fetch wrapper — every endpoint here is same-origin JSON.
+async function _api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    credentials: 'same-origin',
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`);
+  return res.json();
+}
+
+// Shared by the photo button and paste-into-instructions: upload one image
+// file, return its /api/upload URL (or null).
+async function _uploadImage(file) {
+  const fd = new FormData();
+  fd.append('files', file);
+  try {
+    const d = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(r => r.json());
+    const id = d.files && d.files[0] && d.files[0].id;
+    return id ? `/api/upload/${id}` : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 let _modal = null;
 let _open = false;
@@ -22,8 +49,9 @@ let _listShared = false;
 let _recipes = [];
 let _editingRecipe = null;   // recipe object being edited, or {} for new, or null
 
+// Canonical escaper from ui.js (same wrapper as notes.js/admin.js use).
 function _esc(s) {
-  return String(s == null ? '' : s)
+  return uiModule.esc ? uiModule.esc(s == null ? '' : String(s)) : String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
@@ -31,7 +59,7 @@ function _esc(s) {
 
 async function _loadShopping() {
   try {
-    const d = await fetch(`${API_BASE}/api/shopping`, { credentials: 'same-origin' }).then(r => r.json());
+    const d = await _api('/api/shopping');
     _items = d.items || [];
     _listShared = !!d.list_shared;
   } catch { _items = []; }
@@ -39,7 +67,7 @@ async function _loadShopping() {
 
 async function _loadRecipes() {
   try {
-    const d = await fetch(`${API_BASE}/api/recipes`, { credentials: 'same-origin' }).then(r => r.json());
+    const d = await _api('/api/recipes');
     _recipes = d.recipes || [];
   } catch { _recipes = []; }
 }
@@ -112,12 +140,15 @@ function _renderShopping(body) {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
-    await fetch(`${API_BASE}/api/shopping`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    }).catch(() => {});
-    await _loadShopping();
+    try {
+      // The POST returns the created/merged row — patch locally instead
+      // of refetching the whole list per Enter press.
+      const d = await _api('/api/shopping', { method: 'POST', body: { text } });
+      if (d && d.item) {
+        const i = _items.findIndex(x => x.id === d.item.id);
+        if (i >= 0) _items[i] = d.item; else _items.unshift(d.item);
+      }
+    } catch (err) { await _loadShopping(); }
     _render();
     body.querySelector('#shopping-add-input')?.focus();
   });
@@ -129,25 +160,19 @@ function _renderShopping(body) {
       if (!item) return;
       item.done = !item.done;
       _render();
-      await fetch(`${API_BASE}/api/shopping/${id}`, {
-        method: 'PATCH', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ done: item.done }),
-      }).catch(() => {});
+      await _api(`/api/shopping/${id}`, { method: 'PATCH', body: { done: item.done } }).catch(() => {});
     });
     el.querySelector('.shopping-item-rm').addEventListener('click', async () => {
       _items = _items.filter(i => i.id !== id);
       _render();
-      await fetch(`${API_BASE}/api/shopping/${id}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+      await _api(`/api/shopping/${id}`, { method: 'DELETE' }).catch(() => {});
     });
   });
 
   body.querySelector('#shopping-clear-done')?.addEventListener('click', async () => {
     _items = _items.filter(i => !i.done || !i.mine);
     _render();
-    await fetch(`${API_BASE}/api/shopping/clear-done`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-    await _loadShopping();
-    _render();
+    await _api('/api/shopping/clear-done', { method: 'POST' }).catch(() => {});
   });
 
 }
@@ -207,25 +232,24 @@ function _renderRecipes(body) {
       const btn = e.currentTarget;
       btn.disabled = true;
       try {
-        const res = await fetch(`${API_BASE}/api/recipes/${id}/to-shopping`, {
-          method: 'POST', credentials: 'same-origin',
-        }).then(r => r.json());
+        const res = await _api(`/api/recipes/${id}/to-shopping`, { method: 'POST' });
         btn.textContent = `${res.added} added${res.merged ? `, ${res.merged} merged` : ''}`;
         setTimeout(() => { _render(); }, 1400);
         await _loadShopping();
       } catch { btn.disabled = false; }
     });
     // Cooking mode: tick ingredients off directly on the card (owner only).
+    // Toggle the one row in place — a full re-render would re-decode every
+    // recipe image per click.
     el.querySelectorAll('.recipe-ing .shopping-check:not([disabled])').forEach(cb => {
       cb.addEventListener('click', async () => {
-        const idx = Number(cb.closest('.recipe-ing').dataset.idx);
+        const row = cb.closest('.recipe-ing');
+        const idx = Number(row.dataset.idx);
         try {
-          const d = await fetch(`${API_BASE}/api/recipes/${id}/ingredients/${idx}/toggle`, {
-            method: 'POST', credentials: 'same-origin',
-          }).then(r => r.json());
+          const d = await _api(`/api/recipes/${id}/ingredients/${idx}/toggle`, { method: 'POST' });
           if (rec && Array.isArray(d.ingredients)) rec.ingredients = d.ingredients;
-          _render();
-        } catch { /* keep current state */ }
+          row.classList.toggle('done', !!(d.ingredients && d.ingredients[idx] && d.ingredients[idx].done));
+        } catch (err) { /* keep current state */ }
       });
     });
     el.querySelector('.recipe-edit')?.addEventListener('click', () => {
@@ -235,7 +259,7 @@ function _renderRecipes(body) {
     el.querySelector('.recipe-delete')?.addEventListener('click', async () => {
       _recipes = _recipes.filter(r => r.id !== id);
       _render();
-      await fetch(`${API_BASE}/api/recipes/${id}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+      await _api(`/api/recipes/${id}`, { method: 'DELETE' }).catch(() => {});
     });
   });
 }
@@ -270,21 +294,16 @@ function _renderRecipeForm(body, rec) {
       const f = fi.files && fi.files[0];
       fi.remove();
       if (!f) return;
-      const fd = new FormData();
-      fd.append('files', f);
-      try {
-        const d = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(r => r.json());
-        const id = d.files && d.files[0] && d.files[0].id;
-        if (id) {
-          rec.image_url = `/api/upload/${id}`;
-          // keep current field values across the re-render
-          rec.title = body.querySelector('#recipe-f-title').value;
-          rec.instructions = body.querySelector('#recipe-f-instructions').value;
-          rec.ingredients = _collectIngredients();
-          rec.is_shared = body.querySelector('#recipe-f-shared').checked;
-          _render();
-        }
-      } catch { /* upload failed — keep editing */ }
+      const url = await _uploadImage(f);
+      if (url) {
+        rec.image_url = url;
+        // keep current field values across the re-render
+        rec.title = body.querySelector('#recipe-f-title').value;
+        rec.instructions = body.querySelector('#recipe-f-instructions').value;
+        rec.ingredients = _collectIngredients();
+        rec.is_shared = body.querySelector('#recipe-f-shared').checked;
+        _render();
+      }
     });
     fi.click();
   });
@@ -337,18 +356,13 @@ function _renderRecipeForm(body, rec) {
         e.preventDefault();
         const f = it.getAsFile();
         if (!f) return;
-        const fd = new FormData();
-        fd.append('files', f);
-        try {
-          const d = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(r => r.json());
-          const fid = d.files && d.files[0] && d.files[0].id;
-          if (fid) {
-            const md = `\n![bild](/api/upload/${fid})\n`;
-            const at = instrTa.selectionStart != null ? instrTa.selectionStart : instrTa.value.length;
-            instrTa.value = instrTa.value.slice(0, at) + md + instrTa.value.slice(at);
-            instrTa.setSelectionRange(at + md.length, at + md.length);
-          }
-        } catch { /* upload failed — paste ignored */ }
+        const url = await _uploadImage(f);
+        if (url) {
+          const md = `\n![bild](${url})\n`;
+          const at = instrTa.selectionStart != null ? instrTa.selectionStart : instrTa.value.length;
+          instrTa.value = instrTa.value.slice(0, at) + md + instrTa.value.slice(at);
+          instrTa.setSelectionRange(at + md.length, at + md.length);
+        }
         return;
       }
     }

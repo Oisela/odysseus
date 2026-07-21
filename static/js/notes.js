@@ -36,6 +36,15 @@ let _prefLists = [];
 // cards — three columns don't fit a sidebar-docked pane.
 const NOTES_MD_MIN_WIDTH = 560;
 let _notesMdResizeObserver = null;
+
+// Due today or overdue — date-only due dates and datetime reminders alike.
+// Shared by the 'due-today' filter and the sidebar's Today count.
+function _isDueByEndOfToday(n) {
+  if (!n.due_date) return false;
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  return new Date(n.due_date) <= endOfToday;
+}
 let _showingArchived = false;
 let _selectMode = false;
 let _reminderTimer = null;
@@ -1440,14 +1449,17 @@ export function openPanel() {
   try {
     if (_notesMdResizeObserver) _notesMdResizeObserver.disconnect();
     let lastMd = null;
-    _notesMdResizeObserver = new ResizeObserver(() => {
-      const b = document.querySelector('#notes-pane .notes-pane-body');
-      if (!b) return;
-      const md = (b.getBoundingClientRect().width || 0) >= NOTES_MD_MIN_WIDTH;
+    // Observe the body itself and read the observer-delivered size — a
+    // querySelector + getBoundingClientRect per tick would force layout
+    // on every drag-resize frame.
+    _notesMdResizeObserver = new ResizeObserver((entries) => {
+      const w = entries[0] && entries[0].contentRect ? entries[0].contentRect.width : 0;
+      const md = w >= NOTES_MD_MIN_WIDTH;
       if (lastMd === null) { lastMd = md; return; }
       if (md !== lastMd) { lastMd = md; _renderNotes(); }
     });
-    _notesMdResizeObserver.observe(pane);
+    const bodyEl = pane.querySelector('.notes-pane-body');
+    _notesMdResizeObserver.observe(bodyEl || pane);
   } catch { /* ResizeObserver unavailable — layout just stays as opened */ }
 }
 
@@ -1778,9 +1790,7 @@ function _renderNotes() {
   } else if (_activeFilter === 'due-today') {
     // Smart list "Today" (master-detail sidebar): everything due today or
     // overdue — date-only due dates and datetime reminders alike.
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    filtered = filtered.filter(n => n.due_date && new Date(n.due_date) <= endOfToday);
+    filtered = filtered.filter(_isDueByEndOfToday);
   }
   if (_searchQuery) {
     filtered = filtered.filter(n => {
@@ -1830,6 +1840,14 @@ function _renderNotes() {
     return;
   }
   body.classList.remove('notes-pane-body-md');
+  // 'due-today' exists only in the master-detail sidebar — falling back to
+  // the legacy layout (narrow pane, mobile) would otherwise keep filtering
+  // with no visible chip to clear it. Reset and re-render unfiltered.
+  if (_activeFilter === 'due-today') {
+    _activeFilter = null;
+    _renderNotes();
+    return;
+  }
 
   let html = '';
   // Today view: render a compact card listing the next-unchecked step from
@@ -1935,7 +1953,7 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       <div class="notes-md-rows-col">
         <div class="notes-md-quickadd">
           <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do &middot; Shift+Enter = note" autocomplete="off" />
-          <button type="button" class="notes-md-fullform-btn" title="New note / recipe (full editor)">
+          <button type="button" class="notes-md-fullform-btn" title="New note (full editor — reminder, photo, drawing)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
         </div>
@@ -1945,9 +1963,8 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
     </div>`;
     layout = body.querySelector('.notes-md-layout');
     _wireMdQuickAdd(layout.querySelector('.notes-md-quickadd-input'));
-    // Full composer in the detail pane — the only way to CREATE a recipe
-    // (the quick-add input covers todo/note only, the type pills live in
-    // the full form).
+    // Full composer in the detail pane — for anything the quick-add can't
+    // do (reminder, photo, drawing). Recipes live in the Shopping module.
     layout.querySelector('.notes-md-fullform-btn').addEventListener('click', () => {
       if (_editingId === '__new__') return;
       const detail = body.querySelector('.notes-md-detail');
@@ -2046,17 +2063,23 @@ function _bindRowEvents(rowsEl) {
 }
 
 function _renderListsSidebar(el) {
+  // One pass over the notes collects tag set, per-tag counts and the
+  // smart-list counts — this runs on every master-detail render.
+  const counts = new Map();
   const tagSet = new Set(_prefLists);
+  let activeCount = 0, todayCount = 0, remindersCount = 0;
   for (const n of _notes) {
     if (n.archived) continue;
-    for (const t of _visibleNoteTags(n)) tagSet.add(t);
+    activeCount++;
+    if (_isDueByEndOfToday(n)) todayCount++;
+    if (n.due_date && _hasTimeComponent(n.due_date)) remindersCount++;
+    for (const t of _visibleNoteTags(n)) {
+      tagSet.add(t);
+      counts.set(t, (counts.get(t) || 0) + 1);
+    }
   }
   const tags = [...tagSet].sort((a, b) => a.localeCompare(b));
-  const activeCount = _notes.filter(n => !n.archived).length;
-  const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
-  const todayCount = _notes.filter(n => !n.archived && n.due_date && new Date(n.due_date) <= endOfToday).length;
-  const remindersCount = _notes.filter(n => !n.archived && n.due_date && _hasTimeComponent(n.due_date)).length;
-  const countFor = (t) => _notes.filter(n => !n.archived && _noteTags(n).includes(t)).length;
+  const countFor = (t) => counts.get(t) || 0;
 
   const entry = (attrs, svg, label, count, active) =>
     `<button type="button" class="notes-list-entry${active ? ' active' : ''}" ${attrs}>
@@ -2142,11 +2165,16 @@ function _wireMdQuickAdd(input) {
         items: type === 'todo' ? [] : undefined,
         label: (_activeLabel || '') || undefined,
       });
-      await _fetchNotes();
+      // The POST returns the created note — insert locally, no full refetch.
       const created = saved && saved.id ? saved : (saved && saved.note) || null;
-      if (created && created.id) _selectedNoteId = created.id;
+      if (created && created.id) {
+        _notes.unshift(created);
+        _selectedNoteId = created.id;
+      } else {
+        await _fetchNotes();
+      }
       _renderNotes();
-    } catch {
+    } catch (err) {
       uiModule.showError('Failed to add');
     } finally {
       input.disabled = false;

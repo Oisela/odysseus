@@ -832,8 +832,9 @@ body.bg-pattern-sparkles {
        the default right:-10px dot sat ON that text. Park it on the clock
        icon's top corner instead (icon-rail pattern). */
     #tool-pomodoro-btn.rail-minimized::after { left: 10px; right: auto; top: 0; transform: none; }
-    /* Header-only section — collapsing it hides nothing, so no chevron. */
-    #pomodoro-section .section-collapse-btn { display: none; }
+    /* Header-only sections (Pomodoro, Shopping, ...) — collapsing them
+       hides nothing, so no chevron. */
+    .section-header-only .section-collapse-btn { display: none; }
     /* Per-user nudge: the listed tools' minimized dot sits 2px further
        in from the right edge so it doesn't look glued to the border. */
     #tool-theme-btn.rail-minimized::after,
@@ -40940,7 +40941,6 @@ body.theme-frosted .modal {
 }
 
 /* ── Shopping & Recipes module (v3.6) ──────────────────────────────────── */
-#shopping-section .section-collapse-btn { display: none; } /* header-only section */
 .shopping-modal-content {
   width: min(640px, 94vw);
   max-height: min(78vh, 760px);
@@ -41104,5 +41104,5 @@ body.theme-frosted .modal {
 }
 .doc-mark:hover .doc-mark-rm { display: inline-flex; }
 #doc-pdf-view.latex-marking { cursor: crosshair; }
-#doc-pdf-view.latex-marking .doc-mark { pointer-events: none; }
+#doc-pdf-view.latex-marking .doc-mark,
 #doc-latex-view.latex-marking .doc-mark { pointer-events: none; }

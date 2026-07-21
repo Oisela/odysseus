@@ -131,28 +131,37 @@ def _recipe_dict(r: Recipe, me: Optional[str]) -> dict:
     }
 
 
-def _merge_into_list(db, me: Optional[str], texts: list[str], recipe_id: Optional[str] = None) -> tuple[int, int]:
-    """Add texts to `me`'s open items, merging duplicates. Returns (added, merged)."""
+def _merge_into_list(db, me: Optional[str], texts: list[str], recipe_id: Optional[str] = None) -> tuple[int, int, list]:
+    """Add texts to `me`'s open items, merging duplicates.
+
+    Returns (added, merged, touched_items) — the touched ORM objects let
+    callers hand the affected rows straight back to the client."""
     open_items = (
         db.query(ShoppingItem)
         .filter(ShoppingItem.owner == me, ShoppingItem.done == False)  # noqa: E712
         .all()
     )
+    # Key each open item once — the scan was O(texts × items) with two
+    # regex evaluations per comparison.
+    by_key = {_ingredient_key(i.text): i for i in open_items}
     added = merged = 0
+    touched = []
     for t in texts:
         t = (t or "").strip()
         if not t:
             continue
-        dup = next((i for i in open_items if _ingredient_key(i.text) == _ingredient_key(t)), None)
+        key = _ingredient_key(t)
+        dup = by_key.get(key)
         if dup:
             dup.text = _merge_titles(dup.text or "", t)
             merged += 1
         else:
-            item = ShoppingItem(id=_uid(), owner=me, text=t, done=False, recipe_id=recipe_id)
-            db.add(item)
-            open_items.append(item)
+            dup = ShoppingItem(id=_uid(), owner=me, text=t, done=False, recipe_id=recipe_id)
+            db.add(dup)
+            by_key[key] = dup
             added += 1
-    return added, merged
+        touched.append(dup)
+    return added, merged, touched
 
 
 def setup_shopping_routes():
@@ -162,13 +171,20 @@ def setup_shopping_routes():
     @router.get("/shopping")
     def list_items(request: Request):
         me = get_current_user(request)
+        # One prefs read serves both questions (who shares with me / do I
+        # share) — this endpoint is refetched after every item action.
+        users = _load_all_prefs().get("_users") or {}
+        sharers = [
+            u for u, p in users.items()
+            if isinstance(p, dict) and p.get("shopping_list_shared") and u != me
+        ]
+        shared = bool((users.get(me) or {}).get("shopping_list_shared")) if me is not None else False
         db = SessionLocal()
         try:
             q = db.query(ShoppingItem)
             if me is not None:
-                q = q.filter(ShoppingItem.owner.in_([me] + _shared_shoppers(exclude=me)))
+                q = q.filter(ShoppingItem.owner.in_([me] + sharers))
             items = q.order_by(ShoppingItem.done, ShoppingItem.created_at.desc()).all()
-            shared = bool(_load_for_user(me).get("shopping_list_shared"))
             return {"items": [_item_dict(i, me) for i in items], "list_shared": shared}
         finally:
             db.close()
@@ -180,9 +196,12 @@ def setup_shopping_routes():
             raise HTTPException(400, "text required")
         db = SessionLocal()
         try:
-            added, merged = _merge_into_list(db, me, [body.text])
+            added, merged, touched = _merge_into_list(db, me, [body.text])
             db.commit()
-            return {"added": added, "merged": merged}
+            # Return the affected row so the client patches its list locally
+            # instead of refetching everything per Enter press.
+            item = _item_dict(touched[0], me) if touched else None
+            return {"added": added, "merged": merged, "item": item}
         finally:
             db.close()
 
@@ -350,7 +369,7 @@ def setup_shopping_routes():
             except Exception:
                 ingredients = []
             texts = [i["text"] for i in _normalize_ingredients(ingredients)]
-            added, merged = _merge_into_list(db, me, texts, recipe_id=recipe_id)
+            added, merged, _ = _merge_into_list(db, me, texts, recipe_id=recipe_id)
             db.commit()
             return {"added": added, "merged": merged}
         finally:
