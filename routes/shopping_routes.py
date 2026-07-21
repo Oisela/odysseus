@@ -30,9 +30,25 @@ def _uid() -> str:
 class RecipeBody(BaseModel):
     title: str = ""
     instructions: Optional[str] = None
-    ingredients: Optional[List[str]] = None
+    # Strings ("200ml Milch") or {text, done} dicts — done = checked off
+    # while cooking. Normalized to dicts in storage.
+    ingredients: Optional[List] = None
     image_url: Optional[str] = None
     is_shared: Optional[bool] = None
+
+
+def _normalize_ingredients(raw) -> list[dict]:
+    out = []
+    for i in raw or []:
+        if isinstance(i, dict):
+            t = str(i.get("text") or "").strip()
+            if t:
+                out.append({"text": t, "done": bool(i.get("done"))})
+        else:
+            t = str(i or "").strip()
+            if t:
+                out.append({"text": t, "done": False})
+    return out
 
 
 class ItemBody(BaseModel):
@@ -106,7 +122,7 @@ def _recipe_dict(r: Recipe, me: Optional[str]) -> dict:
         "id": r.id,
         "title": r.title or "",
         "instructions": r.instructions or "",
-        "ingredients": ingredients if isinstance(ingredients, list) else [],
+        "ingredients": _normalize_ingredients(ingredients if isinstance(ingredients, list) else []),
         "image_url": r.image_url,
         "is_shared": bool(r.is_shared),
         "owner": r.owner,
@@ -249,7 +265,7 @@ def setup_shopping_routes():
             r = Recipe(
                 id=_uid(), owner=me, title=body.title or "",
                 instructions=body.instructions or "",
-                ingredients=json.dumps(body.ingredients or []),
+                ingredients=json.dumps(_normalize_ingredients(body.ingredients)),
                 image_url=body.image_url,
                 is_shared=bool(body.is_shared),
             )
@@ -277,13 +293,32 @@ def setup_shopping_routes():
             if body.instructions is not None:
                 r.instructions = body.instructions
             if body.ingredients is not None:
-                r.ingredients = json.dumps(body.ingredients)
+                r.ingredients = json.dumps(_normalize_ingredients(body.ingredients))
             if body.image_url is not None:
                 r.image_url = body.image_url
             if body.is_shared is not None:
                 r.is_shared = bool(body.is_shared)
             db.commit()
             return _recipe_dict(r, get_current_user(request))
+        finally:
+            db.close()
+
+    @router.post("/recipes/{recipe_id}/ingredients/{index}/toggle")
+    def toggle_ingredient(request: Request, recipe_id: str, index: int):
+        """Check an ingredient off while cooking (owner only)."""
+        db = SessionLocal()
+        try:
+            r = _own_recipe(db, request, recipe_id)
+            try:
+                ingredients = _normalize_ingredients(json.loads(r.ingredients or "[]"))
+            except Exception:
+                ingredients = []
+            if not (0 <= index < len(ingredients)):
+                raise HTTPException(400, "index out of range")
+            ingredients[index]["done"] = not ingredients[index]["done"]
+            r.ingredients = json.dumps(ingredients)
+            db.commit()
+            return {"ingredients": ingredients}
         finally:
             db.close()
 
@@ -314,7 +349,8 @@ def setup_shopping_routes():
                 ingredients = json.loads(r.ingredients or "[]")
             except Exception:
                 ingredients = []
-            added, merged = _merge_into_list(db, me, ingredients, recipe_id=recipe_id)
+            texts = [i["text"] for i in _normalize_ingredients(ingredients)]
+            added, merged = _merge_into_list(db, me, texts, recipe_id=recipe_id)
             db.commit()
             return {"added": added, "merged": merged}
         finally:

@@ -41028,3 +41028,26 @@ body.theme-frosted .modal {
 .recipe-card-ingredients li { margin: 1px 0; }
 .recipe-card-actions { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
 .recipe-form { display: flex; flex-direction: column; gap: 8px; }
+
+/* Recipe cooking checklist + pasted instruction images (v3.6 follow-up) */
+.recipe-ingredients { display: flex; flex-direction: column; margin-top: 2px; }
+.recipe-ing {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+.recipe-ing:last-child { border-bottom: none; }
+.recipe-ing .shopping-check[disabled] { opacity: 0.35; cursor: default; }
+.recipe-ing.done .shopping-check { border-color: var(--green); background: color-mix(in srgb, var(--green) 30%, transparent); }
+.recipe-ing-text { flex: 1; min-width: 0; font-size: 12.5px; }
+.recipe-ing.done .recipe-ing-text { opacity: 0.5; text-decoration: line-through; }
+.recipe-instr-img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 6px 0;
+}
