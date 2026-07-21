@@ -4496,23 +4496,17 @@ async def stream_agent_loop(
     # own completion notifications via the scheduler).
     if workload == "foreground" and not _is_teacher_run and total_duration >= 120:
         try:
-            # NOTE: get_setting comes from the module-level import — a local
-            # `from src.settings import get_setting` here would shadow it for
-            # the WHOLE function scope and break earlier uses (learned the
-            # UnboundLocalError way).
             from src.interactive_gate import has_foreground_activity
-            if get_setting("ntfy_task_push", True) and not has_foreground_activity():
-                from routes.note_routes import dispatch_reminder
+            if not has_foreground_activity():
+                from routes.note_routes import ntfy_push
                 _mins = int(total_duration // 60)
                 _preview = (full_response or "").strip().replace("\n", " ")[:200]
-                asyncio.create_task(dispatch_reminder(
+                ntfy_push(
                     f"Agent run finished ({_mins} min)",
                     _preview or "The agent completed its work.",
                     f"agent-run-{session_id or 'unknown'}",
                     owner=owner or "",
-                    queue_browser=False,
-                    settings_override={"reminder_channel": "ntfy"},
-                ))
+                )
         except Exception:
             logger.debug("agent-run ntfy ping skipped", exc_info=True)
 

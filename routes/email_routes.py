@@ -512,6 +512,55 @@ _STALE_LIST_FILTERS = {"all", "unread", "favorites", "undone", "unanswered"}
 _EMAIL_LIST_BG_TASKS: set = set()
 
 
+def _attach_local_email_tags(emails: list, folder: str, account_id: str | None, owner: str) -> None:
+    """Merge locally cached tags/spam verdicts (email_tags) into email dicts
+    in place — shared by the live index-search path and the stale-serve
+    fallback so the two can't drift."""
+    if not emails:
+        return
+    try:
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            owner_clause, owner_params = _email_tag_owner_clause(account_id, owner)
+            account_clause, account_params = _email_tag_account_clause(account_id)
+            uid_vals = [str(e.get("uid") or "") for e in emails if e.get("uid")]
+            mid_vals = [(e.get("message_id") or "").strip() for e in emails if e.get("message_id")]
+            clauses = []
+            params = [folder, *owner_params, *account_params]
+            if uid_vals:
+                clauses.append("uid IN (" + ",".join("?" * len(uid_vals)) + ")")
+                params.extend(uid_vals)
+            if mid_vals:
+                clauses.append("message_id IN (" + ",".join("?" * len(mid_vals)) + ")")
+                params.extend(mid_vals)
+            tag_by_uid: dict = {}
+            tag_by_mid: dict = {}
+            if clauses:
+                for uid_i, mid_i, tags_raw, spam_i in conn.execute(
+                    f"SELECT uid, message_id, tags, spam_verdict FROM email_tags "
+                    f"WHERE folder=? AND {owner_clause} AND {account_clause} AND ({' OR '.join(clauses)})",
+                    params,
+                ).fetchall():
+                    try:
+                        tags_i = json.loads(tags_raw or "[]")
+                    except Exception:
+                        tags_i = []
+                    entry = {"tags": tags_i if isinstance(tags_i, list) else [], "spam": bool(spam_i)}
+                    if uid_i:
+                        tag_by_uid[str(uid_i)] = entry
+                    if mid_i:
+                        tag_by_mid[str(mid_i).strip()] = entry
+        finally:
+            conn.close()
+        for e in emails:
+            entry = tag_by_mid.get((e.get("message_id") or "").strip()) or tag_by_uid.get(str(e.get("uid") or ""))
+            if entry:
+                e["tags"] = _sanitize_visible_email_tags(entry.get("tags", []), is_answered=bool(e.get("is_answered")))
+                e["is_spam_verdict"] = entry.get("spam", False)
+    except Exception as e:
+        logger.debug(f"local email tag attach skipped: {e}")
+
+
 def _email_index_list_fallback(owner: str, account_id: str | None, folder: str,
                                filter_: str, limit: int, offset: int,
                                from_addr: str | None, has_attachments_only: bool) -> dict | None:
@@ -570,47 +619,7 @@ def _email_index_list_fallback(owner: str, account_id: str | None, folder: str,
     emails = [_index_row_to_email(r) for r in rows]
     # Tags/spam verdicts live locally too — attach them so stale rows look
     # like live rows (calendar links are skipped; the revalidate adds them).
-    try:
-        conn = _sql3.connect(SCHEDULED_DB)
-        try:
-            owner_clause, owner_params = _email_tag_owner_clause(account_id, owner)
-            account_clause, account_params = _email_tag_account_clause(account_id)
-            uid_vals = [e["uid"] for e in emails]
-            mid_vals = [e["message_id"] for e in emails if e["message_id"]]
-            clauses = []
-            params = [folder, *owner_params, *account_params]
-            if uid_vals:
-                clauses.append("uid IN (" + ",".join("?" * len(uid_vals)) + ")")
-                params.extend(uid_vals)
-            if mid_vals:
-                clauses.append("message_id IN (" + ",".join("?" * len(mid_vals)) + ")")
-                params.extend(mid_vals)
-            tag_by_uid: dict = {}
-            tag_by_mid: dict = {}
-            if clauses:
-                for uid_i, mid_i, tags_raw, spam_i in conn.execute(
-                    f"SELECT uid, message_id, tags, spam_verdict FROM email_tags "
-                    f"WHERE folder=? AND {owner_clause} AND {account_clause} AND ({' OR '.join(clauses)})",
-                    params,
-                ).fetchall():
-                    try:
-                        tags_i = json.loads(tags_raw or "[]")
-                    except Exception:
-                        tags_i = []
-                    entry = {"tags": tags_i if isinstance(tags_i, list) else [], "spam": bool(spam_i)}
-                    if uid_i:
-                        tag_by_uid[str(uid_i)] = entry
-                    if mid_i:
-                        tag_by_mid[str(mid_i).strip()] = entry
-        finally:
-            conn.close()
-        for e in emails:
-            entry = tag_by_mid.get(e["message_id"]) or tag_by_uid.get(e["uid"])
-            if entry:
-                e["tags"] = _sanitize_visible_email_tags(entry.get("tags", []), is_answered=bool(e.get("is_answered")))
-                e["is_spam_verdict"] = entry.get("spam", False)
-    except Exception as e:
-        logger.debug(f"stale list tag attach skipped: {e}")
+    _attach_local_email_tags(emails, folder, account_id, owner)
     _hide_unlinked_calendar_tags(emails)
     return {
         "emails": emails,
@@ -1851,49 +1860,7 @@ def setup_email_routes():
                 emails.sort(key=lambda x: x.get("date_epoch") or 0.0, reverse=True)
 
             if emails:
-                try:
-                    import sqlite3 as _sql3i
-                    _ci = _sql3i.connect(SCHEDULED_DB)
-                    _owner_clause_i, _owner_params_i = _email_tag_owner_clause(account_id, owner)
-                    _account_clause_i, _account_params_i = _email_tag_account_clause(account_id)
-                    uid_vals = [str(e.get("uid") or "") for e in emails if e.get("uid")]
-                    mid_vals = [(e.get("message_id") or "").strip() for e in emails if e.get("message_id")]
-                    clauses = []
-                    params = [folder, *_owner_params_i, *_account_params_i]
-                    if uid_vals:
-                        clauses.append("uid IN (" + ",".join("?" * len(uid_vals)) + ")")
-                        params.extend(uid_vals)
-                    if mid_vals:
-                        clauses.append("message_id IN (" + ",".join("?" * len(mid_vals)) + ")")
-                        params.extend(mid_vals)
-                    tag_by_uid = {}
-                    tag_by_mid = {}
-                    if clauses:
-                        rows_i = _ci.execute(
-                            f"SELECT uid, message_id, tags, spam_verdict FROM email_tags "
-                            f"WHERE folder=? AND {_owner_clause_i} AND {_account_clause_i} AND ({' OR '.join(clauses)})",
-                            params,
-                        ).fetchall()
-                        for uid_i, mid_i, tags_raw_i, spam_i in rows_i:
-                            try:
-                                tags_i = json.loads(tags_raw_i or "[]")
-                            except Exception:
-                                tags_i = []
-                            if isinstance(tags_i, list):
-                                tags_i = _sanitize_visible_email_tags(tags_i)
-                            entry_i = {"tags": tags_i if isinstance(tags_i, list) else [], "spam": bool(spam_i)}
-                            if uid_i:
-                                tag_by_uid[str(uid_i)] = entry_i
-                            if mid_i:
-                                tag_by_mid[str(mid_i).strip()] = entry_i
-                    _ci.close()
-                    for e in emails:
-                        tag_entry = tag_by_mid.get((e.get("message_id") or "").strip()) or tag_by_uid.get(str(e.get("uid") or ""))
-                        if tag_entry:
-                            e["tags"] = _sanitize_visible_email_tags(tag_entry.get("tags", []), is_answered=bool(e.get("is_answered")))
-                            e["is_spam_verdict"] = tag_entry.get("spam", False)
-                except Exception as e:
-                    logger.debug(f"email index tag merge skipped: {e}")
+                _attach_local_email_tags(emails, folder, account_id, owner)
 
                 try:
                     import sqlite3 as _sql3c

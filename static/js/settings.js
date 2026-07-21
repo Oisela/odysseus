@@ -837,9 +837,11 @@ async function initShoppingSettings() {
   var msg = el('set-shoppingShareMsg');
   if (!toggle) return;
   try {
-    var res = await fetch('/api/shopping', { credentials: 'same-origin' });
+    // Read just the flag from prefs — /api/shopping would query the whole
+    // list (plus a prefs scan) only to answer one boolean.
+    var res = await fetch('/api/prefs/shopping_list_shared', { credentials: 'same-origin' });
     var data = await res.json();
-    toggle.checked = !!data.list_shared;
+    toggle.checked = !!data.value;
   } catch (e) { /* endpoint unavailable — leave unchecked */ }
   toggle.addEventListener('change', async function() {
     try {

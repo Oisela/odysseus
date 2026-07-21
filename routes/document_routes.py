@@ -1249,7 +1249,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # with the file, like the .fields.json sidecar), in the LaTeX build
     # dir for compiled docs (the PDF there is a build artifact anyway).
 
-    def _marks_path(request: Request, db, doc, user) -> str:
+    def _marks_path(request: Request, doc, user) -> str:
         from src.pdf_form_doc import find_source_upload_id
         upload_id = find_source_upload_id(doc.current_content or "")
         if upload_id:
@@ -1279,7 +1279,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
-            return _marks_path(request, db, doc, user)
+            return _marks_path(request, doc, user)
         finally:
             db.close()
 
