@@ -363,9 +363,18 @@ async function _populatePromptDocSelect() {
   const sel = document.getElementById('char-prompt-doc');
   if (!sel) return;
   if (!_libDocsCache) {
+    // The library endpoint caps limit at 50 — page until done (500 max).
     try {
-      const r = await fetch(`${API_BASE}/api/documents/library?limit=200`, { credentials: 'same-origin' });
-      _libDocsCache = r.ok ? ((await r.json()).documents || []) : [];
+      const all = [];
+      for (let off = 0; off < 500; off += 50) {
+        const r = await fetch(`${API_BASE}/api/documents/library?limit=50&offset=${off}`, { credentials: 'same-origin' });
+        if (!r.ok) break;
+        const d = await r.json();
+        const batch = d.documents || [];
+        all.push(...batch);
+        if (batch.length < 50 || all.length >= (d.total || 0)) break;
+      }
+      _libDocsCache = all;
     } catch (e) { _libDocsCache = []; }
   }
   const cur = sel.value;
