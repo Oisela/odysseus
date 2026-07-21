@@ -1389,6 +1389,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
     _pdfPaneFieldsByDoc.set(docId, fieldRefs);
     _renderDocMarks('doc-pdf-view');
+    _wireTextLayers('doc-pdf-view');
   }
 
   // Render one annotation as a positioned wrapper with type-appropriate
@@ -2075,6 +2076,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         `</div>`
       ).join('');
       _renderDocMarks('doc-latex-view');
+      _wireTextLayers('doc-latex-view');
     } catch (e) {
       pane.innerHTML = '<div class="doc-latex-hint">Could not load the compiled PDF.</div>';
     }
@@ -2186,17 +2188,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // send it — the vision model sees exactly the marked spot.
 
   let _latexMarkMode = false;
-  // Active marking tool: 'box' = red rectangle + image crop (original
-  // behavior), any color = text highlighter that snaps to words.
-  let _markTool = 'box';
 
   function _setLatexMarkMode(on) {
     _latexMarkMode = on;
     document.getElementById('doc-latex-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-pdf-view')?.classList.toggle('latex-marking', on);
     document.getElementById('doc-latex-mark-btn')?.classList.toggle('active', on);
-    const tools = document.getElementById('doc-mark-tools');
-    if (tools) tools.classList.toggle('open', on);
   }
 
   // ── Text highlighter: word boxes per page, cached per doc ──
@@ -2214,43 +2211,168 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     return data;
   }
 
-  // Selection semantics like a real text marker: nearest word to the drag
-  // start → nearest word to the drag end, everything between in reading
-  // order (the server delivers words in reading order), merged into one
-  // rect per text line.
-  function _wordsToHighlight(words, rel) {
-    const d2 = (w, px, py) => {
-      const dx = Math.max(w.x - px, 0, px - (w.x + w.w));
-      const dy = Math.max(w.y - py, 0, py - (w.y + w.h));
-      return dx * dx + dy * dy;
-    };
-    let a = -1, b = -1, da = Infinity, db = Infinity;
-    words.forEach((w, i) => {
-      const ds = d2(w, rel.x0, rel.y0);
-      const de = d2(w, rel.x1, rel.y1);
-      if (ds < da) { da = ds; a = i; }
-      if (de < db) { db = de; b = i; }
+  // ── Native text selection (v3.6): a transparent word-span layer over
+  // each page image — same trick as PDF.js. Text selects and copies like
+  // in any browser PDF viewer; on mouseup a small popup offers highlight
+  // colors that persist the selection as a mark + quote it in the chat.
+
+  function _wireTextLayers(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane) return;
+    if (pane._tlObserver) pane._tlObserver.disconnect();
+    // Build layers lazily — a 50-page script would otherwise mean tens of
+    // thousands of spans up front.
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        io.unobserve(en.target);
+        _buildTextLayer(en.target);
+      });
+    }, { root: pane, rootMargin: '600px' });
+    pane.querySelectorAll('[data-page]').forEach((w) => {
+      if (w.tagName !== 'IMG') io.observe(w);
     });
-    // Both endpoints must land near text (≤ ~5% of the page away) —
-    // otherwise the drag was over margin/whitespace.
-    if (a < 0 || b < 0 || da > 0.0025 || db > 0.0025) return null;
-    if (a > b) { const t = a; a = b; b = t; }
-    const lines = new Map();  // line key → union box + words (insertion = reading order)
-    words.slice(a, b + 1).forEach((w) => {
-      const g = lines.get(w.l);
-      if (!g) lines.set(w.l, { x0: w.x, y0: w.y, x1: w.x + w.w, y1: w.y + w.h, parts: [w.t] });
+    pane._tlObserver = io;
+    // Keep the invisible glyphs proportional to the rendered page height
+    // (spans size their font via --tl-h — see _buildTextLayer).
+    if (!pane._tlResize) {
+      pane._tlResize = new ResizeObserver((entries) => {
+        entries.forEach((en) => {
+          en.target.style.setProperty('--tl-h', `${en.contentRect.height}px`);
+        });
+      });
+    }
+    pane.querySelectorAll('[data-page]').forEach((w) => {
+      if (w.tagName !== 'IMG') pane._tlResize.observe(w);
+    });
+    _wireSelectionPopup(paneId);
+  }
+
+  async function _buildTextLayer(wrap) {
+    if (wrap.querySelector('.doc-text-layer')) return;
+    const page = Number(wrap.dataset.page || 0);
+    const docAtStart = activeDocId;
+    const tm = await _getTextmap(page);
+    if (docAtStart !== activeDocId) return;
+    if (!tm || !Array.isArray(tm.words) || !tm.words.length) return;
+    if (wrap.querySelector('.doc-text-layer')) return;
+    wrap.style.setProperty('--tl-h', `${wrap.getBoundingClientRect().height || 800}px`);
+    const layer = document.createElement('div');
+    layer.className = 'doc-text-layer';
+    const frag = document.createDocumentFragment();
+    tm.words.forEach((w) => {
+      const sp = document.createElement('span');
+      sp.className = 'doc-tl-word';
+      sp.style.left = `${w.x * 100}%`;
+      sp.style.top = `${w.y * 100}%`;
+      sp.style.width = `${w.w * 100}%`;
+      sp.style.height = `${w.h * 100}%`;
+      sp.style.fontSize = `calc(var(--tl-h, 800px) * ${(w.h * 0.85).toFixed(5)})`;
+      sp.dataset.line = w.l;
+      sp.textContent = w.t + ' ';
+      frag.appendChild(sp);
+    });
+    layer.appendChild(frag);
+    // Right after the page img, BEFORE form-field overlays and marks —
+    // those must stay clickable above the selection layer.
+    wrap.insertBefore(layer, wrap.children[1] || null);
+  }
+
+  function _wireSelectionPopup(paneId) {
+    const pane = document.getElementById(paneId);
+    if (!pane || pane._selPopupWired) return;
+    pane._selPopupWired = true;
+    const hide = () => { pane.querySelectorAll('.doc-sel-popup').forEach((p) => p.remove()); };
+    pane.addEventListener('scroll', hide);
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) hide();
+    });
+    pane.addEventListener('mouseup', (e) => {
+      // Let the browser finalize the selection first.
+      setTimeout(() => {
+        hide();
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        const anchor = range.commonAncestorContainer;
+        const layerEl = (anchor.nodeType === 1 ? anchor : anchor.parentElement)?.closest?.('.doc-text-layer');
+        if (!layerEl || !pane.contains(layerEl)) return;
+        const wrap = layerEl.parentElement;
+        const spans = [...layerEl.querySelectorAll('.doc-tl-word')].filter((sp) => sel.containsNode(sp, true));
+        if (!spans.length) return;
+        const popup = document.createElement('div');
+        popup.className = 'doc-sel-popup';
+        ['yellow', 'green', 'blue', 'pink'].forEach((c) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'doc-mark-tool';
+          b.dataset.marktool = c;
+          b.title = `Highlight + quote in chat (${c})`;
+          b.addEventListener('mousedown', (ev) => ev.preventDefault());  // keep the selection alive
+          b.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            _highlightSpans(paneId, wrap, spans, c);
+            hide();
+            try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
+          });
+          popup.appendChild(b);
+        });
+        const pr = pane.getBoundingClientRect();
+        popup.style.left = `${Math.max(4, Math.min(e.clientX - pr.left + pane.scrollLeft - 60, pane.scrollWidth - 140))}px`;
+        popup.style.top = `${e.clientY - pr.top + pane.scrollTop + 16}px`;
+        pane.appendChild(popup);
+      }, 0);
+    });
+  }
+
+  function _highlightSpans(paneId, wrap, spans, color) {
+    const page = Number(wrap.dataset.page || 0);
+    const lines = new Map();  // insertion order = reading order
+    spans.forEach((sp) => {
+      const x = parseFloat(sp.style.left) / 100;
+      const y = parseFloat(sp.style.top) / 100;
+      const w = parseFloat(sp.style.width) / 100;
+      const h = parseFloat(sp.style.height) / 100;
+      const g = lines.get(sp.dataset.line);
+      if (!g) lines.set(sp.dataset.line, { x0: x, y0: y, x1: x + w, y1: y + h, parts: [sp.textContent.trim()] });
       else {
-        g.x0 = Math.min(g.x0, w.x); g.y0 = Math.min(g.y0, w.y);
-        g.x1 = Math.max(g.x1, w.x + w.w); g.y1 = Math.max(g.y1, w.y + w.h);
-        g.parts.push(w.t);
+        g.x0 = Math.min(g.x0, x); g.y0 = Math.min(g.y0, y);
+        g.x1 = Math.max(g.x1, x + w); g.y1 = Math.max(g.y1, y + h);
+        g.parts.push(sp.textContent.trim());
       }
     });
-    const rects = [], parts = [];
+    const rects = [], textParts = [];
     lines.forEach((g) => {
       rects.push({ x: g.x0, y: g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 });
-      parts.push(g.parts.join(' '));
+      textParts.push(g.parts.join(' '));
     });
-    return { rects, text: parts.join('\n') };
+    const text = textParts.join('\n');
+    const msg = document.getElementById('message');
+    if (msg && text) {
+      const quote = text.split('\n').map((l) => '> ' + l).join('\n');
+      msg.value = (msg.value ? msg.value.replace(/\s*$/, '\n\n') : '') + quote + `\n> — p. ${page}\n\n`;
+      msg.dispatchEvent(new Event('input', { bubbles: true }));
+      msg.focus();
+    }
+    if (uiModule && uiModule.showToast) uiModule.showToast(`Highlighted text (page ${page}) quoted in chat`);
+    let bx0 = 1, by0 = 1, bx1 = 0, by1 = 0;
+    rects.forEach((q) => {
+      bx0 = Math.min(bx0, q.x); by0 = Math.min(by0, q.y);
+      bx1 = Math.max(bx1, q.x + q.w); by1 = Math.max(by1, q.y + q.h);
+    });
+    const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
+    fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        page,
+        x: Math.max(0, bx0), y: Math.max(0, by0),
+        w: Math.max(0.001, bx1 - bx0), h: Math.max(0.001, by1 - by0),
+        kind: 'highlight', color, rects, text,
+        session_id: _sid,
+      }),
+    }).then(() => _renderDocMarks(paneId)).catch(() => {});
   }
 
   function _wireLatexMarking(paneId = 'doc-latex-view', imgSelector = 'img.doc-latex-page') {
@@ -2308,54 +2430,6 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
       if (!best) return;
       const { img, r } = best;
-
-      // Highlighter tools: snap to words, quote the text in the composer.
-      if (_markTool !== 'box') {
-        const page = Number(img.dataset.page || 0);
-        const color = _markTool;
-        const rel = {
-          x0: (Math.max(sel.left, r.left) - r.left) / r.width,
-          y0: (Math.max(sel.top, r.top) - r.top) / r.height,
-          x1: (Math.min(sel.right, r.right) - r.left) / r.width,
-          y1: (Math.min(sel.bottom, r.bottom) - r.top) / r.height,
-        };
-        _getTextmap(page).then((tm) => {
-          const hl = (tm && Array.isArray(tm.words) && tm.words.length)
-            ? _wordsToHighlight(tm.words, rel) : null;
-          if (!hl) {
-            if (uiModule && uiModule.showToast) uiModule.showToast('No selectable text there — use the box tool for scans/figures');
-            return;
-          }
-          const msg = document.getElementById('message');
-          if (msg) {
-            const quote = hl.text.split('\n').map((l) => '> ' + l).join('\n');
-            msg.value = (msg.value ? msg.value.replace(/\s*$/, '\n\n') : '')
-              + quote + `\n> — p. ${page}\n\n`;
-            msg.dispatchEvent(new Event('input', { bubbles: true }));
-            msg.focus();
-          }
-          if (uiModule && uiModule.showToast) uiModule.showToast(`Highlighted text (page ${page}) quoted in chat`);
-          let bx0 = 1, by0 = 1, bx1 = 0, by1 = 0;
-          hl.rects.forEach((q) => {
-            bx0 = Math.min(bx0, q.x); by0 = Math.min(by0, q.y);
-            bx1 = Math.max(bx1, q.x + q.w); by1 = Math.max(by1, q.y + q.h);
-          });
-          const _sid = (sessionModule && sessionModule.getCurrentSessionId) ? sessionModule.getCurrentSessionId() : null;
-          fetch(`${API_BASE}/api/document/${activeDocId}/marks`, {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              page,
-              x: Math.max(0, bx0), y: Math.max(0, by0),
-              w: Math.max(0.001, bx1 - bx0), h: Math.max(0.001, by1 - by0),
-              kind: 'highlight', color, rects: hl.rects, text: hl.text,
-              session_id: _sid,
-            }),
-          }).then(() => _renderDocMarks(paneId)).catch(() => {});
-        });
-        return;
-      }
-
       const scale = img.naturalWidth / r.width;
       const sx = Math.max(0, (Math.max(sel.left, r.left) - r.left) * scale);
       const sy = Math.max(0, (Math.max(sel.top, r.top) - r.top) * scale);
@@ -5342,13 +5416,6 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <button type="button" id="doc-pdf-refresh-btn" class="md-toolbar-pdf-only" title="Reload PDF view" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
           <button type="button" id="doc-latex-compile-btn" class="md-toolbar-latex-only" title="Compile LaTeX to PDF (tectonic)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></svg><span style="font-size:11px;">Compile</span></button>
           <button type="button" id="doc-latex-mark-btn" class="md-toolbar-latex-only" title="Mark a region of the PDF and attach it to the chat" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg><span style="font-size:11px;">Mark</span></button>
-          <span class="doc-mark-tools" id="doc-mark-tools">
-            <button type="button" class="doc-mark-tool active" data-marktool="box" title="Box — red rectangle, image crop to chat"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="4" y="6" width="16" height="12" rx="2"/></svg></button>
-            <button type="button" class="doc-mark-tool" data-marktool="yellow" title="Highlighter yellow — snaps to text, quotes it in chat"></button>
-            <button type="button" class="doc-mark-tool" data-marktool="green" title="Highlighter green — snaps to text, quotes it in chat"></button>
-            <button type="button" class="doc-mark-tool" data-marktool="blue" title="Highlighter blue — snaps to text, quotes it in chat"></button>
-            <button type="button" class="doc-mark-tool" data-marktool="pink" title="Highlighter pink — snaps to text, quotes it in chat"></button>
-          </span>
         </div>
         <div class="md-toolbar-overflow-wrapper" id="md-toolbar-overflow-wrapper" style="display:none">
           <button class="md-toolbar-overflow-toggle" id="md-toolbar-overflow-toggle" title="More formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
@@ -6163,12 +6230,6 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _wireLatexMarking('doc-latex-view', 'img.doc-latex-page');
       _wireLatexMarking('doc-pdf-view', 'img.doc-pdf-page');
       _setLatexMarkMode(!_latexMarkMode);
-    });
-    document.getElementById('doc-mark-tools')?.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-marktool]');
-      if (!b) return;
-      _markTool = b.dataset.marktool;
-      b.parentElement.querySelectorAll('[data-marktool]').forEach((x) => x.classList.toggle('active', x === b));
     });
 
     // Markdown formatting toolbar
