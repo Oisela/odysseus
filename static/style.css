@@ -41140,11 +41140,44 @@ body.theme-frosted .modal {
 }
 .doc-mark:hover .doc-mark-rm { display: inline-flex; }
 #doc-pdf-view.latex-marking { cursor: crosshair; }
-/* Marking tool palette — shown next to the Mark button while mark mode
-   is armed. Box tool keeps the red-rectangle behavior; color dots are
-   the text highlighter. */
-.doc-mark-tools { display: none; align-items: center; gap: 4px; margin-left: 2px; }
-.doc-mark-tools.open { display: inline-flex; }
+/* ── Native text selection layer (v3.6) — transparent word spans over the
+   page images, PDF.js-style. Text selects/copies like in any browser PDF
+   viewer; the selection popup offers highlighter colors. */
+.doc-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.doc-tl-word {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  line-height: 1;
+  font-family: sans-serif;
+  overflow: hidden;
+}
+.doc-tl-word::selection {
+  background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  color: transparent;
+}
+img.doc-latex-page { user-select: none; -webkit-user-select: none; }
+/* Box-mark mode draws a marquee — the text layer must not swallow it. */
+.latex-marking .doc-text-layer { pointer-events: none; user-select: none; }
+/* Selection popup with the highlighter colors */
+.doc-sel-popup {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
 .doc-mark-tool {
   width: 18px; height: 18px;
   border-radius: 50%;
