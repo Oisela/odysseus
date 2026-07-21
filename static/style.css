@@ -41155,5 +41155,38 @@ body.theme-frosted .modal {
 .doc-hl-blue   { background: rgba(116, 192, 252, 0.45); }
 .doc-hl-pink   { background: rgba(247, 131, 172, 0.45); }
 .doc-mark.doc-hl:hover { filter: brightness(0.92); }
+
+/* Persona editor — linked-skills chip box (v3.6) */
+.char-skills-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 92px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.char-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  opacity: 0.75;
+  -webkit-tap-highlight-color: transparent;
+}
+.char-skill-chip input { display: none; }
+.char-skill-chip:hover { opacity: 1; }
+.char-skill-chip.on {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
 #doc-pdf-view.latex-marking .doc-mark,
 #doc-latex-view.latex-marking .doc-mark { pointer-events: none; }

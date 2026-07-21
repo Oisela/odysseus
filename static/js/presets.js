@@ -219,6 +219,7 @@ function initNameDropdown() {
       if (tempInput) { tempInput.value = 1.0; if (tempValue) tempValue.textContent = '1.0'; tempInput.dispatchEvent(new Event('input')); }
       if (tokensInput) { tokensInput.value = 8448; if (tokensValue) tokensValue.textContent = 'No limit'; tokensInput.dispatchEvent(new Event('input')); }
       if (delBtn) delBtn.style.display = 'none';
+      _setCharSkillsAndDoc([], '');
       return;
     }
     // Load the selected template
@@ -288,6 +289,7 @@ function _tryLoadTemplate(name) {
         if (tempValue) tempValue.textContent = parseFloat(builtin.temperature).toFixed(1);
         tempInput.dispatchEvent(new Event('input'));
       }
+      _setCharSkillsAndDoc([], '');
       return;
     }
     return;
@@ -311,6 +313,7 @@ function _tryLoadTemplate(name) {
   }
   const delBtn = document.getElementById('char-delete-template-btn');
   if (delBtn) delBtn.style.display = '';
+  _setCharSkillsAndDoc(tmpl.skills || [], tmpl.prompt_doc_id || '');
 }
 
 function _populateCharSelect() {
@@ -347,6 +350,106 @@ function _populateCharSelect() {
   }
   // Restore selection if it still exists
   if (currentVal) select.value = currentVal;
+
+  // Structured personas (v3.6): prompt-from-document + linked skills.
+  _populatePromptDocSelect();
+  _populateSkillsBox();
+}
+
+let _libDocsCache = null;
+let _skillsIndexCache = null;
+
+async function _populatePromptDocSelect() {
+  const sel = document.getElementById('char-prompt-doc');
+  if (!sel) return;
+  if (!_libDocsCache) {
+    try {
+      const r = await fetch(`${API_BASE}/api/documents/library?limit=200`, { credentials: 'same-origin' });
+      _libDocsCache = r.ok ? ((await r.json()).documents || []) : [];
+    } catch (e) { _libDocsCache = []; }
+  }
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— use the text above —</option>';
+  _libDocsCache.forEach(d => {
+    const o = document.createElement('option');
+    o.value = d.id;
+    o.textContent = d.title || '(untitled)';
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+  if (!sel._wired) {
+    sel._wired = true;
+    sel.addEventListener('change', _syncPromptDocState);
+  }
+  _syncPromptDocState();
+}
+
+function _syncPromptDocState() {
+  const sel = document.getElementById('char-prompt-doc');
+  const ta = document.getElementById('custom-system-prompt');
+  if (!sel || !ta) return;
+  const usingDoc = !!sel.value;
+  ta.disabled = usingDoc;
+  ta.style.opacity = usingDoc ? '0.45' : '';
+  ta.placeholder = usingDoc
+    ? 'Prompt comes from the selected Library document (re-read on every start)'
+    : 'Write rough notes and click Expand, or leave empty';
+}
+
+async function _populateSkillsBox(selected) {
+  const box = document.getElementById('char-skills-box');
+  if (!box) return;
+  if (!_skillsIndexCache) {
+    try {
+      const r = await fetch(`${API_BASE}/api/skills/index`, { credentials: 'same-origin' });
+      _skillsIndexCache = r.ok ? ((await r.json()).index || []) : [];
+    } catch (e) { _skillsIndexCache = []; }
+  }
+  const chosen = new Set(selected || _charSelectedSkills());
+  if (!_skillsIndexCache.length) {
+    box.innerHTML = '<span style="opacity:0.4;font-size:11px;">No skills yet — teach some first.</span>';
+    return;
+  }
+  box.innerHTML = '';
+  _skillsIndexCache.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'char-skill-chip';
+    label.title = s.description || s.name;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s.name;
+    cb.checked = chosen.has(s.name);
+    cb.addEventListener('change', () => {
+      // Cap at 6 — the prompt line stays readable and the whitelist matches
+      // the server-side limit.
+      if (cb.checked && _charSelectedSkills().length > 6) {
+        cb.checked = false;
+        if (window.showToast) window.showToast('Max 6 skills per persona');
+      }
+      label.classList.toggle('on', cb.checked);
+    });
+    const span = document.createElement('span');
+    span.textContent = s.name;
+    label.classList.toggle('on', cb.checked);
+    label.appendChild(cb);
+    label.appendChild(span);
+    box.appendChild(label);
+  });
+}
+
+function _charSelectedSkills() {
+  return [...document.querySelectorAll('#char-skills-box input:checked')].map(c => c.value);
+}
+
+function _setCharSkillsAndDoc(skills, promptDocId) {
+  const sel = document.getElementById('char-prompt-doc');
+  if (sel) {
+    _populatePromptDocSelect().then(() => {
+      sel.value = promptDocId || '';
+      _syncPromptDocState();
+    });
+  }
+  _populateSkillsBox(skills || []);
 }
 
 /**
@@ -782,6 +885,8 @@ export async function saveCustomPreset(showToast, showError) {
 
   const _prefixInput = document.getElementById('inject-prefix');
   const _suffixInput = document.getElementById('inject-suffix');
+  const prompt_doc_id = _isInjectStart ? '' : (document.getElementById('char-prompt-doc')?.value || '');
+  const skills = _isInjectStart ? [] : _charSelectedSkills().slice(0, 6);
 
   const config = {
     name: name,
@@ -791,6 +896,8 @@ export async function saveCustomPreset(showToast, showError) {
     system_prompt: system_prompt,
     inject_prefix: _prefixInput ? _prefixInput.value : '',
     inject_suffix: _suffixInput ? _suffixInput.value : '',
+    skills: skills,
+    prompt_doc_id: prompt_doc_id,
   };
 
   try {
@@ -812,7 +919,7 @@ export async function saveCustomPreset(showToast, showError) {
       // temp + max tokens" would silently do nothing.
       const _hasTuning = (config.temperature !== 1.0) || (config.max_tokens !== 0);
       const _hasInject = !!(config.inject_prefix || config.inject_suffix);
-      const _hasContent = !!(system_prompt || name || _hasTuning || _hasInject);
+      const _hasContent = !!(system_prompt || name || prompt_doc_id || skills.length || _hasTuning || _hasInject);
       if (enabled && _hasContent) {
         selectedPreset = 'custom';
         // Turn off research — doesn't make sense with a character
@@ -845,6 +952,8 @@ export async function saveCustomPreset(showToast, showError) {
           system_prompt: system_prompt ?? '',
           temperature: config.temperature,
           max_tokens: config.max_tokens,
+          skills: skills,
+          prompt_doc_id: prompt_doc_id,
         }
         const ENDPOINT = `${API_BASE}/api/presets/templates`;
 

@@ -104,6 +104,18 @@ class ChatHandler:
                     preset_system_prompt = f"{name_line} {preset_system_prompt}"
                 else:
                     preset_system_prompt = name_line
+            # Persona-linked skills (v3.6): same idea as project pinned_skills —
+            # the prompt stays short, the details live in the skill files.
+            skills = [s for s in (preset.get("skills") or []) if isinstance(s, str) and s.strip()]
+            if skills:
+                skills_line = (
+                    "This persona relies on these skills — read each one with the "
+                    "manage_skills tool (action='view') before acting on its topic, "
+                    "and follow it: " + ", ".join(skills[:6])
+                )
+                preset_system_prompt = (
+                    f"{preset_system_prompt}\n\n{skills_line}" if preset_system_prompt else skills_line
+                )
             if "temperature" in preset:
                 temperature = preset["temperature"]
             if "max_tokens" in preset:
