@@ -4,8 +4,8 @@
  * Two tabs: "Shopping" (checkable list, duplicate-merging add, share
  * toggle) and "Recipes" (cards with image/instructions/ingredients and a
  * prominent "Add to shopping list" button; server merges duplicates).
- * Sharing v1: a shared recipe is visible to every account; a shared
- * shopping list can be seen/checked by everyone. Follows the pomodoro.js
+ * Sharing v1 lives in Settings (per-user switches): a user can share
+ * their whole shopping list and/or recipe collection with all accounts. Follows the pomodoro.js
  * tool-window pattern: lazy modal + makeWindowDraggable + modalManager.
  */
 
@@ -195,7 +195,6 @@ function _renderRecipes(body) {
       ${r.image_url ? `<img class="recipe-card-img" src="${_esc(r.image_url)}" alt="" draggable="false" />` : ''}
       <div class="recipe-card-main">
         <div class="recipe-card-title">${_esc(r.title || '(untitled recipe)')}
-          ${r.is_shared ? '<span class="recipe-shared-pill" title="Visible to all accounts">shared</span>' : ''}
           ${!r.mine ? `<span class="recipe-shared-pill" title="Shared by this user">${_esc(r.owner || '')}</span>` : ''}
         </div>
         <div class="recipe-card-sub">${(r.ingredients || []).length} ingredient${(r.ingredients || []).length === 1 ? '' : 's'}</div>
@@ -274,10 +273,6 @@ function _renderRecipeForm(body, rec) {
       <div class="shopping-add-row" style="gap:8px;align-items:center;">
         <button type="button" class="shopping-text-btn" id="recipe-f-photo">${rec.image_url ? 'Change photo' : 'Attach photo'}</button>
         ${rec.image_url ? `<img src="${_esc(rec.image_url)}" style="height:34px;border-radius:6px;border:1px solid var(--border);" alt="" />` : ''}
-        <label class="shopping-share-row" style="margin:0;padding:0;border:0;">
-          <input type="checkbox" id="recipe-f-shared" ${rec.is_shared ? 'checked' : ''} />
-          <span>Share with all accounts</span>
-        </label>
         <span style="flex:1"></span>
         <button type="button" class="shopping-text-btn" id="recipe-f-cancel">Cancel</button>
         <button type="button" class="pomo-btn pomo-primary" id="recipe-f-save">Save</button>
@@ -301,7 +296,6 @@ function _renderRecipeForm(body, rec) {
         rec.title = body.querySelector('#recipe-f-title').value;
         rec.instructions = body.querySelector('#recipe-f-instructions').value;
         rec.ingredients = _collectIngredients();
-        rec.is_shared = body.querySelector('#recipe-f-shared').checked;
         _render();
       }
     });
@@ -374,7 +368,6 @@ function _renderRecipeForm(body, rec) {
       instructions: body.querySelector('#recipe-f-instructions').value,
       ingredients: _collectIngredients(),
       image_url: rec.image_url || null,
-      is_shared: body.querySelector('#recipe-f-shared').checked,
     };
     const url = isNew ? `${API_BASE}/api/recipes` : `${API_BASE}/api/recipes/${rec.id}`;
     await fetch(url, {
