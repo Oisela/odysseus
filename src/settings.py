@@ -175,6 +175,9 @@ DEFAULT_SETTINGS = {
     "reminder_llm_synthesis": False,
     "reminder_llm_persona": "",
     "reminder_ntfy_topic": "Reminders",
+    # Phone pings for finished/failed scheduled tasks and long agent runs
+    # (>2 min with no browser active). Rides the reminder ntfy config.
+    "ntfy_task_push": True,
     "reminder_email_to": "",
     # Generic outbound webhook channel: pick any saved Integration as the
     # target and supply a JSON payload template. Use {{title}} and {{message}}
