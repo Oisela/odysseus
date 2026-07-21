@@ -2125,6 +2125,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             if (sessionModule && sessionModule.selectSession) sessionModule.selectSession(m.session_id);
           });
         }
+        // Highlight line-rects beyond the first must not intercept the
+        // pointer — dragging a new selection across an old highlight would
+        // stall and flicker. The first rect keeps tooltip/click/delete.
+        if (isHl && qi > 0) el.style.pointerEvents = 'none';
         if (qi === 0) {
           const rm = document.createElement('button');
           rm.className = 'doc-mark-rm';
@@ -2276,6 +2280,28 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Right after the page img, BEFORE form-field overlays and marks —
     // those must stay clickable above the selection layer.
     wrap.insertBefore(layer, wrap.children[1] || null);
+    // Fit each invisible word to its exact box via scaleX (the PDF.js
+    // trick). Without this the glyphs overflow into neighboring words,
+    // and the overlapping hit-targets make the native selection jitter
+    // while dragging. One read pass, then one write pass — no thrash.
+    // The ratio survives resizes: font-size (via --tl-h) and box width
+    // scale with the same page aspect.
+    requestAnimationFrame(() => {
+      const boxW = wrap.clientWidth || 800;
+      const reads = [];
+      layer.querySelectorAll('.doc-tl-word').forEach((sp) => {
+        reads.push([sp, sp.scrollWidth, (parseFloat(sp.style.width) / 100) * boxW]);
+      });
+      reads.forEach(([sp, glyphW, targetW]) => {
+        if (glyphW > 0 && targetW > 0) {
+          const k = targetW / glyphW;
+          if (k > 0.15 && k < 8) {
+            sp.style.transformOrigin = '0 0';
+            sp.style.transform = `scaleX(${k.toFixed(4)})`;
+          }
+        }
+      });
+    });
   }
 
   function _wireSelectionPopup(paneId) {
