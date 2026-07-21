@@ -93,12 +93,17 @@ def _merge_titles(existing: str, new: str) -> str:
     return f"{ex_n} — {ex_q or '1×'} + {nw_q or '1×'}"
 
 
-def _shared_shoppers(exclude: Optional[str] = None) -> list[str]:
+def _pref_sharers(pref_key: str, exclude: Optional[str] = None) -> list[str]:
+    """Owners who flipped the given share pref (list or recipes) in Settings."""
     users = _load_all_prefs().get("_users") or {}
     return [
         u for u, p in users.items()
-        if isinstance(p, dict) and p.get("shopping_list_shared") and u != exclude
+        if isinstance(p, dict) and p.get(pref_key) and u != exclude
     ]
+
+
+def _shared_shoppers(exclude: Optional[str] = None) -> list[str]:
+    return _pref_sharers("shopping_list_shared", exclude)
 
 
 def _item_dict(it: ShoppingItem, me: Optional[str]) -> dict:
@@ -270,7 +275,9 @@ def setup_shopping_routes():
         try:
             q = db.query(Recipe)
             if me is not None:
-                q = q.filter((Recipe.owner == me) | (Recipe.is_shared == True))  # noqa: E712
+                # Sharing is a per-user Settings switch (recipes_shared), not
+                # per recipe — mirrors the shopping-list model.
+                q = q.filter(Recipe.owner.in_([me] + _pref_sharers("recipes_shared", exclude=me)))
             recipes = q.order_by(Recipe.updated_at.desc()).all()
             return {"recipes": [_recipe_dict(r, me) for r in recipes]}
         finally:
@@ -362,7 +369,7 @@ def setup_shopping_routes():
             r = db.query(Recipe).filter(Recipe.id == recipe_id).first()
             if not r:
                 raise HTTPException(404, "recipe not found")
-            if me is not None and r.owner != me and not r.is_shared:
+            if me is not None and r.owner != me and r.owner not in _pref_sharers("recipes_shared", exclude=me):
                 raise HTTPException(403, "recipe is private")
             try:
                 ingredients = json.loads(r.ingredients or "[]")

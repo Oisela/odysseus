@@ -833,25 +833,30 @@ async function initDelegateWorker() {
 // The share toggle lives here (Alessios Wunsch) — the shopping window
 // itself stays purely about items. Backed by /api/shopping/share.
 async function initShoppingSettings() {
-  var toggle = el('set-shoppingShareToggle');
+  var listToggle = el('set-shoppingShareToggle');
+  var recipesToggle = el('set-recipesShareToggle');
   var msg = el('set-shoppingShareMsg');
-  if (!toggle) return;
-  try {
-    // Read just the flag from prefs — /api/shopping would query the whole
-    // list (plus a prefs scan) only to answer one boolean.
-    var res = await fetch('/api/prefs/shopping_list_shared', { credentials: 'same-origin' });
-    var data = await res.json();
-    toggle.checked = !!data.value;
-  } catch (e) { /* endpoint unavailable — leave unchecked */ }
-  toggle.addEventListener('change', async function() {
+  if (!listToggle && !recipesToggle) return;
+  // Both flags are plain per-user prefs — read/write them directly.
+  var wire = async function(toggle, prefKey, onText, offText) {
+    if (!toggle) return;
     try {
-      await fetch('/api/shopping/share', { method: 'PUT', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shared: toggle.checked })
-      });
-      if (msg) { msg.textContent = toggle.checked ? 'List shared with all accounts' : 'List is private again'; setTimeout(function() { msg.textContent = ''; }, 2500); }
-    } catch (e) { if (msg) msg.textContent = 'Failed to save'; }
-  });
+      var res = await fetch('/api/prefs/' + prefKey, { credentials: 'same-origin' });
+      var data = await res.json();
+      toggle.checked = !!data.value;
+    } catch (e) { /* endpoint unavailable — leave unchecked */ }
+    toggle.addEventListener('change', async function() {
+      try {
+        await fetch('/api/prefs/' + prefKey, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: toggle.checked })
+        });
+        if (msg) { msg.textContent = toggle.checked ? onText : offText; setTimeout(function() { msg.textContent = ''; }, 2500); }
+      } catch (e) { if (msg) msg.textContent = 'Failed to save'; }
+    });
+  };
+  wire(listToggle, 'shopping_list_shared', 'List shared with all accounts', 'List is private again');
+  wire(recipesToggle, 'recipes_shared', 'Recipes shared with all accounts', 'Recipes are private again');
 }
 
 /* ── Image Generation ── */
