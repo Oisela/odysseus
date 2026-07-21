@@ -90,6 +90,16 @@ class PresetUpdateRequest(BaseModel):
         max_length=5000,
         description="Text to append to each outgoing user message"
     )
+    skills: List[str] = Field(
+        default_factory=list,
+        max_length=6,
+        description="Skill names this persona relies on (injected as a load instruction)"
+    )
+    prompt_doc_id: str = Field(
+        "",
+        max_length=64,
+        description="Library document id whose content becomes the system prompt"
+    )
 
 
 class DirectoryRequest(BaseModel):
