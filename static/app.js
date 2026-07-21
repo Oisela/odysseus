@@ -843,6 +843,10 @@ function initializeEventListeners() {
       console.warn('fresh chat stream detach failed:', e);
     }
     if (sessionModule) sessionModule.setCurrentSessionId(null);
+    // A project chat's pill/class/workspace must not survive into a fresh
+    // blank chat — without a session switch nothing else clears them
+    // ("stuck project" bug, 2026-07-20).
+    import('./js/projects.js').then(m => { try { m.onSessionSwitch(null, null); } catch (_) {} }).catch(() => {});
     const box = el('chat-history');
     if (box) box.innerHTML = '';
     if (chatModule && chatModule.showWelcomeScreen) {

@@ -246,7 +246,7 @@ function _renderRecipeForm(body, rec) {
     <div class="recipe-form">
       <input type="text" id="recipe-f-title" class="styled-prompt-input" placeholder="Recipe title" value="${_esc(rec.title || '')}" style="margin:0;" />
       <textarea id="recipe-f-instructions" class="styled-prompt-input" rows="5" placeholder="Instructions (markdown works)…" style="margin:0;resize:vertical;">${_esc(rec.instructions || '')}</textarea>
-      <textarea id="recipe-f-ingredients" class="styled-prompt-input" rows="5" placeholder="Ingredients — one per line, e.g.&#10;200ml Milch&#10;2 Eier&#10;Mehl" style="margin:0;resize:vertical;">${_esc((rec.ingredients || []).map(i => (i && i.text) || i).join('\n'))}</textarea>
+      <div class="recipe-f-ingredients" id="recipe-f-ingredients"></div>
       <div class="shopping-add-row" style="gap:8px;align-items:center;">
         <button type="button" class="shopping-text-btn" id="recipe-f-photo">${rec.image_url ? 'Change photo' : 'Attach photo'}</button>
         ${rec.image_url ? `<img src="${_esc(rec.image_url)}" style="height:34px;border-radius:6px;border:1px solid var(--border);" alt="" />` : ''}
@@ -280,7 +280,7 @@ function _renderRecipeForm(body, rec) {
           // keep current field values across the re-render
           rec.title = body.querySelector('#recipe-f-title').value;
           rec.instructions = body.querySelector('#recipe-f-instructions').value;
-          rec.ingredients = body.querySelector('#recipe-f-ingredients').value.split('\n').map(s => s.trim()).filter(Boolean);
+          rec.ingredients = _collectIngredients();
           rec.is_shared = body.querySelector('#recipe-f-shared').checked;
           _render();
         }
@@ -288,6 +288,45 @@ function _renderRecipeForm(body, rec) {
     });
     fi.click();
   });
+  // Ingredient editor = real todo-style rows (Enter appends the next row,
+  // X removes, done-circles carry the cooking state) — not a bare textarea.
+  const ingWrap = body.querySelector('#recipe-f-ingredients');
+  const ingRows = () => Array.from(ingWrap.querySelectorAll('.recipe-f-ing-row'));
+  const _collectIngredients = () => ingRows()
+    .map(r => ({ text: r.querySelector('input[type="text"]').value.trim(), done: r.dataset.done === '1' }))
+    .filter(i => i.text);
+  const addIngRow = (ing, focus) => {
+    const row = document.createElement('div');
+    row.className = 'recipe-f-ing-row';
+    row.dataset.done = ing && ing.done ? '1' : '0';
+    row.innerHTML = `
+      <span class="shopping-check${ing && ing.done ? ' checked' : ''}" aria-hidden="true"></span>
+      <input type="text" placeholder="e.g. 200ml Milch" value="${_esc((ing && (ing.text || ing)) || '')}" />
+      <button type="button" class="recipe-f-ing-rm" title="Remove ingredient">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>`;
+    const input = row.querySelector('input');
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addIngRow(null, true);
+      } else if (e.key === 'Backspace' && !input.value && ingRows().length > 1) {
+        e.preventDefault();
+        const prev = row.previousElementSibling;
+        row.remove();
+        prev?.querySelector('input')?.focus();
+      }
+    });
+    row.querySelector('.recipe-f-ing-rm').addEventListener('click', () => {
+      row.remove();
+      if (!ingRows().length) addIngRow(null, true);
+    });
+    ingWrap.appendChild(row);
+    if (focus) input.focus();
+  };
+  const _initialIngs = (rec.ingredients && rec.ingredients.length) ? rec.ingredients : [null];
+  _initialIngs.forEach(i => addIngRow(i, false));
+
   // Paste a screenshot straight into the instructions — uploads it and
   // drops a markdown image link at the cursor (rendered on the card).
   const instrTa = body.querySelector('#recipe-f-instructions');
@@ -316,14 +355,10 @@ function _renderRecipeForm(body, rec) {
   });
   body.querySelector('#recipe-f-cancel').addEventListener('click', () => { _editingRecipe = null; _render(); });
   body.querySelector('#recipe-f-save').addEventListener('click', async () => {
-    // Keep checked-off states for unchanged ingredient lines.
-    const oldDone = new Map((rec.ingredients || []).map(i => [((i && i.text) || i || '').trim(), !!(i && i.done)]));
     const payload = {
       title: body.querySelector('#recipe-f-title').value.trim(),
       instructions: body.querySelector('#recipe-f-instructions').value,
-      ingredients: body.querySelector('#recipe-f-ingredients').value.split('\n')
-        .map(s => s.trim()).filter(Boolean)
-        .map(t => ({ text: t, done: oldDone.get(t) || false })),
+      ingredients: _collectIngredients(),
       image_url: rec.image_url || null,
       is_shared: body.querySelector('#recipe-f-shared').checked,
     };

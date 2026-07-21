@@ -14,7 +14,7 @@ import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
 import workspaceModule from './workspace.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { selectSession, loadSessions, getSessions, createSessionItem } from './sessions.js';
+import { selectSession, loadSessions, getSessions, createSessionItem, getCurrentSessionId } from './sessions.js';
 
 const API = window.location.origin;
 // Same folder glyph as the workspace picker (not an emoji).
@@ -114,6 +114,34 @@ function _syncProjectPanelBtn(project) {
       _openProjectPanel(project);
     }
   };
+  // Emergency exit (Alessio 2026-07-20): the X on the pill detaches the
+  // CURRENT chat from its project — same effect as dragging the chat out
+  // of the project section, but reachable without drag gymnastics.
+  const exit = btn.querySelector('#project-panel-exit');
+  if (exit) {
+    exit.onclick = async (e) => {
+      e.stopPropagation();
+      const sid = (typeof getCurrentSessionId === 'function') ? getCurrentSessionId() : null;
+      if (!sid) {
+        // Pending/blank chat that inherited a stale project context — just clear it.
+        onSessionSwitch(null, null);
+        return;
+      }
+      if (!await uiModule.styledConfirm(
+        `Detach this chat from "${project.name}"? The chat keeps its history; the project's workspace, persona and instructions stop applying.`,
+        { confirmText: 'Exit project' },
+      )) return;
+      try {
+        await _json(`/api/projects/sessions/${sid}`, { method: 'DELETE' });
+        onSessionSwitch(sid, null);
+        await loadSessions();
+        render();
+        uiModule.showToast('Chat detached from project');
+      } catch (err) {
+        uiModule.showError('Failed to exit project');
+      }
+    };
+  }
   // Switching between two project chats: refresh the panel if it's open.
   if (_panelProjectId && _panelProjectId !== project.id && document.getElementById('project-panel')) {
     _openProjectPanel(project);
