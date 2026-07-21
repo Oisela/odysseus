@@ -48,6 +48,7 @@ let _items = [];
 let _listShared = false;
 let _recipes = [];
 let _editingRecipe = null;   // recipe object being edited, or {} for new, or null
+let _doneOpen = false;       // "In the cart" section collapsed by default
 
 // Canonical escaper from ui.js (same wrapper as notes.js/admin.js use).
 function _esc(s) {
@@ -129,10 +130,11 @@ function _renderShopping(body) {
     </div>
     <div class="shopping-list">${open.map(row).join('') || '<div class="shopping-empty">Nothing to buy — add items above or open a recipe.</div>'}</div>
     ${done.length ? `
-      <div class="shopping-done-head"><span>In the cart · ${done.length}</span>
+      <div class="shopping-done-head${_doneOpen ? ' open' : ''}" id="shopping-done-head" role="button" tabindex="0" title="${_doneOpen ? 'Hide' : 'Show'} checked-off items">
+        <span><svg class="shopping-done-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>In the cart · ${done.length}</span>
         <button type="button" class="shopping-text-btn" id="shopping-clear-done">Clear</button>
       </div>
-      <div class="shopping-list shopping-list-done">${done.map(row).join('')}</div>` : ''}`;
+      ${_doneOpen ? `<div class="shopping-list shopping-list-done">${done.map(row).join('')}</div>` : ''}` : ''}`;
 
   const input = body.querySelector('#shopping-add-input');
   input.addEventListener('keydown', async (e) => {
@@ -168,6 +170,18 @@ function _renderShopping(body) {
       await _api(`/api/shopping/${id}`, { method: 'DELETE' }).catch(() => {});
     });
   });
+
+  const doneHead = body.querySelector('#shopping-done-head');
+  if (doneHead) {
+    const toggle = () => { _doneOpen = !_doneOpen; _render(); };
+    doneHead.addEventListener('click', (e) => {
+      if (e.target.closest('#shopping-clear-done')) return;
+      toggle();
+    });
+    doneHead.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
 
   body.querySelector('#shopping-clear-done')?.addEventListener('click', async () => {
     _items = _items.filter(i => !i.done || !i.mine);
