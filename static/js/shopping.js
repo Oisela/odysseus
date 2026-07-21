@@ -89,12 +89,31 @@ function _getModal() {
           <button type="button" class="shopping-tab active" data-tab="shopping">Shopping</button>
           <button type="button" class="shopping-tab" data-tab="recipes">Recipes</button>
         </div>
-        <button class="close-btn" id="shopping-close" style="margin-left:auto;">✖</button>
+        <button type="button" class="shopping-header-icon-btn" id="shopping-share-btn" title="Sharing is configured in Settings — click to jump there">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        </button>
+        <button class="close-btn" id="shopping-close">✖</button>
       </div>
       <div class="modal-body shopping-body" id="shopping-body"></div>
     </div>`;
   document.body.appendChild(_modal);
   _modal.querySelector('#shopping-close').addEventListener('click', closeShopping);
+  // Share shortcut — sharing lives in Settings (both switches); jump there
+  // and flash the card so it's findable.
+  _modal.querySelector('#shopping-share-btn').addEventListener('click', () => {
+    import('./settings.js').then((m) => {
+      (m.default || m).open('ai');
+      setTimeout(() => {
+        const card = document.getElementById('set-shoppingShareToggle')?.closest('.admin-card');
+        if (card) {
+          card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          card.style.transition = 'box-shadow 0.3s';
+          card.style.boxShadow = '0 0 0 2px var(--accent, var(--red))';
+          setTimeout(() => { card.style.boxShadow = ''; }, 1800);
+        }
+      }, 150);
+    }).catch(() => {});
+  });
   _modal.addEventListener('click', (e) => { if (e.target === _modal) closeShopping(); });
   _modal.querySelector('#shopping-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest('.shopping-tab');

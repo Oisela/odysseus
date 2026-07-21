@@ -40957,7 +40957,28 @@ body.theme-frosted .modal {
   flex-direction: column;
 }
 .shopping-body { flex: 1; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 10px; }
-.shopping-tabs { display: inline-flex; margin-left: 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+/* Header layout must stay [title][tabs]……[share][_][X] no matter what the
+   minimize-button injector or a hidden sibling does: the tabs own the
+   auto-margin, everything after them groups tight on the right. */
+.shopping-modal-content .modal-header { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.shopping-modal-content .modal-header h4 { margin: 0; flex-shrink: 0; display: inline-flex; align-items: center; }
+.shopping-modal-content .modal-header .modal-minimize-btn { margin-left: 0 !important; }
+.shopping-header-icon-btn {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.shopping-header-icon-btn:hover { opacity: 1; border-color: var(--accent, var(--red)); }
+.shopping-tabs { display: inline-flex; margin-left: 6px; margin-right: auto; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .shopping-tab {
   border: none;
   background: none;
@@ -41188,5 +41209,17 @@ body.theme-frosted .modal {
   border-color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
 }
+/* Prompt/Persona window is user-resizable (Alessio 2026-07-21) — long
+   persona prompts need room. The inner panel scrolls; the system-prompt
+   textarea keeps its own vertical resizer on top of this. */
+#custom-preset-modal .modal-content {
+  resize: both;
+  overflow: auto;
+  min-width: 420px;
+  min-height: 380px;
+  max-width: 96vw;
+  max-height: 94vh;
+}
+#custom-preset-modal #custom-system-prompt { min-height: 90px; }
 #doc-pdf-view.latex-marking .doc-mark,
 #doc-latex-view.latex-marking .doc-mark { pointer-events: none; }
