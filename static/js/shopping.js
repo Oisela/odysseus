@@ -104,11 +104,7 @@ function _renderShopping(body) {
       <div class="shopping-done-head"><span>In the cart · ${done.length}</span>
         <button type="button" class="shopping-text-btn" id="shopping-clear-done">Clear</button>
       </div>
-      <div class="shopping-list shopping-list-done">${done.map(row).join('')}</div>` : ''}
-    <label class="shopping-share-row" title="Everyone with an account sees and checks this list">
-      <input type="checkbox" id="shopping-share-toggle" ${_listShared ? 'checked' : ''} />
-      <span>Share my list with all accounts</span>
-    </label>`;
+      <div class="shopping-list shopping-list-done">${done.map(row).join('')}</div>` : ''}`;
 
   const input = body.querySelector('#shopping-add-input');
   input.addEventListener('keydown', async (e) => {
@@ -154,14 +150,15 @@ function _renderShopping(body) {
     _render();
   });
 
-  body.querySelector('#shopping-share-toggle').addEventListener('change', async (e) => {
-    _listShared = e.target.checked;
-    await fetch(`${API_BASE}/api/shopping/share`, {
-      method: 'PUT', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shared: _listShared }),
-    }).catch(() => {});
-  });
+}
+
+// Instructions may embed pasted screenshots as markdown image links —
+// render those (upload-URLs only), everything else stays escaped text.
+function _instrHtml(t) {
+  return _esc(t).replace(
+    /!\[[^\]]*\]\((\/api\/upload\/[A-Za-z0-9_-]+)\)/g,
+    '<img class="recipe-instr-img" src="$1" alt="" draggable="false" />',
+  );
 }
 
 // ── Recipes tab ──
@@ -177,8 +174,12 @@ function _renderRecipes(body) {
           ${!r.mine ? `<span class="recipe-shared-pill" title="Shared by this user">${_esc(r.owner || '')}</span>` : ''}
         </div>
         <div class="recipe-card-sub">${(r.ingredients || []).length} ingredient${(r.ingredients || []).length === 1 ? '' : 's'}</div>
-        ${(r.instructions || '').trim() ? `<div class="recipe-card-instructions">${_esc(r.instructions)}</div>` : ''}
-        ${(r.ingredients || []).length ? `<ul class="recipe-card-ingredients">${r.ingredients.map(z => `<li>${_esc(z)}</li>`).join('')}</ul>` : ''}
+        ${(r.instructions || '').trim() ? `<div class="recipe-card-instructions">${_instrHtml(r.instructions)}</div>` : ''}
+        ${(r.ingredients || []).length ? `<div class="recipe-ingredients">${r.ingredients.map((z, i) => `
+          <div class="recipe-ing${z.done ? ' done' : ''}" data-idx="${i}">
+            <button type="button" class="shopping-check" ${r.mine ? '' : 'disabled'} title="${r.mine ? 'Check off while cooking' : 'Shared recipe — only the owner checks'}"></button>
+            <span class="recipe-ing-text">${_esc(z.text)}</span>
+          </div>`).join('')}</div>` : ''}
       </div>
       <div class="recipe-card-actions">
         <button type="button" class="pomo-btn pomo-primary recipe-to-shopping" title="Every ingredient becomes one item on your shopping list">
@@ -214,6 +215,19 @@ function _renderRecipes(body) {
         await _loadShopping();
       } catch { btn.disabled = false; }
     });
+    // Cooking mode: tick ingredients off directly on the card (owner only).
+    el.querySelectorAll('.recipe-ing .shopping-check:not([disabled])').forEach(cb => {
+      cb.addEventListener('click', async () => {
+        const idx = Number(cb.closest('.recipe-ing').dataset.idx);
+        try {
+          const d = await fetch(`${API_BASE}/api/recipes/${id}/ingredients/${idx}/toggle`, {
+            method: 'POST', credentials: 'same-origin',
+          }).then(r => r.json());
+          if (rec && Array.isArray(d.ingredients)) rec.ingredients = d.ingredients;
+          _render();
+        } catch { /* keep current state */ }
+      });
+    });
     el.querySelector('.recipe-edit')?.addEventListener('click', () => {
       _editingRecipe = { ...rec };
       _render();
@@ -232,7 +246,7 @@ function _renderRecipeForm(body, rec) {
     <div class="recipe-form">
       <input type="text" id="recipe-f-title" class="styled-prompt-input" placeholder="Recipe title" value="${_esc(rec.title || '')}" style="margin:0;" />
       <textarea id="recipe-f-instructions" class="styled-prompt-input" rows="5" placeholder="Instructions (markdown works)…" style="margin:0;resize:vertical;">${_esc(rec.instructions || '')}</textarea>
-      <textarea id="recipe-f-ingredients" class="styled-prompt-input" rows="5" placeholder="Ingredients — one per line, e.g.&#10;200ml Milch&#10;2 Eier&#10;Mehl" style="margin:0;resize:vertical;">${_esc((rec.ingredients || []).join('\n'))}</textarea>
+      <textarea id="recipe-f-ingredients" class="styled-prompt-input" rows="5" placeholder="Ingredients — one per line, e.g.&#10;200ml Milch&#10;2 Eier&#10;Mehl" style="margin:0;resize:vertical;">${_esc((rec.ingredients || []).map(i => (i && i.text) || i).join('\n'))}</textarea>
       <div class="shopping-add-row" style="gap:8px;align-items:center;">
         <button type="button" class="shopping-text-btn" id="recipe-f-photo">${rec.image_url ? 'Change photo' : 'Attach photo'}</button>
         ${rec.image_url ? `<img src="${_esc(rec.image_url)}" style="height:34px;border-radius:6px;border:1px solid var(--border);" alt="" />` : ''}
@@ -274,12 +288,42 @@ function _renderRecipeForm(body, rec) {
     });
     fi.click();
   });
+  // Paste a screenshot straight into the instructions — uploads it and
+  // drops a markdown image link at the cursor (rendered on the card).
+  const instrTa = body.querySelector('#recipe-f-instructions');
+  instrTa.addEventListener('paste', async (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const f = it.getAsFile();
+        if (!f) return;
+        const fd = new FormData();
+        fd.append('files', f);
+        try {
+          const d = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(r => r.json());
+          const fid = d.files && d.files[0] && d.files[0].id;
+          if (fid) {
+            const md = `\n![bild](/api/upload/${fid})\n`;
+            const at = instrTa.selectionStart != null ? instrTa.selectionStart : instrTa.value.length;
+            instrTa.value = instrTa.value.slice(0, at) + md + instrTa.value.slice(at);
+            instrTa.setSelectionRange(at + md.length, at + md.length);
+          }
+        } catch { /* upload failed — paste ignored */ }
+        return;
+      }
+    }
+  });
   body.querySelector('#recipe-f-cancel').addEventListener('click', () => { _editingRecipe = null; _render(); });
   body.querySelector('#recipe-f-save').addEventListener('click', async () => {
+    // Keep checked-off states for unchanged ingredient lines.
+    const oldDone = new Map((rec.ingredients || []).map(i => [((i && i.text) || i || '').trim(), !!(i && i.done)]));
     const payload = {
       title: body.querySelector('#recipe-f-title').value.trim(),
       instructions: body.querySelector('#recipe-f-instructions').value,
-      ingredients: body.querySelector('#recipe-f-ingredients').value.split('\n').map(s => s.trim()).filter(Boolean),
+      ingredients: body.querySelector('#recipe-f-ingredients').value.split('\n')
+        .map(s => s.trim()).filter(Boolean)
+        .map(t => ({ text: t, done: oldDone.get(t) || false })),
       image_url: rec.image_url || null,
       is_shared: body.querySelector('#recipe-f-shared').checked,
     };

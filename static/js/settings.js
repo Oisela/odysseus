@@ -829,6 +829,29 @@ async function initDelegateWorker() {
   });
 }
 
+/* ── Shopping list sharing ── */
+// The share toggle lives here (Alessios Wunsch) — the shopping window
+// itself stays purely about items. Backed by /api/shopping/share.
+async function initShoppingSettings() {
+  var toggle = el('set-shoppingShareToggle');
+  var msg = el('set-shoppingShareMsg');
+  if (!toggle) return;
+  try {
+    var res = await fetch('/api/shopping', { credentials: 'same-origin' });
+    var data = await res.json();
+    toggle.checked = !!data.list_shared;
+  } catch (e) { /* endpoint unavailable — leave unchecked */ }
+  toggle.addEventListener('change', async function() {
+    try {
+      await fetch('/api/shopping/share', { method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shared: toggle.checked })
+      });
+      if (msg) { msg.textContent = toggle.checked ? 'List shared with all accounts' : 'List is private again'; setTimeout(function() { msg.textContent = ''; }, 2500); }
+    } catch (e) { if (msg) msg.textContent = 'Failed to save'; }
+  });
+}
+
 /* ── Image Generation ── */
 async function initImageSettings() {
   const modelSel = el('set-imgModelSelect');
@@ -2415,6 +2438,7 @@ function initAll() {
   initDefaultChat();
   initTeacherModel();
   initDelegateWorker();
+  initShoppingSettings();
   initUtilityModel();
   initImageSettings();
   initVisionSettings();
