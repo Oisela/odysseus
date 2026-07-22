@@ -1940,7 +1940,12 @@ function _savePrefLists() {
   }).catch(() => {});
 }
 
+// Kept for detail re-renders triggered by delegated row clicks, which
+// happen outside the render pass that received the highlights.
+let _mdReminderHighlights = null;
+
 function _renderMasterDetail(body, sorted, activeReminderHighlights) {
+  _mdReminderHighlights = activeReminderHighlights;
   if (!sorted.some(n => n.id === _selectedNoteId)) {
     _selectedNoteId = sorted.length ? sorted[0].id : null;
     if (_editingId && _editingId !== '__new__') _editingId = null;
@@ -1978,23 +1983,32 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       form.querySelector('.note-form-title')?.focus();
       if (restored) uiModule.showToast('Restored unsaved note');
     });
+    // Delegated wiring, attached ONCE: renders replace only the CHILDREN of
+    // the rows/sidebar containers, so per-row listeners had to be re-wired
+    // on every render. One listener per persistent container replaces them.
+    _wireMdRows(layout);
+    _wireMdSidebar(layout);
   }
   _renderListsSidebar(layout.querySelector('.notes-md-sidebar'));
   const rowsEl = layout.querySelector('.notes-md-rows');
   rowsEl.innerHTML = sorted.length
     ? sorted.map(n => _buildRowHtml(n)).join('')
     : '<div class="notes-md-empty">Nothing here yet</div>';
-  _bindRowEvents(rowsEl);
 
   const detail = layout.querySelector('.notes-md-detail');
   // An open edit form owns the detail pane — don't wipe it mid-typing.
   if (_editingId && detail.querySelector('.note-form')) return;
+  _renderMdDetail(layout);
+}
+
+function _renderMdDetail(layout) {
+  const detail = layout.querySelector('.notes-md-detail');
   const note = _notes.find(n => n.id === _selectedNoteId);
   if (!note) {
     detail.innerHTML = '<div class="notes-md-empty">Select an entry on the left<br>or add one above the list</div>';
     return;
   }
-  detail.innerHTML = _buildCardHtml(note, activeReminderHighlights);
+  detail.innerHTML = _buildCardHtml(note, _mdReminderHighlights);
   _bindCardEvents(detail);
 }
 
@@ -2029,21 +2043,12 @@ function _buildRowHtml(note) {
   </div>`;
 }
 
-function _bindRowEvents(rowsEl) {
-  rowsEl.querySelectorAll('.note-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.note-row-check')) return;
-      const id = row.dataset.noteId;
-      if (id === _selectedNoteId) return;
-      if (_editingId && _editingId !== '__new__') _editingId = null;
-      _selectedNoteId = id;
-      _renderNotes();
-    });
-  });
-  rowsEl.querySelectorAll('.note-row-check').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.noteId;
+function _wireMdRows(layout) {
+  const rowsEl = layout.querySelector('.notes-md-rows');
+  rowsEl.addEventListener('click', (e) => {
+    const check = e.target.closest('.note-row-check');
+    if (check) {
+      const id = check.dataset.noteId;
       const idx = _notes.findIndex(n => n.id === id);
       if (idx < 0) return;
       const note = _notes[idx];
@@ -2058,7 +2063,21 @@ function _bindRowEvents(rowsEl) {
         uiModule.showError('Archive failed');
       });
       uiModule.showToast('Done — archived (Ctrl+Z to undo)');
-    });
+      return;
+    }
+    const row = e.target.closest('.note-row');
+    if (!row) return;
+    const id = row.dataset.noteId;
+    if (id === _selectedNoteId) return;
+    if (_editingId && _editingId !== '__new__') _editingId = null;
+    _selectedNoteId = id;
+    // Selecting a row repaints ONLY the active-row marker and the detail
+    // pane — the list and sidebar are unchanged, so no full render.
+    rowsEl.querySelectorAll('.note-row.active').forEach(r => r.classList.remove('active'));
+    row.classList.add('active');
+    const detail = layout.querySelector('.notes-md-detail');
+    if (_editingId && detail.querySelector('.note-form')) return;
+    _renderMdDetail(layout);
   });
 }
 
@@ -2105,45 +2124,51 @@ function _renderListsSidebar(el) {
     entry('data-add-list="1"', SVG.plus, 'New list', null, false),
   ].join('');
 
-  el.querySelectorAll('.notes-list-entry').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.addList) {
-        btn.outerHTML = '<input type="text" class="notes-md-newlist-input" placeholder="List name…" maxlength="40" />';
-        const inp = el.querySelector('.notes-md-newlist-input');
-        inp.focus();
-        const commit = () => {
-          const name = inp.value.trim().replace(/\s+/g, '-');
-          if (name && !_prefLists.includes(name)) {
-            _prefLists.push(name);
-            _savePrefLists();
-            _activeLabel = name;
-            _activeFilter = null;
-          }
-          _renderNotes();
-        };
-        inp.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') commit();
-          if (ev.key === 'Escape') _renderNotes();
-        });
-        inp.addEventListener('blur', () => _renderNotes());
-        return;
-      }
-      if (btn.dataset.smart === 'completed') {
-        // Completed = the archive — reuse the header toggle's full flow
-        // (fetch archived, tint, X-to-exit).
-        document.getElementById('notes-archive-toggle')?.click();
-        return;
-      }
-      if (btn.dataset.smart) {
-        _activeLabel = null;
-        _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
-      } else if (btn.dataset.list != null) {
-        _activeLabel = btn.dataset.list;
-        _activeFilter = null;
-      }
-      _selectedNoteId = null;
-      _renderNotes();
-    });
+}
+
+// Delegated once on the persistent sidebar container (see _renderMasterDetail):
+// _renderListsSidebar only swaps children, so entry buttons never re-wire.
+function _wireMdSidebar(layout) {
+  const el = layout.querySelector('.notes-md-sidebar');
+  el.addEventListener('click', (e) => {
+    const btn = e.target.closest('.notes-list-entry');
+    if (!btn) return;
+    if (btn.dataset.addList) {
+      btn.outerHTML = '<input type="text" class="notes-md-newlist-input" placeholder="List name…" maxlength="40" />';
+      const inp = el.querySelector('.notes-md-newlist-input');
+      inp.focus();
+      const commit = () => {
+        const name = inp.value.trim().replace(/\s+/g, '-');
+        if (name && !_prefLists.includes(name)) {
+          _prefLists.push(name);
+          _savePrefLists();
+          _activeLabel = name;
+          _activeFilter = null;
+        }
+        _renderNotes();
+      };
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') commit();
+        if (ev.key === 'Escape') _renderNotes();
+      });
+      inp.addEventListener('blur', () => _renderNotes());
+      return;
+    }
+    if (btn.dataset.smart === 'completed') {
+      // Completed = the archive — reuse the header toggle's full flow
+      // (fetch archived, tint, X-to-exit).
+      document.getElementById('notes-archive-toggle')?.click();
+      return;
+    }
+    if (btn.dataset.smart) {
+      _activeLabel = null;
+      _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
+    } else if (btn.dataset.list != null) {
+      _activeLabel = btn.dataset.list;
+      _activeFilter = null;
+    }
+    _selectedNoteId = null;
+    _renderNotes();
   });
 }
 
