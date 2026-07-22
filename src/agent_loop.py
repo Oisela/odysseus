@@ -2543,6 +2543,35 @@ def build_active_plan_note(approved_plan: str) -> str:
     )
 
 
+def _session_tools_used(session_id: str, limit: int = 40) -> Set[str]:
+    """Tool names that already executed in this session.
+
+    Read from the persisted tool_events metadata on the newest `limit`
+    history messages — the same records the history reload uses, so this
+    survives restarts and works for every provider.
+    """
+    used: Set[str] = set()
+    if not session_id:
+        return used
+    try:
+        from src.ai_interaction import get_session_manager
+        mgr = get_session_manager()
+        sess = mgr.get_session(session_id) if mgr else None
+    except Exception:
+        return used
+    if not sess:
+        return used
+    for m in list(getattr(sess, "history", []) or [])[-limit:]:
+        md = getattr(m, "metadata", None)
+        if md is None and isinstance(m, dict):
+            md = m.get("metadata")
+        for ev in (md or {}).get("tool_events") or []:
+            tool = (ev or {}).get("tool")
+            if tool:
+                used.add(str(tool))
+    return used
+
+
 def _detect_runaway_call(call_freq, threshold=15):
     """Tool name of a call signature repeated >= ``threshold`` times — a real
     runaway loop. Counts IDENTICAL repeated calls (same tool AND args), so a
@@ -2950,6 +2979,25 @@ async def stream_agent_loop(
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
+    # Sticky session tools: the selector is per-turn stateless, so a terse
+    # follow-up ("okey dann die fc") LOST tools the session had already used
+    # — 13:36 the remnote MCP tools created cards, 14:01 the model claimed it
+    # couldn't reach the bridge and buffered (Alessio, 2026-07-22). Any tool
+    # that already executed in this session stays selectable. The finetune
+    # clamps below intentionally REPLACE the set and thus still win.
+    if _relevant_tools is not None and session_id:
+        try:
+            _sticky = _session_tools_used(session_id) - set(disabled_tools or [])
+            _sticky_added = _sticky - _relevant_tools
+            if _sticky_added:
+                _relevant_tools |= _sticky
+                logger.info(
+                    "[agent-intent] sticky session tools added=%s",
+                    sorted(_sticky_added),
+                )
+        except Exception as _e:
+            logger.debug(f"[agent-intent] sticky session tools skipped: {_e}")
 
     _intent_domains = set(_intent.get("domains") or set())
     _ody_doc_finetune_mode = (

@@ -1,19 +1,20 @@
 import json
 
+import core.prefs_store as prefs_store
 import routes.prefs_routes as prefs_routes
 
 
 def test_save_replaces_prefs_file_atomically(monkeypatch, tmp_path):
     calls = []
-    real_replace = prefs_routes.os.replace
+    real_replace = prefs_store.os.replace
 
     def fake_replace(src, dst):
         calls.append((src, dst))
         real_replace(src, dst)
 
     prefs_file = tmp_path / "data" / "user_prefs.json"
-    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
-    monkeypatch.setattr(prefs_routes.os, "replace", fake_replace)
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(prefs_file))
+    monkeypatch.setattr(prefs_store.os, "replace", fake_replace)
 
     prefs_routes._save({"theme": "dark"})
 
@@ -27,7 +28,7 @@ def test_save_replaces_prefs_file_atomically(monkeypatch, tmp_path):
 
 def test_save_for_user_preserves_scoped_user_prefs(monkeypatch, tmp_path):
     prefs_file = tmp_path / "data" / "user_prefs.json"
-    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(prefs_file))
 
     prefs_routes._save_for_user("alice", {"theme": "dark"})
 
@@ -38,7 +39,7 @@ def test_save_for_user_preserves_scoped_user_prefs(monkeypatch, tmp_path):
 
 def test_save_for_user_preserves_flat_prefs_when_auth_disabled(monkeypatch, tmp_path):
     prefs_file = tmp_path / "data" / "user_prefs.json"
-    monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(prefs_file))
 
     prefs_routes._save_for_user(None, {"theme": "dark"})
 

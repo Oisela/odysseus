@@ -639,25 +639,25 @@ async function initUtilityModel() {
   });
 }
 
-/* ── Teacher Model ── */
-// SOTA model called automatically when a self-hosted student model
-// fails an agent-mode task. Stored as a single `teacher_model` string
-// in the form `model@endpoint_name` so the backend's _resolve_model
-// can dispatch directly. Master toggle is the separate
-// `teacher_enabled` flag so the user can pause the feature without
-// losing their endpoint+model selection.
-async function initTeacherModel() {
-  var enabledToggle = el('set-teacherEnabledToggle');
-  var epSel = el('set-teacherEpSelect');
-  var modelSel = el('set-teacherModelSelect');
-  var msg = el('set-teacherChatMsg');
+/* ── Teacher Model / Delegate Worker (shared card wiring) ── */
+// Both cards are the same widget: a master toggle + endpoint/model pick,
+// stored as one `model@endpoint_name` string so the backend's
+// _resolve_model can dispatch directly. The toggle is a SEPARATE flag so
+// pausing the feature keeps the endpoint+model selection. The dropdowns
+// stay interactive while off — the toggle gates whether the feature runs,
+// not whether you can configure it; the card just dims as a dormant cue.
+async function initModelPickerCard(cfg) {
+  var enabledToggle = el(cfg.toggleId);
+  var epSel = el(cfg.epSelectId);
+  var modelSel = el(cfg.modelSelectId);
+  var msg = el(cfg.msgId);
   if (!epSel || !modelSel) return;
   var _endpoints = [];
 
   try {
     _endpoints = await _fetchModelEndpoints();
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
-  } catch (e) { console.warn('Failed to load endpoints for teacher model', e); }
+  } catch (e) { console.warn('Failed to load endpoints for ' + cfg.label, e); }
 
   function refreshModels(selectedModel) {
     var epId = epSel.value;
@@ -665,30 +665,19 @@ async function initTeacherModel() {
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
-  // Disable / enable the endpoint+model dropdowns based on the
-  // master switch. Greys them out so users see at a glance that the
-  // selection is dormant.
   function syncEnabled() {
     var off = enabledToggle ? !enabledToggle.checked : true;
-    // Dim the card when off as a "dormant" cue, but keep the endpoint+model
-    // dropdowns INTERACTIVE — the toggle gates whether escalation runs, not
-    // whether you can configure it. (Previously the config was inert when off,
-    // so users couldn't pick an endpoint until they'd already enabled it.)
     var card = enabledToggle ? enabledToggle.closest('.admin-card') : null;
     if (card) card.style.opacity = off ? '0.7' : '';
-    var wrap = card ? card.querySelector('.settings-col') : null;
-    if (wrap) wrap.style.pointerEvents = '';
-    epSel.disabled = false;
-    modelSel.disabled = false;
   }
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (enabledToggle) enabledToggle.checked = !!settings.teacher_enabled;
-    // teacher_model is stored as "model@endpoint_name". Split on the
-    // LAST `@` so model ids that contain @ aren't mangled.
-    var spec = settings.teacher_model || '';
+    if (enabledToggle) enabledToggle.checked = !!settings[cfg.enabledKey];
+    // Split "model@endpoint_name" on the LAST `@` so model ids that
+    // contain @ aren't mangled.
+    var spec = settings[cfg.modelKey] || '';
     var savedModel = spec;
     var savedEpName = '';
     var at = spec.lastIndexOf('@');
@@ -704,9 +693,9 @@ async function initTeacherModel() {
     }
     refreshModels(savedModel);
     syncEnabled();
-  } catch (e) { console.warn('Failed to load teacher model settings', e); }
+  } catch (e) { console.warn('Failed to load ' + cfg.label + ' settings', e); }
 
-  async function saveTeacher() {
+  async function save() {
     try {
       var spec = '';
       if (epSel.value && modelSel.value) {
@@ -714,9 +703,12 @@ async function initTeacherModel() {
         spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
       }
       var enabled = enabledToggle ? !!enabledToggle.checked : false;
+      var body = {};
+      body[cfg.enabledKey] = enabled;
+      body[cfg.modelKey] = spec;
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
+        body: JSON.stringify(body)
       });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
@@ -727,11 +719,11 @@ async function initTeacherModel() {
   if (enabledToggle) {
     enabledToggle.addEventListener('change', function() {
       syncEnabled();
-      saveTeacher();
+      save();
     });
   }
-  epSel.addEventListener('change', function() { refreshModels(''); saveTeacher(); });
-  modelSel.addEventListener('change', saveTeacher);
+  epSel.addEventListener('change', function() { refreshModels(''); save(); });
+  modelSel.addEventListener('change', save);
 
   _registerAiEndpointRefresh(function(endpoints) {
     _endpoints = endpoints;
@@ -740,92 +732,31 @@ async function initTeacherModel() {
   });
 }
 
-/* ── Delegate Worker ── */
-// Cheaper model the agent hands self-contained subtasks to via the
-// `delegate` tool. Mirrors the teacher card: stored as one
-// `delegate_worker_model` string in `model@endpoint_name` form (backend
-// _resolve_model dispatches it directly), with a separate
-// `delegate_enabled` master switch so pausing keeps the selection.
-async function initDelegateWorker() {
-  var enabledToggle = el('set-delegateEnabledToggle');
-  var epSel = el('set-delegateEpSelect');
-  var modelSel = el('set-delegateModelSelect');
-  var msg = el('set-delegateMsg');
-  if (!epSel || !modelSel) return;
-  var _endpoints = [];
+// Teacher = SOTA model called automatically when a self-hosted student
+// model fails an agent-mode task.
+function initTeacherModel() {
+  return initModelPickerCard({
+    label: 'teacher model',
+    toggleId: 'set-teacherEnabledToggle',
+    epSelectId: 'set-teacherEpSelect',
+    modelSelectId: 'set-teacherModelSelect',
+    msgId: 'set-teacherChatMsg',
+    enabledKey: 'teacher_enabled',
+    modelKey: 'teacher_model'
+  });
+}
 
-  try {
-    _endpoints = await _fetchModelEndpoints();
-    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
-  } catch (e) { console.warn('Failed to load endpoints for delegate worker', e); }
-
-  function refreshModels(selectedModel) {
-    var epId = epSel.value;
-    var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
-  }
-
-  function syncEnabled() {
-    var off = enabledToggle ? !enabledToggle.checked : true;
-    var card = enabledToggle ? enabledToggle.closest('.admin-card') : null;
-    if (card) card.style.opacity = off ? '0.7' : '';
-  }
-
-  try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
-    if (enabledToggle) enabledToggle.checked = !!settings.delegate_enabled;
-    // Split "model@endpoint_name" on the LAST `@` so model ids that
-    // contain @ aren't mangled (same rule as the teacher spec).
-    var spec = settings.delegate_worker_model || '';
-    var savedModel = spec;
-    var savedEpName = '';
-    var at = spec.lastIndexOf('@');
-    if (at >= 0) {
-      savedModel = spec.slice(0, at);
-      savedEpName = spec.slice(at + 1);
-    }
-    if (savedEpName) {
-      var match = _endpoints.find(function(ep) {
-        return ep.name && ep.name.toLowerCase().indexOf(savedEpName.toLowerCase()) >= 0;
-      });
-      if (match) epSel.value = match.id;
-    }
-    refreshModels(savedModel);
-    syncEnabled();
-  } catch (e) { console.warn('Failed to load delegate worker settings', e); }
-
-  async function saveDelegate() {
-    try {
-      var spec = '';
-      if (epSel.value && modelSel.value) {
-        var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
-        spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
-      }
-      var enabled = enabledToggle ? !!enabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delegate_enabled: enabled, delegate_worker_model: spec })
-      });
-      msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
-      msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
-      setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
-  }
-
-  if (enabledToggle) {
-    enabledToggle.addEventListener('change', function() {
-      syncEnabled();
-      saveDelegate();
-    });
-  }
-  epSel.addEventListener('change', function() { refreshModels(''); saveDelegate(); });
-  modelSel.addEventListener('change', saveDelegate);
-
-  _registerAiEndpointRefresh(function(endpoints) {
-    _endpoints = endpoints;
-    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
-    refreshModels(modelSel.value);
+// Delegate worker = cheaper model the agent hands self-contained
+// subtasks to via the `delegate` tool.
+function initDelegateWorker() {
+  return initModelPickerCard({
+    label: 'delegate worker',
+    toggleId: 'set-delegateEnabledToggle',
+    epSelectId: 'set-delegateEpSelect',
+    modelSelectId: 'set-delegateModelSelect',
+    msgId: 'set-delegateMsg',
+    enabledKey: 'delegate_enabled',
+    modelKey: 'delegate_worker_model'
   });
 }
 

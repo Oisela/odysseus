@@ -81,7 +81,11 @@ class SetAdminRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
-SESSION_COOKIE = "odysseus_session"
+# Env-overridable: cookies are scoped to the DOMAIN, not the port, so a beta
+# instance on :7001 of the same host would otherwise clobber prod's session
+# cookie on every login (logging into beta logged you out of prod — Alessio,
+# 2026-07-22). The beta compose override sets a channel-suffixed name.
+SESSION_COOKIE = os.getenv("ODYSSEUS_SESSION_COOKIE", "odysseus_session")
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:

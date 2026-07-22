@@ -32,3 +32,30 @@ def test_garbage_values_are_ignored_not_crashing():
     assert s["today_s"] == 600
     assert s["week_s"] == 600
     assert s["week_avg_s"] == 600
+
+
+def test_normalize_preserves_drinks_and_excludes_them_from_stray_merge():
+    # v3.7 water tracker: the drinks map must survive every normalize->write
+    # cycle, and must NOT be treated as stray day-total keys (the v3.1
+    # rollback-window merge). Invalid drink values are dropped.
+    from routes.pomodoro_routes import _normalize_owner_record
+
+    rec = {
+        "entries": [{"id": "a", "date": "2026-07-22", "seconds": 60, "note": ""}],
+        "drinks": {"2026-07-22": 4, "not-a-date": 9, "2026-07-21": "3"},
+        "2026-07-20": 1200,  # stray rollback-window day total -> synthetic entry
+    }
+    out = _normalize_owner_record(rec)
+    assert out["drinks"] == {"2026-07-22": 4, "2026-07-21": 3}
+    notes = [e.get("note") for e in out["entries"]]
+    assert any("Rollback" in (n or "") for n in notes)
+    # drinks did not leak into the synthetic day-total entries
+    assert all(e["date"] != "not-a-date" for e in out["entries"])
+
+
+def test_normalize_legacy_record_gets_empty_drinks():
+    from routes.pomodoro_routes import _normalize_owner_record
+
+    out = _normalize_owner_record({"2026-07-19": 600})
+    assert out["drinks"] == {}
+    assert out["entries"] and out["entries"][0]["seconds"] == 600

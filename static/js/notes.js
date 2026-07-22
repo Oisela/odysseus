@@ -4,6 +4,7 @@
  */
 
 import uiModule from './ui.js';
+import dragSortModule from './dragSort.js';
 import markdownModule from './markdown.js';
 import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
@@ -185,6 +186,9 @@ function _wireNotesWindow(pane) {
     enableDock: true,
     enableLeftDock: true,
     onEnterFullscreen: () => {
+      // Remember where the window was BEFORE fullscreen so exiting returns
+      // there instead of force-docking right.
+      _captureNotesWindowState(pane);
       pane.classList.add('notes-window-fullscreen');
       snapModalToZone(pane, {
         name: 'fullscreen',
@@ -192,7 +196,7 @@ function _wireNotesWindow(pane) {
       });
     },
     onExitFullscreen: () => {
-      _restoreNotesSidebarDock(pane);
+      _applyNotesWindowState(pane);
     },
   });
 }
@@ -219,6 +223,61 @@ function _restoreNotesSidebarDock(pane) {
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
   applyEdgeDock(pane, 'right');
+}
+
+// ── Window-state memory ─────────────────────────────────────────────────
+// Notes tears its pane DOWN on minimize/close and rebuilds it on open, so
+// the generic modalManager float-geometry snapshot never sees it. Without
+// this, every reopen ran _restoreNotesSidebarDock and a hand-floated
+// window snapped back to the right edge (Alessio, 2026-07-22).
+
+const NOTES_WINDOW_STATE_KEY = 'odysseus-notes-window-state';
+
+function _captureNotesWindowState(pane) {
+  if (!pane || !pane.isConnected || window.innerWidth <= 768) return;
+  let st = null;
+  if (pane.classList.contains('notes-window-fullscreen')) {
+    st = { mode: 'fullscreen' };
+  } else if (pane.classList.contains('modal-left-docked')) {
+    st = { mode: 'dock-left' };
+  } else if (pane.classList.contains('modal-right-docked')) {
+    st = { mode: 'dock-right' };
+  } else {
+    const r = pane.getBoundingClientRect();
+    if (r.width > 80 && r.height > 80) {
+      st = { mode: 'float', left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+  }
+  if (!st) return;
+  try { localStorage.setItem(NOTES_WINDOW_STATE_KEY, JSON.stringify(st)); } catch (_) {}
+}
+
+function _applyNotesWindowState(pane) {
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(NOTES_WINDOW_STATE_KEY) || 'null'); } catch (_) {}
+  if (!st || st.mode === 'dock-right') { _restoreNotesSidebarDock(pane); return; }
+  if (st.mode === 'dock-left') {
+    _clearNotesSnapStyles(pane);
+    if (pane.isConnected) applyEdgeDock(pane, 'left');
+    return;
+  }
+  if (st.mode === 'fullscreen') {
+    _clearNotesSnapStyles(pane);
+    pane.classList.add('notes-window-fullscreen');
+    snapModalToZone(pane, { name: 'fullscreen', rect: _notesFullscreenSafeRect() });
+    return;
+  }
+  // Floating: put the window back exactly where it was, clamped so a
+  // since-resized viewport can't strand it off-screen.
+  _clearNotesSnapStyles(pane);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = Math.max(320, Math.min(Number(st.width) || 720, vw - 16));
+  const h = Math.max(240, Math.min(Number(st.height) || vh * 0.8, vh - 16));
+  pane.style.position = 'fixed';
+  pane.style.left = Math.max(8, Math.min(Number(st.left) || 8, vw - w - 8)) + 'px';
+  pane.style.top = Math.max(8, Math.min(Number(st.top) || 8, vh - 60)) + 'px';
+  pane.style.width = w + 'px';
+  pane.style.height = h + 'px';
 }
 
 // Notes is not a `.modal`; its backdrop is the top-level stacking surface.
@@ -1241,7 +1300,9 @@ export function openPanel() {
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
-  _restoreNotesSidebarDock(pane);
+  // Reopen where the user left the window (float/dock/fullscreen) — the
+  // pane is rebuilt from scratch, so the position must be re-applied here.
+  _applyNotesWindowState(pane);
   _bringNotesToFront(pane);
 
   // Events
@@ -1703,6 +1764,9 @@ export function closePanel(direction) {
   const pane = document.getElementById('notes-pane');
   const backdrop = document.getElementById('notes-pane-backdrop');
   if (pane) {
+    // The pane is about to be torn down — remember its window state so the
+    // next open (incl. restore-from-chip) rebuilds it in the same place.
+    _captureNotesWindowState(pane);
     // Scale-out + fade. Match the enter animation duration so close feels
     // like the same gesture played backwards.
     pane.classList.add('notes-pane-leaving');
@@ -1940,9 +2004,42 @@ function _savePrefLists() {
   }).catch(() => {});
 }
 
+// Kept for detail re-renders triggered by delegated row clicks, which
+// happen outside the render pass that received the highlights.
+let _mdReminderHighlights = null;
+
+// List toolbar state (persisted like the view mode). Manual = the classic
+// pinned/reminder/sort_order ordering with drag handles; everything else is
+// a view-side sort that disables dragging.
+let _mdSort = (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-md-sort')) || 'manual';
+let _mdTypeFilter = (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-md-typefilter')) || 'all';
+
+function _applyMdToolbar(sorted) {
+  let rows = sorted;
+  if (_mdTypeFilter === 'todo') rows = rows.filter(n => _hasItems(n));
+  else if (_mdTypeFilter === 'note') rows = rows.filter(n => !_hasItems(n));
+  if (_mdSort === 'az' || _mdSort === 'za') {
+    rows = [...rows].sort((a, b) =>
+      (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+    if (_mdSort === 'za') rows.reverse();
+  } else if (_mdSort === 'due') {
+    // Soonest due first; entries without a due date keep list order at the end.
+    rows = [...rows].sort((a, b) => {
+      const da = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+      const db = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+      return da - db;
+    });
+  } else if (_mdSort === 'newest') {
+    rows = [...rows].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+  }
+  return rows;
+}
+
 function _renderMasterDetail(body, sorted, activeReminderHighlights) {
-  if (!sorted.some(n => n.id === _selectedNoteId)) {
-    _selectedNoteId = sorted.length ? sorted[0].id : null;
+  _mdReminderHighlights = activeReminderHighlights;
+  const rows = _applyMdToolbar(sorted);
+  if (!rows.some(n => n.id === _selectedNoteId)) {
+    _selectedNoteId = rows.length ? rows[0].id : null;
     if (_editingId && _editingId !== '__new__') _editingId = null;
   }
   let layout = body.querySelector('.notes-md-layout');
@@ -1952,17 +2049,35 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       <div class="notes-md-sidebar"></div>
       <div class="notes-md-rows-col">
         <div class="notes-md-quickadd">
-          <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do &middot; Shift+Enter = note" autocomplete="off" />
+          <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do" title="Enter = to-do · Shift+Enter = note" autocomplete="off" />
           <button type="button" class="notes-md-fullform-btn" title="New note (full editor — reminder, photo, drawing)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
         </div>
-        <div class="notes-md-rows"></div>
+        <div class="notes-md-toolbar">
+          <div class="notes-md-typefilter">
+            <button type="button" data-tf="all">All</button>
+            <button type="button" data-tf="todo">To-dos</button>
+            <button type="button" data-tf="note">Notes</button>
+          </div>
+          <label class="notes-md-sortwrap" title="Sort order">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3v18M7 21l-4-4M7 21l4-4"/><path d="M17 21V3M17 3l-4 4M17 3l4 4"/></svg>
+            <select class="notes-md-sortsel">
+              <option value="manual">Manual</option>
+              <option value="az">A–Z</option>
+              <option value="za">Z–A</option>
+              <option value="due">Due date</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+        </div>
+        <div class="notes-md-rows" id="notes-md-rows"></div>
       </div>
       <div class="notes-md-detail"></div>
     </div>`;
     layout = body.querySelector('.notes-md-layout');
     _wireMdQuickAdd(layout.querySelector('.notes-md-quickadd-input'));
+    _wireMdToolbar(layout);
     // Full composer in the detail pane — for anything the quick-add can't
     // do (reminder, photo, drawing). Recipes live in the Shopping module.
     layout.querySelector('.notes-md-fullform-btn').addEventListener('click', () => {
@@ -1978,23 +2093,38 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       form.querySelector('.note-form-title')?.focus();
       if (restored) uiModule.showToast('Restored unsaved note');
     });
+    // Delegated wiring, attached ONCE: renders replace only the CHILDREN of
+    // the rows/sidebar containers, so per-row listeners had to be re-wired
+    // on every render. One listener per persistent container replaces them.
+    _wireMdRows(layout);
+    _wireMdSidebar(layout);
   }
   _renderListsSidebar(layout.querySelector('.notes-md-sidebar'));
+  // Toolbar reflects state on every render (it survives layout reuse).
+  layout.querySelectorAll('.notes-md-typefilter button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tf === _mdTypeFilter));
+  const sortSel = layout.querySelector('.notes-md-sortsel');
+  if (sortSel) sortSel.value = _mdSort;
   const rowsEl = layout.querySelector('.notes-md-rows');
-  rowsEl.innerHTML = sorted.length
-    ? sorted.map(n => _buildRowHtml(n)).join('')
+  rowsEl.classList.toggle('notes-md-rows-manual', _mdSort === 'manual');
+  rowsEl.innerHTML = rows.length
+    ? rows.map(n => _buildRowHtml(n)).join('')
     : '<div class="notes-md-empty">Nothing here yet</div>';
-  _bindRowEvents(rowsEl);
 
   const detail = layout.querySelector('.notes-md-detail');
   // An open edit form owns the detail pane — don't wipe it mid-typing.
   if (_editingId && detail.querySelector('.note-form')) return;
+  _renderMdDetail(layout);
+}
+
+function _renderMdDetail(layout) {
+  const detail = layout.querySelector('.notes-md-detail');
   const note = _notes.find(n => n.id === _selectedNoteId);
   if (!note) {
     detail.innerHTML = '<div class="notes-md-empty">Select an entry on the left<br>or add one above the list</div>';
     return;
   }
-  detail.innerHTML = _buildCardHtml(note, activeReminderHighlights);
+  detail.innerHTML = _buildCardHtml(note, _mdReminderHighlights);
   _bindCardEvents(detail);
 }
 
@@ -2019,6 +2149,7 @@ function _buildRowHtml(note) {
     ? `<span class="note-row-pin" title="Pinned"><svg width="10" height="10" viewBox="0 0 24 28" fill="currentColor"><g transform="rotate(0 12 14)"><line x1="12" y1="17" x2="12" y2="27" stroke="currentColor" stroke-width="2"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></g></svg></span>`
     : '';
   return `<div class="note-row${note.id === _selectedNoteId ? ' active' : ''}" data-note-id="${note.id}">
+    <span class="note-row-grip" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.3"/><circle cx="7" cy="3" r="1.3"/><circle cx="3" cy="8" r="1.3"/><circle cx="7" cy="8" r="1.3"/><circle cx="3" cy="13" r="1.3"/><circle cx="7" cy="13" r="1.3"/></svg></span>
     ${icon}
     <div class="note-row-main">
       <div class="note-row-title">${_esc(note.title || (isTodo ? '(untitled to-do)' : '(untitled note)'))}</div>
@@ -2029,21 +2160,56 @@ function _buildRowHtml(note) {
   </div>`;
 }
 
-function _bindRowEvents(rowsEl) {
-  rowsEl.querySelectorAll('.note-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.note-row-check')) return;
-      const id = row.dataset.noteId;
-      if (id === _selectedNoteId) return;
-      if (_editingId && _editingId !== '__new__') _editingId = null;
-      _selectedNoteId = id;
-      _renderNotes();
-    });
+function _wireMdToolbar(layout) {
+  layout.querySelector('.notes-md-typefilter').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tf]');
+    if (!btn || btn.dataset.tf === _mdTypeFilter) return;
+    _mdTypeFilter = btn.dataset.tf;
+    try { localStorage.setItem('odysseus-notes-md-typefilter', _mdTypeFilter); } catch (_) {}
+    _renderNotes();
   });
-  rowsEl.querySelectorAll('.note-row-check').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.noteId;
+  layout.querySelector('.notes-md-sortsel').addEventListener('change', (e) => {
+    _mdSort = e.target.value;
+    try { localStorage.setItem('odysseus-notes-md-sort', _mdSort); } catch (_) {}
+    _renderNotes();
+  });
+  // Rows drag onto their grip handle only — a full-row drag would swallow
+  // the row click/selection. Grips are hidden by CSS outside manual sort.
+  dragSortModule.enable('notes-md-rows', '.note-row', {
+    handleSelector: '.note-row-grip',
+    instanceKey: 'notes-md-rows',
+    onReorder: _commitMdReorder,
+  });
+}
+
+async function _commitMdReorder(items) {
+  const ids = items.map(el => el.dataset.noteId).filter(Boolean);
+  if (!ids.length) return;
+  try {
+    await fetch(`${API_BASE}/api/notes/reorder`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    ids.forEach((nid, i) => {
+      const n = _notes.find(nn => nn.id === nid);
+      if (n) n.sort_order = i;
+    });
+  } catch (e) {
+    console.warn('reorder failed', e);
+  }
+  // Re-render so the pinned/reminder blocks reassert their precedence —
+  // manual order applies within the plain block (same rule as the grid).
+  _renderNotes();
+}
+
+function _wireMdRows(layout) {
+  const rowsEl = layout.querySelector('.notes-md-rows');
+  rowsEl.addEventListener('click', (e) => {
+    const check = e.target.closest('.note-row-check');
+    if (check) {
+      const id = check.dataset.noteId;
       const idx = _notes.findIndex(n => n.id === id);
       if (idx < 0) return;
       const note = _notes[idx];
@@ -2058,7 +2224,21 @@ function _bindRowEvents(rowsEl) {
         uiModule.showError('Archive failed');
       });
       uiModule.showToast('Done — archived (Ctrl+Z to undo)');
-    });
+      return;
+    }
+    const row = e.target.closest('.note-row');
+    if (!row) return;
+    const id = row.dataset.noteId;
+    if (id === _selectedNoteId) return;
+    if (_editingId && _editingId !== '__new__') _editingId = null;
+    _selectedNoteId = id;
+    // Selecting a row repaints ONLY the active-row marker and the detail
+    // pane — the list and sidebar are unchanged, so no full render.
+    rowsEl.querySelectorAll('.note-row.active').forEach(r => r.classList.remove('active'));
+    row.classList.add('active');
+    const detail = layout.querySelector('.notes-md-detail');
+    if (_editingId && detail.querySelector('.note-form')) return;
+    _renderMdDetail(layout);
   });
 }
 
@@ -2101,50 +2281,125 @@ function _renderListsSidebar(el) {
     entry('data-smart="reminders"', SVG.reminders, 'Reminders', remindersCount, _activeFilter === 'reminders'),
     entry('data-smart="completed"', SVG.completed, 'Completed', null, false),
     '<div class="notes-md-sidebar-label">Lists</div>',
-    ...tags.map(t => entry(`data-list="${_attrEsc(t)}"`, SVG.list, t, countFor(t), _activeLabel === t)),
+    ...tags.map(t => entry(`data-list="${_attrEsc(t)}" title="Click again to rename"`, SVG.list, t, countFor(t), _activeLabel === t)),
     entry('data-add-list="1"', SVG.plus, 'New list', null, false),
   ].join('');
 
-  el.querySelectorAll('.notes-list-entry').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.addList) {
-        btn.outerHTML = '<input type="text" class="notes-md-newlist-input" placeholder="List name…" maxlength="40" />';
-        const inp = el.querySelector('.notes-md-newlist-input');
-        inp.focus();
-        const commit = () => {
-          const name = inp.value.trim().replace(/\s+/g, '-');
-          if (name && !_prefLists.includes(name)) {
-            _prefLists.push(name);
-            _savePrefLists();
-            _activeLabel = name;
-            _activeFilter = null;
-          }
-          _renderNotes();
-        };
-        inp.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') commit();
-          if (ev.key === 'Escape') _renderNotes();
-        });
-        inp.addEventListener('blur', () => _renderNotes());
-        return;
-      }
-      if (btn.dataset.smart === 'completed') {
-        // Completed = the archive — reuse the header toggle's full flow
-        // (fetch archived, tint, X-to-exit).
-        document.getElementById('notes-archive-toggle')?.click();
-        return;
-      }
-      if (btn.dataset.smart) {
-        _activeLabel = null;
-        _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
-      } else if (btn.dataset.list != null) {
-        _activeLabel = btn.dataset.list;
-        _activeFilter = null;
-      }
-      _selectedNoteId = null;
-      _renderNotes();
-    });
+}
+
+// Delegated once on the persistent sidebar container (see _renderMasterDetail):
+// _renderListsSidebar only swaps children, so entry buttons never re-wire.
+function _wireMdSidebar(layout) {
+  const el = layout.querySelector('.notes-md-sidebar');
+  el.addEventListener('click', (e) => {
+    const btn = e.target.closest('.notes-list-entry');
+    if (!btn) return;
+    if (btn.dataset.addList) {
+      btn.outerHTML = '<input type="text" class="notes-md-newlist-input" placeholder="List name…" maxlength="40" />';
+      const inp = el.querySelector('.notes-md-newlist-input');
+      inp.focus();
+      const commit = () => {
+        const name = inp.value.trim().replace(/\s+/g, '-');
+        if (name && !_prefLists.includes(name)) {
+          _prefLists.push(name);
+          _savePrefLists();
+          _activeLabel = name;
+          _activeFilter = null;
+        }
+        _renderNotes();
+      };
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') commit();
+        if (ev.key === 'Escape') _renderNotes();
+      });
+      inp.addEventListener('blur', () => _renderNotes());
+      return;
+    }
+    if (btn.dataset.smart === 'completed') {
+      // Completed = the archive — reuse the header toggle's full flow
+      // (fetch archived, tint, X-to-exit).
+      document.getElementById('notes-archive-toggle')?.click();
+      return;
+    }
+    if (btn.dataset.smart) {
+      _activeLabel = null;
+      _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
+    } else if (btn.dataset.list != null) {
+      // Click on the ALREADY-ACTIVE list = rename it inline (same
+      // click-to-rename idea as the endpoint labels in Settings).
+      if (btn.dataset.list === _activeLabel) { _startListRename(btn); return; }
+      _activeLabel = btn.dataset.list;
+      _activeFilter = null;
+    }
+    _selectedNoteId = null;
+    _renderNotes();
   });
+}
+
+function _startListRename(btn) {
+  const oldName = btn.dataset.list;
+  if (!oldName) return;
+  const el = btn.closest('.notes-md-sidebar');
+  // Swap the WHOLE entry button for an input — an <input> inside a <button>
+  // is invalid HTML and doesn't reliably take focus/keys. Same pattern as
+  // the "New list" flow above.
+  btn.outerHTML = '<input type="text" class="notes-md-newlist-input notes-md-renamelist-input" maxlength="40" />';
+  const inp = el.querySelector('.notes-md-renamelist-input');
+  if (!inp) { _renderNotes(); return; }
+  inp.value = oldName;
+  inp.focus();
+  inp.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const name = inp.value.trim().replace(/\s+/g, '-');
+    if (!commit || !name || name === oldName) { _renderNotes(); return; }
+    if (_prefLists.includes(name)) {
+      uiModule.showError('A list with that name already exists');
+      _renderNotes();
+      return;
+    }
+    _commitListRename(oldName, name);
+  };
+  inp.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    if (ev.key === 'Escape') finish(false);
+  });
+  inp.addEventListener('blur', () => finish(true));
+  inp.addEventListener('click', (ev) => ev.stopPropagation());
+}
+
+async function _commitListRename(oldName, newName) {
+  try {
+    const res = await fetch(`${API_BASE}/api/notes/rename-label`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: oldName, to: newName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    uiModule.showError('Rename failed');
+    _renderNotes();
+    return;
+  }
+  const idx = _prefLists.indexOf(oldName);
+  if (idx >= 0) _prefLists[idx] = newName;
+  else if (!_prefLists.includes(newName)) _prefLists.push(newName);
+  _savePrefLists();
+  // Mirror the server-side token rewrite locally so the sidebar counts and
+  // note cards agree without a refetch.
+  for (const n of _notes) {
+    if (!n.label) continue;
+    const tokens = n.label.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.includes(oldName)) continue;
+    n.label = [...new Set(tokens.map(t => (t === oldName ? newName : t)))].join(' ');
+  }
+  if (_activeLabel === oldName) _activeLabel = newName;
+  _renderNotes();
+  uiModule.showToast(`List renamed to "${newName}"`);
 }
 
 function _wireMdQuickAdd(input) {

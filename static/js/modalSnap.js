@@ -48,6 +48,13 @@ function _hasAnyOtherDockedWindow(owner) {
   return _hasOtherDockedWindow('left', owner) || _hasOtherDockedWindow('right', owner);
 }
 
+// Canonical localStorage key for a modal's remembered dock side. Lives here
+// (not in modalManager) so drag-to-undock below can forget the side without
+// a modalSnap -> modalManager import cycle.
+export function rememberedDockKey(id) {
+  return `odysseus-modal-remembered-dock-${id}`;
+}
+
 export function clearDockSide(side, owner = null) {
   if (side !== 'left' && side !== 'right') return;
   if (_hasOtherDockedWindow(side, owner)) return;
@@ -614,6 +621,13 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   if (!dockClass) dockClass = side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
   if (!modal.classList.contains(dockClass)) return;
   modal.classList.remove(dockClass);
+  // Dragging a window OUT of the dock is the user saying "floating, please" —
+  // forget the remembered side. Without this, the visibility observer in
+  // modalManager re-applied the stale side on the next minimize→restore and
+  // the window snapped back to the edge (Alessio, 2026-07-22).
+  if (modal.id) {
+    try { localStorage.removeItem(rememberedDockKey(modal.id)); } catch (_) {}
+  }
   clearDockSide(side, modal);
   if (side === 'left' && !_hasOtherDockedWindow('left', modal)) {
     _clearEmailDocSplitGeometry();

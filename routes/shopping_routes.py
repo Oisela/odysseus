@@ -18,7 +18,11 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Recipe, ShoppingItem
 from src.auth_helpers import get_current_user
-from routes.prefs_routes import _load as _load_all_prefs, _load_for_user, _save_for_user
+from core.prefs_store import (
+    load_all_prefs as _load_all_prefs,
+    load_prefs_for_user as _load_for_user,
+    save_prefs_for_user as _save_for_user,
+)
 
 logger = logging.getLogger(__name__)
 

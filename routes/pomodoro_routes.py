@@ -72,16 +72,30 @@ def _normalize_owner_record(rec: Any) -> Dict[str, Any]:
                 })
         return out
 
+    def _drinks(rec: Any) -> Dict[str, int]:
+        # v3.7: water tracker — {iso-date: glasses}. Must survive every
+        # normalize→write cycle, so it is carried through explicitly here.
+        raw = rec.get("drinks") if isinstance(rec, dict) else None
+        out: Dict[str, int] = {}
+        if isinstance(raw, dict):
+            for day, n in raw.items():
+                try:
+                    date.fromisoformat(str(day))
+                    out[str(day)] = max(0, int(n))
+                except (TypeError, ValueError):
+                    continue
+        return out
+
     if isinstance(rec, dict) and isinstance(rec.get("entries"), list):
         entries = [e for e in rec["entries"] if isinstance(e, dict)]
         # A v3.1-era instance (rollback window) logs day totals NEXT TO the
         # entries key — merge those stray day keys instead of dropping the
         # focus time silently on the next upgrade.
-        stray = {k: v for k, v in rec.items() if k != "entries"}
+        stray = {k: v for k, v in rec.items() if k not in ("entries", "drinks")}
         entries += _day_total_entries(stray, "Tagessumme (Rollback-Fenster)", "rb")
-        return {"entries": entries}
+        return {"entries": entries, "drinks": _drinks(rec)}
     entries = _day_total_entries(rec if isinstance(rec, dict) else {}, "Tagessumme (vor v3.2)", "legacy")
-    return {"entries": entries}
+    return {"entries": entries, "drinks": _drinks(rec)}
 
 
 def _day_seconds(rec: Dict[str, Any]) -> Dict[str, int]:
@@ -281,7 +295,29 @@ def setup_pomodoro_routes():
         stats["total_s"] = sum(days.values())
         stats["total_sessions"] = len(entries)
         stats["today_sessions"] = sum(1 for e in entries if e.get("date") == today.isoformat())
+        stats["today_drinks"] = int((mine.get("drinks") or {}).get(today.isoformat(), 0))
         return stats
+
+    @router.post("/drink")
+    async def pomodoro_drink(request: Request) -> Dict[str, Any]:
+        """Water tracker: bump today's glass count (delta may be negative
+        for a mis-click). Lives in the pomodoro ledger so every device
+        shows the same count."""
+        key = _owner_key(request)
+        body = await request.json()
+        try:
+            delta = int(body.get("delta", 1))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "delta must be an integer")
+        if not -50 <= delta <= 50:
+            raise HTTPException(400, "delta out of range")
+        today = datetime.now().date().isoformat()
+        log = _load_log()
+        mine = log.setdefault(key, {"entries": [], "drinks": {}})
+        drinks = mine.setdefault("drinks", {})
+        drinks[today] = max(0, int(drinks.get(today, 0)) + delta)
+        atomic_write_json(POMODORO_LOG_FILE, log, indent=2)
+        return {"ok": True, "date": today, "today_drinks": drinks[today]}
 
     @router.get("/records")
     async def pomodoro_records(request: Request, limit: int = 200) -> Dict[str, Any]:
