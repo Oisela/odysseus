@@ -4,6 +4,7 @@
  */
 
 import uiModule from './ui.js';
+import dragSortModule from './dragSort.js';
 import markdownModule from './markdown.js';
 import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
@@ -1944,10 +1945,38 @@ function _savePrefLists() {
 // happen outside the render pass that received the highlights.
 let _mdReminderHighlights = null;
 
+// List toolbar state (persisted like the view mode). Manual = the classic
+// pinned/reminder/sort_order ordering with drag handles; everything else is
+// a view-side sort that disables dragging.
+let _mdSort = (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-md-sort')) || 'manual';
+let _mdTypeFilter = (typeof localStorage !== 'undefined' && localStorage.getItem('odysseus-notes-md-typefilter')) || 'all';
+
+function _applyMdToolbar(sorted) {
+  let rows = sorted;
+  if (_mdTypeFilter === 'todo') rows = rows.filter(n => _hasItems(n));
+  else if (_mdTypeFilter === 'note') rows = rows.filter(n => !_hasItems(n));
+  if (_mdSort === 'az' || _mdSort === 'za') {
+    rows = [...rows].sort((a, b) =>
+      (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+    if (_mdSort === 'za') rows.reverse();
+  } else if (_mdSort === 'due') {
+    // Soonest due first; entries without a due date keep list order at the end.
+    rows = [...rows].sort((a, b) => {
+      const da = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+      const db = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+      return da - db;
+    });
+  } else if (_mdSort === 'newest') {
+    rows = [...rows].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+  }
+  return rows;
+}
+
 function _renderMasterDetail(body, sorted, activeReminderHighlights) {
   _mdReminderHighlights = activeReminderHighlights;
-  if (!sorted.some(n => n.id === _selectedNoteId)) {
-    _selectedNoteId = sorted.length ? sorted[0].id : null;
+  const rows = _applyMdToolbar(sorted);
+  if (!rows.some(n => n.id === _selectedNoteId)) {
+    _selectedNoteId = rows.length ? rows[0].id : null;
     if (_editingId && _editingId !== '__new__') _editingId = null;
   }
   let layout = body.querySelector('.notes-md-layout');
@@ -1962,12 +1991,27 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
         </div>
-        <div class="notes-md-rows"></div>
+        <div class="notes-md-toolbar">
+          <div class="notes-md-typefilter">
+            <button type="button" data-tf="all">All</button>
+            <button type="button" data-tf="todo">To-dos</button>
+            <button type="button" data-tf="note">Notes</button>
+          </div>
+          <select class="notes-md-sortsel" title="Sort order">
+            <option value="manual">Manual</option>
+            <option value="az">A–Z</option>
+            <option value="za">Z–A</option>
+            <option value="due">Due date</option>
+            <option value="newest">Newest</option>
+          </select>
+        </div>
+        <div class="notes-md-rows" id="notes-md-rows"></div>
       </div>
       <div class="notes-md-detail"></div>
     </div>`;
     layout = body.querySelector('.notes-md-layout');
     _wireMdQuickAdd(layout.querySelector('.notes-md-quickadd-input'));
+    _wireMdToolbar(layout);
     // Full composer in the detail pane — for anything the quick-add can't
     // do (reminder, photo, drawing). Recipes live in the Shopping module.
     layout.querySelector('.notes-md-fullform-btn').addEventListener('click', () => {
@@ -1990,9 +2034,15 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
     _wireMdSidebar(layout);
   }
   _renderListsSidebar(layout.querySelector('.notes-md-sidebar'));
+  // Toolbar reflects state on every render (it survives layout reuse).
+  layout.querySelectorAll('.notes-md-typefilter button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tf === _mdTypeFilter));
+  const sortSel = layout.querySelector('.notes-md-sortsel');
+  if (sortSel) sortSel.value = _mdSort;
   const rowsEl = layout.querySelector('.notes-md-rows');
-  rowsEl.innerHTML = sorted.length
-    ? sorted.map(n => _buildRowHtml(n)).join('')
+  rowsEl.classList.toggle('notes-md-rows-manual', _mdSort === 'manual');
+  rowsEl.innerHTML = rows.length
+    ? rows.map(n => _buildRowHtml(n)).join('')
     : '<div class="notes-md-empty">Nothing here yet</div>';
 
   const detail = layout.querySelector('.notes-md-detail');
@@ -2033,6 +2083,7 @@ function _buildRowHtml(note) {
     ? `<span class="note-row-pin" title="Pinned"><svg width="10" height="10" viewBox="0 0 24 28" fill="currentColor"><g transform="rotate(0 12 14)"><line x1="12" y1="17" x2="12" y2="27" stroke="currentColor" stroke-width="2"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></g></svg></span>`
     : '';
   return `<div class="note-row${note.id === _selectedNoteId ? ' active' : ''}" data-note-id="${note.id}">
+    <span class="note-row-grip" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.3"/><circle cx="7" cy="3" r="1.3"/><circle cx="3" cy="8" r="1.3"/><circle cx="7" cy="8" r="1.3"/><circle cx="3" cy="13" r="1.3"/><circle cx="7" cy="13" r="1.3"/></svg></span>
     ${icon}
     <div class="note-row-main">
       <div class="note-row-title">${_esc(note.title || (isTodo ? '(untitled to-do)' : '(untitled note)'))}</div>
@@ -2041,6 +2092,50 @@ function _buildRowHtml(note) {
     ${pin}
     ${dueFmt ? `<span class="note-row-meta${overdue ? ' overdue' : ''}">${_esc(dueFmt)}</span>` : ''}
   </div>`;
+}
+
+function _wireMdToolbar(layout) {
+  layout.querySelector('.notes-md-typefilter').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tf]');
+    if (!btn || btn.dataset.tf === _mdTypeFilter) return;
+    _mdTypeFilter = btn.dataset.tf;
+    try { localStorage.setItem('odysseus-notes-md-typefilter', _mdTypeFilter); } catch (_) {}
+    _renderNotes();
+  });
+  layout.querySelector('.notes-md-sortsel').addEventListener('change', (e) => {
+    _mdSort = e.target.value;
+    try { localStorage.setItem('odysseus-notes-md-sort', _mdSort); } catch (_) {}
+    _renderNotes();
+  });
+  // Rows drag onto their grip handle only — a full-row drag would swallow
+  // the row click/selection. Grips are hidden by CSS outside manual sort.
+  dragSortModule.enable('notes-md-rows', '.note-row', {
+    handleSelector: '.note-row-grip',
+    instanceKey: 'notes-md-rows',
+    onReorder: _commitMdReorder,
+  });
+}
+
+async function _commitMdReorder(items) {
+  const ids = items.map(el => el.dataset.noteId).filter(Boolean);
+  if (!ids.length) return;
+  try {
+    await fetch(`${API_BASE}/api/notes/reorder`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    ids.forEach((nid, i) => {
+      const n = _notes.find(nn => nn.id === nid);
+      if (n) n.sort_order = i;
+    });
+  } catch (e) {
+    console.warn('reorder failed', e);
+  }
+  // Re-render so the pinned/reminder blocks reassert their precedence —
+  // manual order applies within the plain block (same rule as the grid).
+  _renderNotes();
 }
 
 function _wireMdRows(layout) {
