@@ -40647,6 +40647,73 @@ body.theme-frosted .modal {
   padding: 10px 12px;
   text-align: center;
 }
+/* Duration presets — chip row under the controls (one click = durations). */
+.pomo-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  margin: 2px 0 10px;
+}
+.pomo-preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 1px 9px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: none;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  cursor: pointer;
+}
+.pomo-preset-chip:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.pomo-preset-chip.active {
+  color: var(--fg);
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.pomo-preset-mins { opacity: 0.6; font-variant-numeric: tabular-nums; }
+.pomo-preset-del { display: none; opacity: 0.55; font-size: 10px; }
+.pomo-preset-chip:hover .pomo-preset-del { display: inline; }
+.pomo-preset-del:hover { opacity: 1; color: var(--red); }
+.pomo-preset-add { padding: 1px 7px; }
+.pomo-preset-name-input {
+  width: 110px;
+  min-height: 22px;
+  height: 22px;
+  font-size: 11px;
+  padding: 0 8px;
+  border-radius: 11px;
+}
+/* Water tracker — glasses row between controls and stats. */
+.pomo-drinks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 10.5px;
+  opacity: 0.85;
+}
+.pomo-drinks-label { opacity: 0.65; }
+.pomo-drink-glasses { display: inline-flex; gap: 2px; align-items: center; color: var(--accent, var(--red)); }
+.pomo-drink-glasses svg[fill="none"] { opacity: 0.4; color: var(--fg); }
+.pomo-drink-count { font-variant-numeric: tabular-nums; opacity: 0.7; }
+.pomo-drink-btn {
+  min-height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.pomo-drink-btn:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .pomo-stats {
   display: flex;
   justify-content: center;
