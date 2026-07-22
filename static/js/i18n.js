@@ -127,6 +127,7 @@ const DE = {
   'Sort order': 'Sortierung',
   'Drag to reorder': 'Ziehen zum Sortieren',
   'Click again to rename': 'Nochmal klicken zum Umbenennen',
+  'Show less': 'Weniger anzeigen',
   '+ Add item': '+ Eintrag hinzufügen',
   'Item...': 'Eintrag…',
   'List name…': 'Listenname…',

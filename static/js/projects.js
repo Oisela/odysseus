@@ -23,6 +23,12 @@ const _FOLDER_PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="
 
 let _projects = [];
 let _expanded = JSON.parse(localStorage.getItem('ody-projects-expanded') || '{}');
+// Per-project "Show all" state for the chat list (default: newest 5 only).
+const PROJECT_CHAT_LIMIT = 5;
+let _expandedProjectChats = new Set();
+try {
+  _expandedProjectChats = new Set(JSON.parse(localStorage.getItem('odysseus-project-chats-expanded') || '[]'));
+} catch (_) { _expandedProjectChats = new Set(); }
 
 // Read-only accessor for other modules (presets.js resolves the project
 // persona for the indicator chip without duplicating the fetch).
@@ -771,7 +777,18 @@ function render() {
           _reorder(String(sid), beforeId);
         });
       };
-      for (const ps of (p.sessions || [])) {
+      // Only the newest/top 5 chats stay visible per project — long lists
+      // drowned the sidebar (Alessio, 2026-07-22). "Show all (N)" expands;
+      // the ACTIVE chat is always shown even when it sits in the hidden tail.
+      const _allChats = (p.sessions || []);
+      const _isExpanded = _expandedProjectChats.has(String(p.id));
+      const _curSid = String(getCurrentSessionId?.() || '');
+      let _visibleChats = _isExpanded ? _allChats : _allChats.slice(0, PROJECT_CHAT_LIMIT);
+      if (!_isExpanded && _curSid && _allChats.some(ps => String(ps.id) === _curSid)
+          && !_visibleChats.some(ps => String(ps.id) === _curSid)) {
+        _visibleChats = [..._visibleChats, _allChats.find(ps => String(ps.id) === _curSid)];
+      }
+      for (const ps of _visibleChats) {
         const full = bySid.get(String(ps.id));
         if (full) {
           // The exact same row as the Chats list — icons, favorite, full
@@ -784,6 +801,21 @@ function render() {
         } else {
           _missingSessions = true;
         }
+      }
+      if (_allChats.length > PROJECT_CHAT_LIMIT) {
+        const toggle = document.createElement('div');
+        toggle.className = 'list-item project-chats-toggle';
+        toggle.style.cssText = 'padding-left:26px;font-size:12px;opacity:.6;';
+        toggle.textContent = _isExpanded ? 'Show less' : `Show all (${_allChats.length})`;
+        toggle.addEventListener('click', () => {
+          if (_isExpanded) _expandedProjectChats.delete(String(p.id));
+          else _expandedProjectChats.add(String(p.id));
+          try {
+            localStorage.setItem('odysseus-project-chats-expanded', JSON.stringify([..._expandedProjectChats]));
+          } catch (_) {}
+          render();
+        });
+        frag.appendChild(toggle);
       }
       const add = document.createElement('div');
       add.className = 'list-item project-newchat';
