@@ -501,10 +501,54 @@ def _index_row_to_email(row) -> dict:
     }
 
 
-# Filters the local index can answer from its flags column alone. Anything
-# else (tag:, reminders, date-window filters) needs IMAP and never
-# stale-serves.
-_STALE_LIST_FILTERS = {"all", "unread", "favorites", "undone", "unanswered"}
+# ── Flag-filter semantics: ONE definition for BOTH list paths ──────────────
+# Each named filter is a set of (imap_flag, must_be_set) conditions. The live
+# IMAP path and the stale index path render THIS table into their own query
+# language — previously each hand-coded the semantics and they could drift.
+# Anything not in this table (tag:, reminders, date-window filters) is
+# live-IMAP-only and never stale-serves.
+_LIST_FILTER_FLAG_TERMS: dict = {
+    "all": (),
+    "unread": (("\\Seen", False),),
+    "favorites": (("\\Flagged", True),),
+    # "done" = answered; undone deliberately includes read-but-unanswered.
+    "undone": (("\\Answered", False),),
+    "unanswered": (("\\Seen", False), ("\\Answered", False)),
+}
+
+_IMAP_FLAG_KEYWORDS = {
+    "\\Seen": ("SEEN", "UNSEEN"),
+    "\\Flagged": ("FLAGGED", "UNFLAGGED"),
+    "\\Answered": ("ANSWERED", "UNANSWERED"),
+}
+
+
+def _filter_imap_terms(filter_: str | None) -> str | None:
+    """Render a table filter as IMAP SEARCH keywords ("UNSEEN UNANSWERED").
+    Returns None for unknown filters, "" for "all" (no flag condition)."""
+    terms = _LIST_FILTER_FLAG_TERMS.get(filter_ or "all")
+    if terms is None:
+        return None
+    return " ".join(_IMAP_FLAG_KEYWORDS[flag][0 if want else 1] for flag, want in terms)
+
+
+def _filter_index_where(filter_: str | None) -> list | None:
+    """Render a table filter as SQL clauses over email_message_index.flags.
+    Returns None for unknown filters, [] for "all"."""
+    terms = _LIST_FILTER_FLAG_TERMS.get(filter_ or "all")
+    if terms is None:
+        return None
+    clauses = []
+    for flag, want in terms:
+        if want:
+            clauses.append(f"instr(COALESCE(flags,''), '{flag}') > 0")
+        else:
+            clauses.append(f"(flags IS NULL OR instr(flags, '{flag}') = 0)")
+    return clauses
+
+
+# Filters the local index can answer from its flags column alone.
+_STALE_LIST_FILTERS = set(_LIST_FILTER_FLAG_TERMS)
 
 # Strong refs for detached live-fetch finishers (asyncio keeps only weak
 # refs to tasks — without this the GC can drop one mid-flight and the
@@ -580,15 +624,7 @@ def _email_index_list_fallback(owner: str, account_id: str | None, folder: str,
         try:
             where = ["owner=?", "account_key=?", "folder=?"]
             params: list = [owner or "", _account_cache_key(account_id, owner), folder]
-            if filter_ == "unread":
-                where.append("(flags IS NULL OR instr(flags, '\\Seen') = 0)")
-            elif filter_ == "favorites":
-                where.append("instr(COALESCE(flags,''), '\\Flagged') > 0")
-            elif filter_ == "undone":
-                where.append("instr(COALESCE(flags,''), '\\Answered') = 0")
-            elif filter_ == "unanswered":
-                where.append("(flags IS NULL OR instr(flags, '\\Seen') = 0)")
-                where.append("instr(COALESCE(flags,''), '\\Answered') = 0")
+            where.extend(_filter_index_where(filter_) or [])
             if from_addr:
                 where.append("(from_address LIKE ? OR from_name LIKE ?)")
                 like = f"%{from_addr}%"
@@ -1597,16 +1633,12 @@ def setup_email_routes():
                 _safe = from_addr.replace("\\", "\\\\").replace('"', '\\"')
                 from_clause = f' FROM "{_safe}"'
 
-            if filter_ == "unread":
-                status, data = _imap_uid_search(conn, f"(UNSEEN{from_clause})")
-            elif filter_ == "favorites":
-                # Flagged/favorited emails (the star toggle sets the \Flagged flag).
-                status, data = _imap_uid_search(conn, f"(FLAGGED{from_clause})")
-            elif filter_ == "unanswered":
-                status, data = _imap_uid_search(conn, f"(UNSEEN UNANSWERED{from_clause})")
-            elif filter_ == "undone":
-                # All emails NOT marked as answered/done (read or unread).
-                status, data = _imap_uid_search(conn, f"(UNANSWERED{from_clause})")
+            # Flag-based filters (unread/favorites/undone/unanswered) render
+            # from _LIST_FILTER_FLAG_TERMS — same table the stale index path
+            # uses, so the two can't drift apart.
+            _flag_terms = _filter_imap_terms(filter_)
+            if _flag_terms:
+                status, data = _imap_uid_search(conn, f"({_flag_terms}{from_clause})")
             elif filter_ == "reminders":
                 # Prefer the Odysseus marker header, but include the subject
                 # fallback too. The fallback uses a distinct Odysseus prefix
