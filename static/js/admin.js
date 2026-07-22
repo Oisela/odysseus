@@ -2,6 +2,7 @@
 // Admin-only: users, endpoints, MCP, RAG, embeddings, tokens, webhooks, features
 
 import uiModule from './ui.js';
+import { uploadImageMdRe } from './markdown.js';
 import settingsModule from './settings.js';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
@@ -3061,9 +3062,11 @@ function _renderRoadmap() {
         if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
       });
       // Markdown screenshots in the entry (or its wrapped lines) render as
-      // small thumbnails — click opens the full image. Upload-URLs only,
-      // so a roadmap line can never make the browser fetch an external host.
-      const IMG_RE = /!\[[^\]]*\]\((\/api\/upload\/[A-Za-z0-9_-]+)\)\s*/g;
+      // small thumbnails — click opens the full image. Upload-URLs only
+      // (canonical pattern from markdown.js), so a roadmap line can never
+      // make the browser fetch an external host. \s* swallows the gap the
+      // stripped link leaves in the clean text.
+      const IMG_RE = uploadImageMdRe('\\s*');
       const imgs = [];
       const cleanText = item.text.replace(IMG_RE, (_, u) => { imgs.push(u); return ''; }).trim();
       for (const ex of item.extra) {

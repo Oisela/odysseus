@@ -789,6 +789,16 @@ export function mdToHtml(src, opts) {
 /**
  * Reduce excessive whitespace outside of code blocks
  */
+// Canonical pattern for a markdown image link pointing at OUR upload store —
+// group 1 = the /api/upload/<id> URL. Security-relevant: consumers render
+// matches as <img>, so the pattern must never match an external host. Use
+// uploadImageMdRe() for a fresh (stateful, /g) instance per call site.
+export const UPLOAD_IMAGE_MD_SOURCE = '!\\[[^\\]]*\\]\\((\\/api\\/upload\\/[A-Za-z0-9_-]+)\\)';
+
+export function uploadImageMdRe(extraSource = '') {
+  return new RegExp(UPLOAD_IMAGE_MD_SOURCE + extraSource, 'g');
+}
+
 export function squashOutsideCode(s) {
   if (!s) return "";
   const parts = String(s).split(/```/);

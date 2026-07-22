@@ -12,6 +12,7 @@
 import { makeWindowDraggable } from './windowDrag.js';
 import * as Modals from './modalManager.js';
 import uiModule from './ui.js';
+import { uploadImageMdRe } from './markdown.js';
 
 const API_BASE = window.location.origin;
 
@@ -214,7 +215,7 @@ function _renderShopping(body) {
 // render those (upload-URLs only), everything else stays escaped text.
 function _instrHtml(t) {
   return _esc(t).replace(
-    /!\[[^\]]*\]\((\/api\/upload\/[A-Za-z0-9_-]+)\)/g,
+    uploadImageMdRe(),
     '<img class="recipe-instr-img" src="$1" alt="" draggable="false" />',
   );
 }
