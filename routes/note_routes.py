@@ -912,6 +912,53 @@ def setup_note_routes(task_scheduler=None):
             settings_override=_override or None,
         )
 
+    # --- RENAME LABEL (list) ---
+    @router.post("/rename-label")
+    async def rename_label(request: Request):
+        """Rename a label token on every note of this owner.
+
+        Labels are space-separated tokens in Note.label; the master-detail
+        sidebar presents them as "lists". Renaming a list must therefore
+        rewrite the token on each note — the client keeps its note_lists
+        prefs registry in sync separately.
+        """
+        user = _owner(request)
+        body = await request.json()
+        old = str(body.get("from") or "").strip()
+        new = str(body.get("to") or "").strip()
+        if not old or not new:
+            raise HTTPException(400, "from and to are required")
+        if any(ch.isspace() for ch in new):
+            raise HTTPException(400, "label must be a single token (no spaces)")
+        try:
+            from core.auth import AuthManager
+            _allow_null = not AuthManager().is_configured
+        except Exception:
+            _allow_null = False
+        db = SessionLocal()
+        try:
+            q = db.query(Note).filter(Note.label.isnot(None), Note.label != "")
+            if user is not None:
+                if _allow_null:
+                    q = q.filter((Note.owner == user) | (Note.owner == None))  # noqa: E711
+                else:
+                    q = q.filter(Note.owner == user)
+            changed = 0
+            for note in q.all():
+                tokens = (note.label or "").split()
+                if old not in tokens:
+                    continue
+                # Token-level replace; collapse a duplicate if `new` already
+                # present on the same note.
+                note.label = " ".join(
+                    dict.fromkeys(new if t == old else t for t in tokens)
+                )
+                changed += 1
+            db.commit()
+            return {"ok": True, "count": changed}
+        finally:
+            db.close()
+
     # --- REORDER NOTES ---
     @router.post("/reorder")
     async def reorder_notes(request: Request):
