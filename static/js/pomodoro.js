@@ -263,6 +263,148 @@ function _notify(title, body) {
   }
 }
 
+// ── Duration presets (server pref — shared across devices) ──
+// One click sets focus/break durations ("Lernen 25/5", "Rechnen 60/10")
+// instead of retyping the numbers. Stored as the `pomodoro_presets` pref:
+// [{name, work, short, long?}].
+
+const _DEFAULT_PRESETS = [
+  { name: 'Lernen', work: 25, short: 5 },
+  { name: 'Rechnen', work: 60, short: 10 },
+];
+let _presets = null; // null until loaded — defaults shown, saved only on edit
+
+async function _loadPresets() {
+  if (_presets) return _presets;
+  try {
+    const res = await fetch(`${API_BASE}/api/prefs/pomodoro_presets`, { credentials: 'same-origin' });
+    const data = res.ok ? await res.json() : null;
+    const val = data && Array.isArray(data.value) ? data.value : null;
+    _presets = (val && val.length)
+      ? val.filter((p) => p && typeof p.name === 'string' && Number(p.work) > 0)
+      : [..._DEFAULT_PRESETS];
+  } catch (e) { _presets = [..._DEFAULT_PRESETS]; }
+  return _presets;
+}
+
+function _savePresets() {
+  fetch(`${API_BASE}/api/prefs/pomodoro_presets`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: _presets }),
+  }).catch(() => {});
+}
+
+function _presetActive(p) {
+  return Number(p.work) === Number(_cfg.work)
+    && (p.short == null || Number(p.short) === Number(_cfg.short))
+    && (p.long == null || Number(p.long) === Number(_cfg.long));
+}
+
+async function _renderPresets() {
+  const box = _modal?.querySelector('#pomo-presets');
+  if (!box) return;
+  const presets = await _loadPresets();
+  box.innerHTML = presets.map((p, i) => `
+    <button type="button" class="pomo-preset-chip${_presetActive(p) ? ' active' : ''}" data-idx="${i}"
+            title="Focus ${Number(p.work)} min${p.short ? ` · break ${Number(p.short)} min` : ''}">
+      ${_escTxt(p.name)} <span class="pomo-preset-mins">${Number(p.work)}′</span>
+      <span class="pomo-preset-del" data-del="${i}" title="Delete preset">✕</span>
+    </button>`).join('')
+    + '<button type="button" class="pomo-preset-chip pomo-preset-add" data-add="1" title="Save the current durations (settings below) as a preset">＋</button>';
+}
+
+function _wirePresets() {
+  const box = _modal.querySelector('#pomo-presets');
+  box.addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      e.stopPropagation();
+      _presets.splice(Number(del.dataset.del), 1);
+      _savePresets();
+      _renderPresets();
+      return;
+    }
+    if (e.target.closest('[data-add]')) {
+      const addBtn = e.target.closest('[data-add]');
+      // Inline name input in place of the ＋ chip (same pattern as the
+      // notes "New list" row) — saves the CURRENT durations under a name.
+      addBtn.outerHTML = '<input type="text" class="pomo-preset-name-input" placeholder="Preset name…" maxlength="24" />';
+      const inp = box.querySelector('.pomo-preset-name-input');
+      inp.focus();
+      let done = false;
+      const finish = (commit) => {
+        if (done) return;
+        done = true;
+        const name = (inp.value || '').trim();
+        if (commit && name) {
+          _presets = _presets.filter((p) => p.name !== name);
+          _presets.push({ name, work: Number(_cfg.work), short: Number(_cfg.short), long: Number(_cfg.long) });
+          _savePresets();
+        }
+        _renderPresets();
+      };
+      inp.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') finish(true);
+        if (ev.key === 'Escape') finish(false);
+      });
+      inp.addEventListener('blur', () => finish(true));
+      return;
+    }
+    const chip = e.target.closest('.pomo-preset-chip[data-idx]');
+    if (!chip) return;
+    const p = _presets[Number(chip.dataset.idx)];
+    if (!p) return;
+    _cfg.work = Number(p.work) || _cfg.work;
+    if (p.short != null) _cfg.short = Number(p.short) || _cfg.short;
+    if (p.long != null) _cfg.long = Number(p.long) || _cfg.long;
+    _save();
+    _syncInputs();
+    _renderPresets();
+    // Idle timer shows the new focus length immediately; a running phase
+    // keeps its clock — the preset applies from the next phase.
+    if (!_run || _run.phase === 'ready') _render();
+  });
+}
+
+// ── Water tracker (server-side, shared across devices) ──
+
+let _drinksToday = 0;
+
+function _renderDrinks() {
+  const glasses = _modal?.querySelector('#pomo-drink-glasses');
+  const count = _modal?.querySelector('#pomo-drink-count');
+  if (!glasses || !count) return;
+  const n = Math.max(0, _drinksToday);
+  const shown = Math.min(n, 8);
+  const glass = (filled) => `<svg width="12" height="12" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h12l-1.5 19a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1z"/></svg>`;
+  glasses.innerHTML = Array.from({ length: shown }, () => glass(true)).join('')
+    + (n > 8 ? '' : glass(false));
+  count.textContent = n > 8 ? `${n} glasses` : (n === 1 ? '1 glass' : `${n} glasses`);
+  const minus = _modal.querySelector('#pomo-drink-minus');
+  if (minus) minus.style.visibility = n > 0 ? '' : 'hidden';
+}
+
+async function _bumpDrink(delta) {
+  // Optimistic bump — the server response corrects if needed.
+  _drinksToday = Math.max(0, _drinksToday + delta);
+  _renderDrinks();
+  try {
+    const res = await fetch(`${API_BASE}/api/pomodoro/drink`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delta }),
+    });
+    if (res.ok) {
+      _drinksToday = (await res.json()).today_drinks ?? _drinksToday;
+      _renderDrinks();
+    }
+  } catch (e) { /* next stats refresh reconciles */ }
+}
+
 // ── Focus-time ledger (server-side, shared across devices) ──
 
 function _logSeconds(seconds, opts = {}) {
@@ -289,6 +431,10 @@ async function _refreshStats() {
     box.querySelector('[data-stat="today"]').textContent = _fmtHours(s.today_s);
     box.querySelector('[data-stat="week"]').textContent = _fmtHours(s.week_s);
     box.querySelector('[data-stat="avg"]').textContent = _fmtHours(s.week_avg_s);
+    if (typeof s.today_drinks === 'number') {
+      _drinksToday = s.today_drinks;
+      _renderDrinks();
+    }
   } catch (e) { /* stats are cosmetic — never break the timer */ }
   _renderTodayRecords().catch(() => {});
 }
@@ -531,6 +677,16 @@ function _getModal() {
           <div class="pomo-time" id="pomo-time"></div>
         </div>
         <div class="pomo-controls" id="pomo-controls"></div>
+        <div class="pomo-presets" id="pomo-presets" title="Presets — one click sets the durations"></div>
+        <div class="pomo-drinks" id="pomo-drinks">
+          <span class="pomo-drinks-label">Water</span>
+          <span class="pomo-drink-glasses" id="pomo-drink-glasses"></span>
+          <span class="pomo-drink-count" id="pomo-drink-count"></span>
+          <button type="button" class="pomo-drink-btn" id="pomo-drink-minus" title="Remove a glass (mis-click)">−</button>
+          <button type="button" class="pomo-drink-btn pomo-drink-add" id="pomo-drink-plus" title="I drank a glass">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12l-1.5 19a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1z"/><path d="M7 10h10"/></svg>
+          </button>
+        </div>
         <div class="pomo-stats" id="pomo-stats">
           <span><b data-stat="today">–</b>Today</span>
           <span><b data-stat="week">–</b>This week</span>
@@ -582,6 +738,7 @@ function _getModal() {
       _cfg[key] = v;
       _save();
       if (!_run) _render();
+      _renderPresets(); // manual edits change which preset counts as active
     });
   };
   bind('#pomo-cfg-work', 'work', 1, 180);
@@ -597,6 +754,10 @@ function _getModal() {
     _save();
     if (_cfg.sound) _chime('break'); // instant preview so the volume is judgeable
   });
+
+  _wirePresets();
+  _modal.querySelector('#pomo-drink-plus').addEventListener('click', () => _bumpDrink(1));
+  _modal.querySelector('#pomo-drink-minus').addEventListener('click', () => _bumpDrink(-1));
 
   _modal.querySelector('#pomo-manual-add').addEventListener('click', async () => {
     const inp = _modal.querySelector('#pomo-manual-mins');
@@ -788,6 +949,8 @@ function openPomodoro() {
   _syncInputs();
   _render();
   _refreshStats();
+  _renderPresets();
+  _renderDrinks();
 }
 
 function _doClosePomodoro() {
