@@ -654,24 +654,28 @@ async def build_chat_context(
     message preprocessing, memory/RAG/web injection, compaction, normalization.
     """
     # Preset
-    preset = extract_preset(chat_handler, preset_id)
     if project_prompt:
-        # Project chats: the project's template + instructions replace the
-        # client-selected preset. The project defines the persona, so a stale
-        # client-side selection can't leak a different voice into the project.
-        # Sampling params and memory scope must not leak either: the project
-        # template owns temperature/max_tokens/character name (defaults when
-        # the template sets none) — not whatever preset the client last had.
+        # Project chats: the ENTIRE preset is constructed from the project —
+        # the client-selected preset is never even extracted, so nothing of it
+        # (voice, sampling params, a stale/invalid preset_id) can leak in.
+        # Constructing PresetInfo here (no field-by-field patching) also means
+        # a future PresetInfo field fails loudly right here until someone
+        # decides what projects should do with it, instead of silently
+        # carrying the client value.
         pp = project_params or {}
-        preset.system_prompt = project_prompt
-        preset.temperature = (
-            pp["temperature"] if pp.get("temperature") is not None else DEFAULT_TEMPERATURE
+        preset = PresetInfo(
+            temperature=(
+                pp["temperature"] if pp.get("temperature") is not None else DEFAULT_TEMPERATURE
+            ),
+            max_tokens=(
+                pp["max_tokens"] if pp.get("max_tokens") is not None else DEFAULT_MAX_TOKENS
+            ),
+            system_prompt=project_prompt,
+            character_name=pp.get("character_name") or "",
         )
-        preset.max_tokens = (
-            pp["max_tokens"] if pp.get("max_tokens") is not None else DEFAULT_MAX_TOKENS
-        )
-        preset.character_name = pp.get("character_name") or ""
         logger.info(f"[project] persona+instructions applied ({len(project_prompt)} chars)")
+    else:
+        preset = extract_preset(chat_handler, preset_id)
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side
