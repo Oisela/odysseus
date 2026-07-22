@@ -211,7 +211,26 @@ def _project_context_for_session(session_id, chat_handler):
                         "max_tokens": tpl.get("max_tokens"),
                         "character_name": tpl.get("character_name") or tpl.get("name") or "",
                     }
-                if tpl and tpl.get("system_prompt"):
+                # Prompt-from-document (v3.6 personas): templates may point at
+                # a Library doc instead of carrying the prompt inline. Resolve
+                # it here too — project chats previously only read the stored
+                # system_prompt, so a doc-backed persona went stale/empty in
+                # projects (3.7.2). Doc missing → inline prompt as fallback.
+                _doc_prompt = ""
+                if tpl and tpl.get("prompt_doc_id"):
+                    try:
+                        _pdb = SessionLocal()
+                        try:
+                            _pd = _pdb.query(DBDocument).filter(DBDocument.id == tpl["prompt_doc_id"]).first()
+                            if _pd is not None:
+                                _doc_prompt = (_pd.current_content or "")[:10000]
+                        finally:
+                            _pdb.close()
+                    except Exception:
+                        logger.warning("[project] prompt_doc resolution failed", exc_info=True)
+                if _doc_prompt.strip():
+                    parts.append(_doc_prompt.strip())
+                elif tpl and tpl.get("system_prompt"):
                     parts.append(str(tpl["system_prompt"]).strip())
                 else:
                     logger.warning(f"[project] template '{proj.template_id}' not found or empty for project {proj.id}")

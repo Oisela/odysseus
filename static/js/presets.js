@@ -1222,8 +1222,19 @@ function _syncCharIndicator() {
     if (!btn._wired) {
       btn._wired = true;
       btn.addEventListener('click', (e) => {
-        // Project persona is managed by the project — chip is display-only.
-        if (_projectPersona) return;
+        // Project persona: selection is managed by the project, but clicking
+        // the chip OPENS the persona settings with that template loaded so
+        // it can be viewed/edited (Alessio, 2026-07-22). No deactivate-X.
+        if (_projectPersona) {
+          const tmplName = _projectPersona.templateName;
+          if (typeof openCustomPresetModal === 'function') openCustomPresetModal();
+          const sel = document.getElementById('char-template-select');
+          if (sel && tmplName && [...sel.options].some(o => o.value === tmplName)) {
+            sel.value = tmplName;
+            sel.dispatchEvent(new Event('change'));
+          }
+          return;
+        }
         // If clicking the X, deactivate character
         if (e.target.closest('.tool-indicator-x')) {
           if (window._persistentChatSession) return; // locked in persistent chat
