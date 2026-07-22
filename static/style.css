@@ -1849,10 +1849,7 @@ body.bg-pattern-sparkles {
     }
     input[type="text"] { height:32px; width:100%; }
     textarea { width:100%; min-height:32px; height:auto; max-height:30lh; overflow-y:auto; resize:none; }
-    /* min-height, NOT height: a fixed height pinned every multi-line button
-       shut (cost us three attempts on the ask_user dialog, v3.6). Buttons
-       with one line of text still render at exactly 32px. */
-    button { min-height:32px; padding:0 10px; }
+    button { height:32px; padding:0 10px; }
     #chat-form button[type="submit"] { height:38px; }
     select {
       height:32px;
@@ -40397,6 +40394,9 @@ body.theme-frosted .modal {
      description are stacked blocks inside .ask-user-option-main instead. */
   display: block;
   width: 100%;
+  /* The global `button { height: 32px }` rule would pin the box shut —
+     these buttons must grow with their description. */
+  height: auto;
   /* Match the height of the free-text input below (.styled-prompt-input). */
   min-height: 39px;
   text-align: left;
@@ -40659,6 +40659,7 @@ body.theme-frosted .modal {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  height: auto; /* compact chip — opt out of the global button height */
   min-height: 22px;
   padding: 1px 9px;
   font-size: 11px;
@@ -40702,6 +40703,7 @@ body.theme-frosted .modal {
 .pomo-drink-glasses svg[fill="none"] { opacity: 0.4; color: var(--fg); }
 .pomo-drink-count { font-variant-numeric: tabular-nums; opacity: 0.7; }
 .pomo-drink-btn {
+  height: auto; /* compact chip — opt out of the global button height */
   min-height: 20px;
   padding: 0 6px;
   font-size: 12px;
@@ -40972,6 +40974,8 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .notes-md-typefilter button {
+  /* Compact segment — opt out of the global button height. */
+  height: auto;
   min-height: 19px;
   padding: 1px 10px;
   font-size: 11px;
