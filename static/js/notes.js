@@ -2215,7 +2215,7 @@ function _renderListsSidebar(el) {
     entry('data-smart="reminders"', SVG.reminders, 'Reminders', remindersCount, _activeFilter === 'reminders'),
     entry('data-smart="completed"', SVG.completed, 'Completed', null, false),
     '<div class="notes-md-sidebar-label">Lists</div>',
-    ...tags.map(t => entry(`data-list="${_attrEsc(t)}"`, SVG.list, t, countFor(t), _activeLabel === t)),
+    ...tags.map(t => entry(`data-list="${_attrEsc(t)}" title="Click again to rename"`, SVG.list, t, countFor(t), _activeLabel === t)),
     entry('data-add-list="1"', SVG.plus, 'New list', null, false),
   ].join('');
 
@@ -2259,12 +2259,81 @@ function _wireMdSidebar(layout) {
       _activeLabel = null;
       _activeFilter = btn.dataset.smart === 'all' ? null : btn.dataset.smart;
     } else if (btn.dataset.list != null) {
+      // Click on the ALREADY-ACTIVE list = rename it inline (same
+      // click-to-rename idea as the endpoint labels in Settings).
+      if (btn.dataset.list === _activeLabel) { _startListRename(btn); return; }
       _activeLabel = btn.dataset.list;
       _activeFilter = null;
     }
     _selectedNoteId = null;
     _renderNotes();
   });
+}
+
+function _startListRename(btn) {
+  const oldName = btn.dataset.list;
+  if (!oldName) return;
+  const el = btn.closest('.notes-md-sidebar');
+  // Swap the WHOLE entry button for an input — an <input> inside a <button>
+  // is invalid HTML and doesn't reliably take focus/keys. Same pattern as
+  // the "New list" flow above.
+  btn.outerHTML = '<input type="text" class="notes-md-newlist-input notes-md-renamelist-input" maxlength="40" />';
+  const inp = el.querySelector('.notes-md-renamelist-input');
+  if (!inp) { _renderNotes(); return; }
+  inp.value = oldName;
+  inp.focus();
+  inp.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const name = inp.value.trim().replace(/\s+/g, '-');
+    if (!commit || !name || name === oldName) { _renderNotes(); return; }
+    if (_prefLists.includes(name)) {
+      uiModule.showError('A list with that name already exists');
+      _renderNotes();
+      return;
+    }
+    _commitListRename(oldName, name);
+  };
+  inp.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    if (ev.key === 'Escape') finish(false);
+  });
+  inp.addEventListener('blur', () => finish(true));
+  inp.addEventListener('click', (ev) => ev.stopPropagation());
+}
+
+async function _commitListRename(oldName, newName) {
+  try {
+    const res = await fetch(`${API_BASE}/api/notes/rename-label`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: oldName, to: newName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    uiModule.showError('Rename failed');
+    _renderNotes();
+    return;
+  }
+  const idx = _prefLists.indexOf(oldName);
+  if (idx >= 0) _prefLists[idx] = newName;
+  else if (!_prefLists.includes(newName)) _prefLists.push(newName);
+  _savePrefLists();
+  // Mirror the server-side token rewrite locally so the sidebar counts and
+  // note cards agree without a refetch.
+  for (const n of _notes) {
+    if (!n.label) continue;
+    const tokens = n.label.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.includes(oldName)) continue;
+    n.label = [...new Set(tokens.map(t => (t === oldName ? newName : t)))].join(' ');
+  }
+  if (_activeLabel === oldName) _activeLabel = newName;
+  _renderNotes();
+  uiModule.showToast(`List renamed to "${newName}"`);
 }
 
 function _wireMdQuickAdd(input) {
