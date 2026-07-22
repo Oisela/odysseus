@@ -144,6 +144,13 @@ const DE = {
   'Total focus': 'Fokus gesamt',
   'Total pomos': 'Pomos gesamt',
   'Sound on phase end': 'Ton am Phasenende',
+  'Water': 'Wasser',
+  'I drank a glass': 'Ein Glas getrunken',
+  'Remove a glass (mis-click)': 'Ein Glas entfernen (verklickt)',
+  'Presets — one click sets the durations': 'Presets — ein Klick stellt die Dauern um',
+  'Save the current durations (settings below) as a preset': 'Aktuelle Dauern (Einstellungen unten) als Preset speichern',
+  'Delete preset': 'Preset löschen',
+  'Preset name…': 'Preset-Name…',
 
   // ── Email (core) ──
   'Search by name or text': 'Nach Name oder Text suchen',
