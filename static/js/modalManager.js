@@ -26,13 +26,13 @@
  */
 
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
-import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
+import { suspendDock, resumeDock, clearRightDock, applyEdgeDock, rememberedDockKey } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
-const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
+const _rememberedDockKey = rememberedDockKey;
 function _rememberDock(id, side) {
   if (!id || !side) return;
   try { localStorage.setItem(_rememberedDockKey(id), side); } catch (_) {}
@@ -1242,6 +1242,24 @@ export function minimize(id) {
         || modal.classList.contains('modal-left-docked')
         || modal.classList.contains('email-snap-left')) {
       try { suspendDock(modal); } catch (e) { console.warn('suspendDock on minimize failed', e); }
+      delete s.floatGeometry;
+    } else {
+      // FLOATING window: remember where it sits so restore puts it back
+      // exactly there — minimize→restore must never re-center or re-dock a
+      // window the user placed by hand (Alessio, 2026-07-22).
+      const content = modal.querySelector('.modal-content');
+      const rect = content?.getBoundingClientRect();
+      if (content && rect && rect.width > 40 && rect.height > 40) {
+        s.floatGeometry = {
+          left: rect.left, top: rect.top,
+          width: rect.width, height: rect.height,
+          // Whether the position was inline-driven (dragged) — CSS-centered
+          // windows keep their centering instead of getting pinned.
+          hadInlinePos: !!(content.style.left || content.style.top),
+        };
+      } else {
+        delete s.floatGeometry;
+      }
     }
     modal.classList.add('hidden');
     modal.classList.add('modal-minimized');
@@ -1274,7 +1292,25 @@ export function restore(id) {
     _bringToFront(modal);
     // If the window was edge-docked when minimized, re-apply the dock so the
     // chat nudges back in and the window returns exactly where it was.
-    try { resumeDock(modal); } catch (e) { console.warn('resumeDock on restore failed', e); }
+    let dockResumed = false;
+    try { dockResumed = resumeDock(modal); } catch (e) { console.warn('resumeDock on restore failed', e); }
+    // Floating window: pin it back to the exact spot it was minimized from
+    // (clamped so a since-resized viewport can't strand it off-screen).
+    // Only when the user had positioned it (inline styles) — CSS-centered
+    // windows keep centering.
+    if (!dockResumed && s.floatGeometry && s.floatGeometry.hadInlinePos) {
+      const content = modal.querySelector('.modal-content');
+      if (content) {
+        const g = s.floatGeometry;
+        const maxLeft = Math.max(8, window.innerWidth - Math.min(g.width, window.innerWidth) - 8);
+        const maxTop = Math.max(8, window.innerHeight - 60);
+        content.style.position = 'fixed';
+        content.style.left = Math.min(Math.max(8, g.left), maxLeft) + 'px';
+        content.style.top = Math.min(Math.max(8, g.top), maxTop) + 'px';
+        content.style.margin = '0';
+        content.style.transform = 'none';
+      }
+    }
     _emitModalOpened(id, modal);
   }
   s.isMinimized = false;
