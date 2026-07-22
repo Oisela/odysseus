@@ -13620,6 +13620,37 @@ mark.doc-find-mark.current {
   margin-right: 2px;
   white-space: nowrap;
 }
+/* Slash-invoked skill: collapsed chip in the user bubble (full SKILL.md
+   stays available on expand; the model still receives the whole text). */
+.skill-invoke-block { margin: 2px 0 4px; }
+.skill-invoke-block summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78em;
+  opacity: 0.65;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 10px;
+  padding: 2px 9px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.skill-invoke-block summary::-webkit-details-marker { display: none; }
+.skill-invoke-block summary:hover { opacity: 0.9; }
+.skill-invoke-block[open] summary { opacity: 0.9; }
+.skill-invoke-md {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
 /* Attachment cards in user messages */
 .attach-cards {
   display: flex;

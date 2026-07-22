@@ -2482,6 +2482,29 @@ export function addMessage(role, content, modelName, metadata) {
     // ALL user messages (not just ones with attachment metadata) so it rebuilds
     // from the stored text even after a browser restart drops the cached attachments.
     const attachments = metadata?.attachments;
+    // Slash-invoked skills embed the FULL SKILL.md in the user message
+    // (--- BEGIN SKILL --- … --- END SKILL ---) so it reaches the model —
+    // but showing a 200-line wall in the bubble is noise (Alessio,
+    // 2026-07-22). Strip it into a collapsed chip; dataset.raw keeps the
+    // FULL text so edit/resend still carries the skill.
+    let _skillInvoke = null;
+    if (role === 'user') {
+      const _fullText = text;
+      text = text.replace(
+        /^Apply the skill below to my request[^\n]*\n+--- BEGIN SKILL ---\n([\s\S]*?)\n--- END SKILL ---\s*/,
+        (_m, md) => {
+          const nm = md.match(/^name:\s*["']?([A-Za-z0-9_-]+)/m);
+          _skillInvoke = { name: nm ? nm[1] : 'skill', md, full: _fullText };
+          return '';
+        }
+      );
+      if (_skillInvoke) {
+        text = text
+          .replace(/^Request:\s*/, '')
+          .replace(/^\(use the skill as appropriate\)\s*$/m, '')
+          .trim();
+      }
+    }
     const _visionBlocks = [];
     if (role === 'user') {
       text = text.replace(
@@ -2564,6 +2587,23 @@ export function addMessage(role, content, modelName, metadata) {
       // Render attachment cards
       if (attachments?.length) {
         b.appendChild(buildAttachCards(attachments));
+      }
+
+      // Skill invocation: compact collapsed chip instead of the full text.
+      if (_skillInvoke) {
+        const det = document.createElement('details');
+        det.className = 'skill-invoke-block';
+        const sum = document.createElement('summary');
+        sum.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ';
+        sum.appendChild(document.createTextNode('Skill: /' + _skillInvoke.name));
+        const pre = document.createElement('pre');
+        pre.className = 'skill-invoke-md';
+        pre.textContent = _skillInvoke.md;
+        det.appendChild(sum);
+        det.appendChild(pre);
+        b.prepend(det);
+        wrap.dataset.raw = _skillInvoke.full;
+        b.dataset.raw = _skillInvoke.full;
       }
     }
 
