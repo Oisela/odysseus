@@ -186,6 +186,9 @@ function _wireNotesWindow(pane) {
     enableDock: true,
     enableLeftDock: true,
     onEnterFullscreen: () => {
+      // Remember where the window was BEFORE fullscreen so exiting returns
+      // there instead of force-docking right.
+      _captureNotesWindowState(pane);
       pane.classList.add('notes-window-fullscreen');
       snapModalToZone(pane, {
         name: 'fullscreen',
@@ -193,7 +196,7 @@ function _wireNotesWindow(pane) {
       });
     },
     onExitFullscreen: () => {
-      _restoreNotesSidebarDock(pane);
+      _applyNotesWindowState(pane);
     },
   });
 }
@@ -220,6 +223,61 @@ function _restoreNotesSidebarDock(pane) {
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
   applyEdgeDock(pane, 'right');
+}
+
+// ── Window-state memory ─────────────────────────────────────────────────
+// Notes tears its pane DOWN on minimize/close and rebuilds it on open, so
+// the generic modalManager float-geometry snapshot never sees it. Without
+// this, every reopen ran _restoreNotesSidebarDock and a hand-floated
+// window snapped back to the right edge (Alessio, 2026-07-22).
+
+const NOTES_WINDOW_STATE_KEY = 'odysseus-notes-window-state';
+
+function _captureNotesWindowState(pane) {
+  if (!pane || !pane.isConnected || window.innerWidth <= 768) return;
+  let st = null;
+  if (pane.classList.contains('notes-window-fullscreen')) {
+    st = { mode: 'fullscreen' };
+  } else if (pane.classList.contains('modal-left-docked')) {
+    st = { mode: 'dock-left' };
+  } else if (pane.classList.contains('modal-right-docked')) {
+    st = { mode: 'dock-right' };
+  } else {
+    const r = pane.getBoundingClientRect();
+    if (r.width > 80 && r.height > 80) {
+      st = { mode: 'float', left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+  }
+  if (!st) return;
+  try { localStorage.setItem(NOTES_WINDOW_STATE_KEY, JSON.stringify(st)); } catch (_) {}
+}
+
+function _applyNotesWindowState(pane) {
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(NOTES_WINDOW_STATE_KEY) || 'null'); } catch (_) {}
+  if (!st || st.mode === 'dock-right') { _restoreNotesSidebarDock(pane); return; }
+  if (st.mode === 'dock-left') {
+    _clearNotesSnapStyles(pane);
+    if (pane.isConnected) applyEdgeDock(pane, 'left');
+    return;
+  }
+  if (st.mode === 'fullscreen') {
+    _clearNotesSnapStyles(pane);
+    pane.classList.add('notes-window-fullscreen');
+    snapModalToZone(pane, { name: 'fullscreen', rect: _notesFullscreenSafeRect() });
+    return;
+  }
+  // Floating: put the window back exactly where it was, clamped so a
+  // since-resized viewport can't strand it off-screen.
+  _clearNotesSnapStyles(pane);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = Math.max(320, Math.min(Number(st.width) || 720, vw - 16));
+  const h = Math.max(240, Math.min(Number(st.height) || vh * 0.8, vh - 16));
+  pane.style.position = 'fixed';
+  pane.style.left = Math.max(8, Math.min(Number(st.left) || 8, vw - w - 8)) + 'px';
+  pane.style.top = Math.max(8, Math.min(Number(st.top) || 8, vh - 60)) + 'px';
+  pane.style.width = w + 'px';
+  pane.style.height = h + 'px';
 }
 
 // Notes is not a `.modal`; its backdrop is the top-level stacking surface.
@@ -1242,7 +1300,9 @@ export function openPanel() {
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
-  _restoreNotesSidebarDock(pane);
+  // Reopen where the user left the window (float/dock/fullscreen) — the
+  // pane is rebuilt from scratch, so the position must be re-applied here.
+  _applyNotesWindowState(pane);
   _bringNotesToFront(pane);
 
   // Events
@@ -1704,6 +1764,9 @@ export function closePanel(direction) {
   const pane = document.getElementById('notes-pane');
   const backdrop = document.getElementById('notes-pane-backdrop');
   if (pane) {
+    // The pane is about to be torn down — remember its window state so the
+    // next open (incl. restore-from-chip) rebuilds it in the same place.
+    _captureNotesWindowState(pane);
     // Scale-out + fade. Match the enter animation duration so close feels
     // like the same gesture played backwards.
     pane.classList.add('notes-pane-leaving');
@@ -1986,7 +2049,7 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       <div class="notes-md-sidebar"></div>
       <div class="notes-md-rows-col">
         <div class="notes-md-quickadd">
-          <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do &middot; Shift+Enter = note" autocomplete="off" />
+          <input type="text" class="notes-md-quickadd-input" placeholder="+ Add a to-do" title="Enter = to-do · Shift+Enter = note" autocomplete="off" />
           <button type="button" class="notes-md-fullform-btn" title="New note (full editor — reminder, photo, drawing)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
@@ -1997,13 +2060,16 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
             <button type="button" data-tf="todo">To-dos</button>
             <button type="button" data-tf="note">Notes</button>
           </div>
-          <select class="notes-md-sortsel" title="Sort order">
-            <option value="manual">Manual</option>
-            <option value="az">A–Z</option>
-            <option value="za">Z–A</option>
-            <option value="due">Due date</option>
-            <option value="newest">Newest</option>
-          </select>
+          <label class="notes-md-sortwrap" title="Sort order">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3v18M7 21l-4-4M7 21l4-4"/><path d="M17 21V3M17 3l-4 4M17 3l4 4"/></svg>
+            <select class="notes-md-sortsel">
+              <option value="manual">Manual</option>
+              <option value="az">A–Z</option>
+              <option value="za">Z–A</option>
+              <option value="due">Due date</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
         </div>
         <div class="notes-md-rows" id="notes-md-rows"></div>
       </div>
