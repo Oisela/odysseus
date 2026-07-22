@@ -2490,8 +2490,11 @@ export function addMessage(role, content, modelName, metadata) {
     let _skillInvoke = null;
     if (role === 'user') {
       const _fullText = text;
+      // CRLF-tolerant: composed messages arrive with \r\n line endings
+      // (seen in prod logs 2026-07-22) — a \n-only pattern never matched
+      // and the wall of text stayed visible.
       text = text.replace(
-        /^Apply the skill below to my request[^\n]*\n+--- BEGIN SKILL ---\n([\s\S]*?)\n--- END SKILL ---\s*/,
+        /^Apply the skill below to my request[^\n]*\s*--- BEGIN SKILL ---\r?\n([\s\S]*?)\r?\n--- END SKILL ---\s*/,
         (_m, md) => {
           const nm = md.match(/^name:\s*["']?([A-Za-z0-9_-]+)/m);
           _skillInvoke = { name: nm ? nm[1] : 'skill', md, full: _fullText };
