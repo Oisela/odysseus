@@ -40659,6 +40659,7 @@ body.theme-frosted .modal {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  height: auto; /* compact chip — opt out of the global button height */
   min-height: 22px;
   padding: 1px 9px;
   font-size: 11px;
@@ -40702,6 +40703,7 @@ body.theme-frosted .modal {
 .pomo-drink-glasses svg[fill="none"] { opacity: 0.4; color: var(--fg); }
 .pomo-drink-count { font-variant-numeric: tabular-nums; opacity: 0.7; }
 .pomo-drink-btn {
+  height: auto; /* compact chip — opt out of the global button height */
   min-height: 20px;
   padding: 0 6px;
   font-size: 12px;
@@ -40972,6 +40974,8 @@ body.theme-frosted .modal {
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .notes-md-typefilter button {
+  /* Compact segment — opt out of the global button height. */
+  height: auto;
   min-height: 19px;
   padding: 1px 10px;
   font-size: 11px;
