@@ -26,6 +26,43 @@ _TEACHER_SYSTEM_PROMPT = (
     "Be concise and practical. No preamble."
 )
 
+_DELEGATE_SYSTEM_PROMPT = (
+    "You are a worker model. The lead model delegated a self-contained subtask to you. "
+    "Execute it completely and return ONLY the deliverable — no preamble, no questions, "
+    "no meta-commentary. If the task cannot be completed with the given context, state "
+    "precisely what is missing instead of guessing."
+)
+
+
+async def _call_model(model_spec: str, messages: list, *, owner: Optional[str],
+                      cap: int, error_fmt: str, extra: Optional[Dict] = None) -> Dict:
+    """Shared skeleton of every model-interaction tool: resolve the spec,
+    make the LLM call, truncate the response (cap differs per tool because
+    the callers budget their tool output differently), wrap errors as the
+    {"error": ...} dict the agent loop expects. error_fmt gets {spec}/{err}.
+    """
+    from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
+    from src.llm_core import llm_call_async
+
+    try:
+        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        response = await llm_call_async(
+            url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT,
+        )
+        if len(response) > cap:
+            response = response[:cap] + "\n... (truncated)"
+        result = {"model": model, "response": response}
+        if extra:
+            result.update(extra)
+        return result
+    except Exception as e:
+        logger.error(f"{error_fmt.format(spec=model_spec, err=e)}")
+        return {"error": error_fmt.format(spec=model_spec, err=e)}
+
 
 async def chat_with_model(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Send a message to a specific model and return its response.
@@ -34,9 +71,6 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
       Line 1: model_name (or model_name@endpoint_name)
       Line 2+: the message to send
     """
-    from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
-    from src.llm_core import llm_call_async
-
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
         return {"error": "First line must be the model name"}
@@ -46,25 +80,12 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
     if not message:
         return {"error": "No message provided (line 2+ is the message)"}
 
-    try:
-        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    try:
-        response = await llm_call_async(
-            url, model,
-            [{"role": "user", "content": message}],
-            headers=headers,
-            timeout=AI_CHAT_TIMEOUT,
-        )
-        # Truncate very long responses
-        if len(response) > 10000:
-            response = response[:10000] + "\n... (truncated)"
-        return {"model": model, "response": response}
-    except Exception as e:
-        logger.error(f"chat_with_model failed: {e}")
-        return {"error": f"Failed to get response from {model_spec}: {e}"}
+    return await _call_model(
+        model_spec,
+        [{"role": "user", "content": message}],
+        owner=owner, cap=10000,
+        error_fmt="Failed to get response from {spec}: {err}",
+    )
 
 
 async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
@@ -74,8 +95,6 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
       Line 1: model_name (or 'auto')
       Line 2+: the problem description
     """
-    from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
-    from src.llm_core import llm_call_async
     from src.settings import get_setting
 
     lines = content.strip().split("\n", 1)
@@ -90,35 +109,16 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
         if not model_spec:
             return {"error": "No teacher model configured. Specify a model name or set teacher_model in settings."}
 
-    try:
-        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    try:
-        response = await llm_call_async(
-            url, model,
-            [
-                {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Problem:\n{problem}"},
-            ],
-            headers=headers,
-            timeout=AI_CHAT_TIMEOUT,
-        )
-        if len(response) > 8000:
-            response = response[:8000] + "\n... (truncated)"
-        return {"model": model, "response": response, "teacher": True}
-    except Exception as e:
-        logger.error(f"ask_teacher failed: {e}")
-        return {"error": f"Teacher call failed ({model_spec}): {e}"}
-
-
-_DELEGATE_SYSTEM_PROMPT = (
-    "You are a worker model. The lead model delegated a self-contained subtask to you. "
-    "Execute it completely and return ONLY the deliverable — no preamble, no questions, "
-    "no meta-commentary. If the task cannot be completed with the given context, state "
-    "precisely what is missing instead of guessing."
-)
+    return await _call_model(
+        model_spec,
+        [
+            {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Problem:\n{problem}"},
+        ],
+        owner=owner, cap=8000,
+        error_fmt="Teacher call failed ({spec}): {err}",
+        extra={"teacher": True},
+    )
 
 
 async def delegate(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
@@ -129,8 +129,6 @@ async def delegate(content: str, session_id: Optional[str] = None, owner: Option
     settings (``delegate_worker_model``, "model@endpoint_name" like the
     teacher), so the lead model can delegate without knowing the fleet.
     """
-    from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
-    from src.llm_core import llm_call_async
     from src.settings import get_setting
 
     task = (content or "").strip()
@@ -143,27 +141,16 @@ async def delegate(content: str, session_id: Optional[str] = None, owner: Option
     if not model_spec:
         return {"error": "No worker model configured. Pick one in Settings → Delegate worker."}
 
-    try:
-        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
-    except ValueError as e:
-        return {"error": str(e)}
-
-    try:
-        response = await llm_call_async(
-            url, model,
-            [
-                {"role": "system", "content": _DELEGATE_SYSTEM_PROMPT},
-                {"role": "user", "content": task},
-            ],
-            headers=headers,
-            timeout=AI_CHAT_TIMEOUT,
-        )
-        if len(response) > 12000:
-            response = response[:12000] + "\n... (truncated)"
-        return {"model": model, "response": response, "delegated": True}
-    except Exception as e:
-        logger.error(f"delegate failed: {e}")
-        return {"error": f"Delegation to {model_spec} failed: {e}"}
+    return await _call_model(
+        model_spec,
+        [
+            {"role": "system", "content": _DELEGATE_SYSTEM_PROMPT},
+            {"role": "user", "content": task},
+        ],
+        owner=owner, cap=12000,
+        error_fmt="Delegation to {spec} failed: {err}",
+        extra={"delegated": True},
+    )
 
 
 async def list_models(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
