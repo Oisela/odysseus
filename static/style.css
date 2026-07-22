@@ -41385,6 +41385,15 @@ img.doc-latex-page { user-select: none; -webkit-user-select: none; }
 /* Persona editor — prompt-document checkbox list (v3.6): scrolls and
    filters instead of flooding a dropdown; single-select semantics live
    in JS (checking one unchecks the rest). */
+/* Prompt-file picker row: dropdown + Open + New file (3.7.3). */
+.char-doc-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+.char-doc-picker .char-action-btn { white-space: nowrap; flex-shrink: 0; }
+.char-doc-picker .char-action-btn:disabled { opacity: 0.4; cursor: default; }
 .char-doc-list {
   display: flex;
   flex-direction: column;

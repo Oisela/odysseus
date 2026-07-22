@@ -1453,10 +1453,15 @@
                   Expand
                 </button>
               </div>
-              <label style="margin-top:8px;">Prompt from Library document <span style="opacity:0.5;font-weight:normal;">(overrides the text above; re-read on every start)</span></label>
-              <input type="text" id="char-prompt-doc-search" class="styled-prompt-input" placeholder="Search documents…" autocomplete="off" style="width:100%;margin:0 0 4px;" />
-              <div id="char-prompt-doc-list" class="char-doc-list">
-                <span style="opacity:0.4;font-size:11px;">Loading documents…</span>
+              <label style="margin-top:8px;">Prompt file <span style="opacity:0.5;font-weight:normal;">(persona reads this file on every start — overrides the text above)</span></label>
+              <div class="char-doc-picker">
+                <select id="char-prompt-doc-pick" class="char-template-select" style="flex:1;min-width:0;"></select>
+                <button type="button" id="char-prompt-doc-open" class="char-action-btn" title="Open the linked file in the editor" disabled>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M14 3h7v7"/><path d="M21 3 11 13"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>Open
+                </button>
+                <button type="button" id="char-prompt-doc-new" class="char-action-btn" title="Create a new persona file from the text above and link it">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New file
+                </button>
               </div>
               <label style="margin-top:8px;">Skills <span style="opacity:0.5;font-weight:normal;">(persona is told to load these — details live in the skill, prompt stays short; max 6)</span></label>
               <div id="char-skills-box" class="char-skills-box">

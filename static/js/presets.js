@@ -362,8 +362,8 @@ let _skillsIndexCache = null;
 let _charPromptDocId = '';
 
 async function _populatePromptDocSelect() {
-  const box = document.getElementById('char-prompt-doc-list');
-  if (!box) return;
+  const sel = document.getElementById('char-prompt-doc-pick');
+  if (!sel) return;
   if (!_libDocsCache) {
     // The library endpoint caps limit at 50 — page until done (500 max).
     try {
@@ -379,51 +379,102 @@ async function _populatePromptDocSelect() {
       _libDocsCache = all;
     } catch (e) { _libDocsCache = null; }
   }
-  const search = document.getElementById('char-prompt-doc-search');
-  if (search && !search._wired) {
-    search._wired = true;
-    search.addEventListener('input', _renderPromptDocList);
-  }
-  _renderPromptDocList();
+  _wirePromptDocPicker();
+  _renderPromptDocPick();
   _syncPromptDocState();
 }
 
-// Checkbox list instead of a <select> — a big library would flood a
-// dropdown; this one scrolls, filters via the search field, and
-// single-selects (checking a doc unchecks the previous one).
-function _renderPromptDocList() {
-  const box = document.getElementById('char-prompt-doc-list');
-  if (!box) return;
-  const q = (document.getElementById('char-prompt-doc-search')?.value || '').trim().toLowerCase();
-  const docs = (_libDocsCache || []).filter(d => !q || (d.title || '').toLowerCase().includes(q));
-  box.innerHTML = '';
-  if (!(_libDocsCache || []).length) {
-    box.innerHTML = '<span style="opacity:0.4;font-size:11px;">No Library documents yet — create one in Library first.</span>';
-    return;
-  }
-  if (q && !docs.length) {
-    box.innerHTML = '<span style="opacity:0.4;font-size:11px;">No match.</span>';
-    return;
-  }
-  docs.slice(0, 80).forEach(d => {
-    const row = document.createElement('label');
-    row.className = 'char-doc-row' + (_charPromptDocId === d.id ? ' on' : '');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = _charPromptDocId === d.id;
-    cb.addEventListener('change', () => {
-      _charPromptDocId = cb.checked ? d.id : '';
-      _renderPromptDocList();
-      _syncPromptDocState();
+// One dropdown + Open + New file — replaces the old search/checkbox list,
+// which showed neither the linked file nor a way to open or create one
+// (Alessios screenshot, 2026-07-22). "Persona - …" docs group on top and
+// act as the persona folder.
+function _renderPromptDocPick() {
+  const sel = document.getElementById('char-prompt-doc-pick');
+  if (!sel) return;
+  const docs = _libDocsCache || [];
+  const personas = docs.filter(d => (d.title || '').startsWith('Persona -'));
+  const others = docs.filter(d => !(d.title || '').startsWith('Persona -'));
+  sel.innerHTML = '<option value="">— no file (use the text above) —</option>';
+  const addGroup = (label, list) => {
+    if (!list.length) return;
+    const g = document.createElement('optgroup');
+    g.label = label;
+    list.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = d.title || '(untitled)';
+      g.appendChild(o);
     });
-    const span = document.createElement('span');
-    span.textContent = d.title || '(untitled)';
-    row.appendChild(cb);
-    row.appendChild(span);
-    box.appendChild(row);
+    sel.appendChild(g);
+  };
+  addGroup('Persona files', personas);
+  addGroup('All documents', others);
+  // A linked doc that fell out of the cache (archived, other pagination)
+  // must still show as selected instead of silently flipping to "none".
+  if (_charPromptDocId && ![...sel.options].some(o => o.value === _charPromptDocId)) {
+    const o = document.createElement('option');
+    o.value = _charPromptDocId;
+    o.textContent = '(linked document)';
+    sel.appendChild(o);
+  }
+  sel.value = _charPromptDocId || '';
+  const openBtn = document.getElementById('char-prompt-doc-open');
+  if (openBtn) openBtn.disabled = !_charPromptDocId;
+}
+
+function _wirePromptDocPicker() {
+  const sel = document.getElementById('char-prompt-doc-pick');
+  const openBtn = document.getElementById('char-prompt-doc-open');
+  const newBtn = document.getElementById('char-prompt-doc-new');
+  if (!sel || sel._wired) return;
+  sel._wired = true;
+  sel.addEventListener('change', () => {
+    _charPromptDocId = sel.value || '';
+    if (openBtn) openBtn.disabled = !_charPromptDocId;
+    _syncPromptDocState();
   });
-  if (docs.length > 80) {
-    box.insertAdjacentHTML('beforeend', '<span style="opacity:0.4;font-size:11px;">…more hidden — narrow the search</span>');
+  if (openBtn) {
+    openBtn.addEventListener('click', () => {
+      if (!_charPromptDocId) return;
+      // Close the settings modal so the editor pane is actually visible.
+      document.getElementById('custom-preset-modal')?.classList.add('hidden');
+      import('./document.js').then(m => m.loadDocument(_charPromptDocId)).catch(() => {
+        if (window.showToast) window.showToast('Could not open the file');
+      });
+    });
+  }
+  if (newBtn) {
+    newBtn.addEventListener('click', async () => {
+      const nameInput = document.getElementById('custom-character-name');
+      const tmplSel = document.getElementById('char-template-select');
+      const ta = document.getElementById('custom-system-prompt');
+      const base = (nameInput?.value || '').trim()
+        || (tmplSel && tmplSel.value !== '__default__' ? tmplSel.value : '')
+        || 'Neu';
+      try {
+        const res = await fetch(`${API_BASE}/api/document`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: `Persona - ${base}`,
+            language: 'markdown',
+            content: (ta?.value || '').trim() || `# Persona - ${base}\n\n(Beschreibung hier…)`,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const doc = await res.json();
+        const docId = doc.id || doc.document_id || doc.document?.id;
+        if (!docId) throw new Error('no id in response');
+        _libDocsCache = null; // pick up the new doc
+        _charPromptDocId = docId;
+        await _populatePromptDocSelect();
+        if (window.showToast) window.showToast(`"Persona - ${base}" created & linked — remember to Save`);
+      } catch (e) {
+        console.error('Create persona file failed:', e);
+        if (window.showToast) window.showToast('Could not create the file');
+      }
+    });
   }
 }
 
