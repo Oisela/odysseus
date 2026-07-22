@@ -2999,6 +2999,33 @@ async def stream_agent_loop(
         except Exception as _e:
             logger.debug(f"[agent-intent] sticky session tools skipped: {_e}")
 
+    # Deterministic MCP include: when the request literally names a connected
+    # MCP server ("remnote …", "in RemNote"), EVERY tool of that server joins
+    # the selection. Embedding retrieval alone kept missing them on terse or
+    # German phrasings, and the model then truthfully claimed the tools were
+    # unavailable and stalled (Alessio, repeatedly on 2026-07-22). Exact
+    # name-match — no similarity threshold to lose.
+    if _relevant_tools is not None and mcp_mgr:
+        try:
+            _q = f"{_retrieval_query or ''}\n{_last_user or ''}".lower()
+            _mcp_added = set()
+            for _mt in mcp_mgr.get_all_tools(_mcp_disabled_map or {}):
+                if _mt.get("is_disabled"):
+                    continue
+                _sname = (_mt.get("server_name") or "").strip().lower()
+                if _sname and _sname in _q:
+                    _qn = _mt.get("qualified_name")
+                    if _qn and _qn not in _relevant_tools and _qn not in (disabled_tools or set()):
+                        _mcp_added.add(_qn)
+            if _mcp_added:
+                _relevant_tools |= _mcp_added
+                logger.info(
+                    "[agent-intent] mcp keyword include added=%s",
+                    sorted(_mcp_added),
+                )
+        except Exception as _e:
+            logger.debug(f"[agent-intent] mcp keyword include skipped: {_e}")
+
     _intent_domains = set(_intent.get("domains") or set())
     _ody_doc_finetune_mode = (
         _ody_qwen_finetune_model
