@@ -9,6 +9,7 @@ reads from.
 """
 import json
 
+import core.prefs_store as prefs_store
 import routes.prefs_routes as pr
 
 
@@ -18,7 +19,7 @@ def test_single_user_save_preserves_other_users(tmp_path, monkeypatch):
         "alice": {"theme": "light"},
         "bob": {"theme": "paper"},
     }}), encoding="utf-8")
-    monkeypatch.setattr(pr, "PREFS_FILE", str(f))
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(f))
 
     # auth disabled: load (first user) -> modify -> save
     current = pr._load_for_user(None)
@@ -35,7 +36,7 @@ def test_single_user_save_preserves_other_users(tmp_path, monkeypatch):
 def test_legacy_flat_store_still_saved_flat(tmp_path, monkeypatch):
     f = tmp_path / "user_prefs.json"
     f.write_text(json.dumps({"theme": "light"}), encoding="utf-8")
-    monkeypatch.setattr(pr, "PREFS_FILE", str(f))
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(f))
 
     pr._save_for_user(None, {"theme": "dark"})
     data = json.loads(f.read_text())
@@ -45,7 +46,7 @@ def test_legacy_flat_store_still_saved_flat(tmp_path, monkeypatch):
 def test_named_user_save_unaffected(tmp_path, monkeypatch):
     f = tmp_path / "user_prefs.json"
     f.write_text(json.dumps({"_users": {"alice": {"theme": "light"}}}), encoding="utf-8")
-    monkeypatch.setattr(pr, "PREFS_FILE", str(f))
+    monkeypatch.setattr(prefs_store, "PREFS_FILE", str(f))
 
     pr._save_for_user("bob", {"theme": "dark"})
     data = json.loads(f.read_text())
