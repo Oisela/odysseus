@@ -33,9 +33,50 @@ _DELEGATE_SYSTEM_PROMPT = (
     "precisely what is missing instead of guessing."
 )
 
+# Delegation should be compact by default: it is a hand-off, not a second full
+# conversation. The configured bounds are intentionally conservative and are
+# surfaced in Settings so a user can trade completeness for API cost.
+DEFAULT_DELEGATE_TASK_TOKEN_BUDGET = 6_000
+DEFAULT_DELEGATE_RESPONSE_TOKEN_BUDGET = 4_000
+_MIN_DELEGATE_TOKEN_BUDGET = 256
+_MAX_DELEGATE_TOKEN_BUDGET = 32_000
+
+
+def _bounded_delegate_budget(value, default: int) -> int:
+    """Return a safe token budget for delegate input/output.
+
+    Settings are user-editable JSON, so malformed values must never make a
+    worker call unbounded. A zero/negative value means "use the default".
+    """
+    try:
+        budget = int(value)
+    except (TypeError, ValueError):
+        budget = default
+    if budget <= 0:
+        budget = default
+    return max(_MIN_DELEGATE_TOKEN_BUDGET, min(budget, _MAX_DELEGATE_TOKEN_BUDGET))
+
+
+def _truncate_delegate_task(task: str, token_budget: int) -> tuple[str, bool]:
+    """Keep a delegation hand-off within its approximate input-token budget.
+
+    Preserve both the beginning (instructions) and end (often the requested
+    output format), with an explicit marker so the worker never mistakes a
+    truncated excerpt for complete source material.
+    """
+    max_chars = max(200, int(token_budget / 0.3))
+    if len(task) <= max_chars:
+        return task, False
+    marker = "\n\n[... task context truncated by Odysseus token budget ...]\n\n"
+    remaining = max(200, max_chars - len(marker))
+    head = max(100, int(remaining * 0.7))
+    tail = max(80, remaining - head)
+    return task[:head].rstrip() + marker + task[-tail:].lstrip(), True
+
 
 async def _call_model(model_spec: str, messages: list, *, owner: Optional[str],
-                      cap: int, error_fmt: str, extra: Optional[Dict] = None) -> Dict:
+                      cap: int, error_fmt: str, extra: Optional[Dict] = None,
+                      max_tokens: Optional[int] = None) -> Dict:
     """Shared skeleton of every model-interaction tool: resolve the spec,
     make the LLM call, truncate the response (cap differs per tool because
     the callers budget their tool output differently), wrap errors as the
@@ -50,9 +91,10 @@ async def _call_model(model_spec: str, messages: list, *, owner: Optional[str],
         return {"error": str(e)}
 
     try:
-        response = await llm_call_async(
-            url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT,
-        )
+        kwargs = {"headers": headers, "timeout": AI_CHAT_TIMEOUT}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = await llm_call_async(url, model, messages, **kwargs)
         if len(response) > cap:
             response = response[:cap] + "\n... (truncated)"
         result = {"model": model, "response": response}
@@ -141,16 +183,31 @@ async def delegate(content: str, session_id: Optional[str] = None, owner: Option
     if not model_spec:
         return {"error": "No worker model configured. Pick one in Settings → Delegate worker."}
 
-    return await _call_model(
+    task_budget = _bounded_delegate_budget(
+        get_setting("delegate_task_token_budget", DEFAULT_DELEGATE_TASK_TOKEN_BUDGET),
+        DEFAULT_DELEGATE_TASK_TOKEN_BUDGET,
+    )
+    response_budget = _bounded_delegate_budget(
+        get_setting("delegate_response_token_budget", DEFAULT_DELEGATE_RESPONSE_TOKEN_BUDGET),
+        DEFAULT_DELEGATE_RESPONSE_TOKEN_BUDGET,
+    )
+    compact_task, task_truncated = _truncate_delegate_task(task, task_budget)
+    result = await _call_model(
         model_spec,
         [
             {"role": "system", "content": _DELEGATE_SYSTEM_PROMPT},
-            {"role": "user", "content": task},
+            {"role": "user", "content": compact_task},
         ],
-        owner=owner, cap=12000,
+        owner=owner, cap=int(response_budget / 0.3), max_tokens=response_budget,
         error_fmt="Delegation to {spec} failed: {err}",
-        extra={"delegated": True},
+        extra={
+            "delegated": True,
+            "task_token_budget": task_budget,
+            "response_token_budget": response_budget,
+            "task_truncated": task_truncated,
+        },
     )
+    return result
 
 
 async def list_models(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:

@@ -161,6 +161,11 @@ DEFAULT_SETTINGS = {
     # teacher; the enabled flag gates execution without losing the selection.
     "delegate_worker_model": "",
     "delegate_enabled": False,
+    # Bounded, compact worker hand-offs save tokens without changing the lead
+    # model's normal chat budget. Values are approximate tokens; invalid/zero
+    # values safely fall back to these defaults.
+    "delegate_task_token_budget": 6000,
+    "delegate_response_token_budget": 4000,
     "teacher_tier2_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
