@@ -56,6 +56,17 @@ export async function loadProjects() {
   render();
 }
 
+/**
+ * Return the canonical Odysseus self-development project. The server creates
+ * or repairs it on demand, so the Developer-page buttons also work with a
+ * fresh or isolated data directory.
+ */
+export async function ensureDeveloperProject() {
+  const project = await _json('/api/projects/developer/ensure', { method: 'POST' });
+  await loadProjects();
+  return _projects.find(p => String(p.id) === String(project.id)) || project;
+}
+
 function _saveExpanded() {
   localStorage.setItem('ody-projects-expanded', JSON.stringify(_expanded));
 }
@@ -294,9 +305,11 @@ async function _newChatInProject(project) {
     await _json(`/api/projects/${project.id}/sessions/${sid}`, { method: 'POST' });
     await loadSessions();
     await loadProjects();
-    _openProjectChat(project, sid);
+    await selectSession(sid, { keepSidebar: true, showLoading: false });
+    return { created: true, project, sessionId: sid };
   } catch (e) {
     if (uiModule.showError) uiModule.showError('Could not create chat: ' + e.message);
+    throw e;
   }
 }
 
@@ -313,6 +326,46 @@ export async function startProjectChat(projectId) {
   }
   if (!proj) throw new Error('Project not found');
   await _newChatInProject(proj);
+}
+
+/**
+ * Turn the currently open chat into a project chat. Used by the Developer
+ * page's "Prepare current chat" action so a conversation that started in the
+ * wrong place can acquire the Builder workspace, persona, pinned skill and
+ * default model without losing its history.
+ *
+ * If no persistent chat exists yet, start a fresh project chat instead.
+ */
+export async function prepareCurrentProjectChat(projectId) {
+  let proj = _projects.find(p => String(p.id) === String(projectId));
+  if (!proj) {
+    try { await loadProjects(); } catch (e) { /* keep going with what we have */ }
+    proj = _projects.find(p => String(p.id) === String(projectId));
+  }
+  if (!proj) throw new Error('Project not found');
+
+  const sid = (typeof getCurrentSessionId === 'function') ? getCurrentSessionId() : null;
+  if (!sid) {
+    return _newChatInProject(proj);
+  }
+
+  await _json(`/api/projects/${proj.id}/sessions/${sid}`, { method: 'POST' });
+
+  // Existing sessions keep their prior model when moved between projects.
+  // The setup action is intentionally stronger: use the Builder project's
+  // configured default so "prepared" means the same thing as a fresh Go chat.
+  const dm = String(proj.default_model || '');
+  const sep = dm.indexOf('::');
+  if (sep > 0 && sep < dm.length - 2) {
+    const fd = new FormData();
+    fd.append('endpoint_url', dm.slice(0, sep));
+    fd.append('model', dm.slice(sep + 2));
+    await _json(`/api/session/${sid}`, { method: 'PATCH', body: fd });
+  }
+
+  await Promise.all([loadSessions(), loadProjects()]);
+  await selectSession(sid, { keepSidebar: true, showLoading: false });
+  return { created: false, project: proj, sessionId: sid };
 }
 
 // ---------------------------------------------------------------------------

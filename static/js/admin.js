@@ -3153,26 +3153,42 @@ async function _loadDevStatus() {
   }
 }
 
-async function _initBuilderLink(_attempt = 0) {
+async function _initBuilderLink() {
   const btn = el('dev-builder-btn');
-  if (!btn) return;
+  const prepareBtn = el('dev-prepare-btn');
+  const msg = el('dev-chat-msg');
+  if (!btn || !prepareBtn) return;
+  const setMsg = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = ok ? 'admin-success' : 'admin-error';
+  };
+  const prepareMode = () => {
+    if (typeof window.__odysseusPrepareDeveloperMode !== 'function') {
+      throw new Error('Developer mode controls are not ready');
+    }
+    window.__odysseusPrepareDeveloperMode();
+  };
   try {
     const m = await import('./projects.js');
-    const projs = (m.getProjects && m.getProjects()) || [];
-    const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
-      || projs.find(p => /entwickler|builder/i.test(p.name || ''));
-    if (!builder) {
-      // Projects load async at app start. When this init runs first, the
-      // cache is still empty and the Go button stayed hidden forever (seen
-      // on prod 2026-07-17). Retry briefly until the list is in — on
-      // instances without a builder project (e.g. the beta) the retries
-      // fizzle out and the button legitimately stays hidden.
-      if (_attempt < 8) setTimeout(() => _initBuilderLink(_attempt + 1), 900);
-      return;
-    }
     btn.style.display = '';
+    prepareBtn.style.display = '';
+    try {
+      const versionRes = await fetch('/api/version', { credentials: 'same-origin' });
+      const version = await versionRes.json();
+      if (version.channel === 'beta') {
+        btn.disabled = prepareBtn.disabled = true;
+        btn.title = prepareBtn.title = 'Developer chat setup is available on the main instance';
+        setMsg('Developer chat setup is intentionally disabled on beta (no host or clone access).', true);
+        return;
+      }
+    } catch (e) { /* status failure: let the server endpoint enforce access */ }
     btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      setMsg('', true);
       try {
+        if (!m.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+        const builder = await m.ensureDeveloperProject();
         if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
         // Fresh developer chat in the builder project (pinned skill + clone
         // workspace ride along server-side). Fallback: open its last chat.
@@ -3180,9 +3196,38 @@ async function _initBuilderLink(_attempt = 0) {
           await m.startProjectChat(builder.id);
         } else if ((builder.sessions || []).length) {
           const s = await import('./sessions.js');
-          s.selectSession(builder.sessions[0].id);
+          await s.selectSession(builder.sessions[0].id);
         }
-      } catch (e) { console.warn('start developer chat failed', e); }
+        prepareMode();
+        if (uiModule?.showToast) uiModule.showToast('Developer chat ready — Agent mode and Shell are active.');
+      } catch (e) {
+        console.warn('start developer chat failed', e);
+        setMsg('Could not start a developer chat: ' + e.message, false);
+        if (uiModule?.showError) uiModule.showError('Could not start a developer chat');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    prepareBtn.addEventListener('click', async () => {
+      prepareBtn.disabled = true;
+      setMsg('', true);
+      try {
+        if (!m.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+        const builder = await m.ensureDeveloperProject();
+        if (!m.prepareCurrentProjectChat) throw new Error('Project setup action is unavailable');
+        await m.prepareCurrentProjectChat(builder.id);
+        prepareMode();
+        if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+        if (uiModule?.showToast) {
+          uiModule.showToast('Developer chat ready — Builder project, Agent mode and Shell are active.');
+        }
+      } catch (e) {
+        console.warn('prepare developer chat failed', e);
+        setMsg('Could not prepare this chat: ' + e.message, false);
+        if (uiModule?.showError) uiModule.showError('Could not prepare this chat');
+      } finally {
+        prepareBtn.disabled = false;
+      }
     });
   } catch (e) { /* projects module unavailable — keep button hidden */ }
 }
