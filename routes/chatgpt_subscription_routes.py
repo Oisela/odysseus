@@ -82,7 +82,11 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         ep.api_key = None
         ep.provider_auth_id = auth.id
         ep.is_enabled = True
-        ep.supports_tools = False
+        # The Codex/Responses path now sends native function tools (see
+        # _build_chatgpt_responses_payload) and parses function_call events back,
+        # so these models are full tool-callers — route them the API path, not
+        # the fenced-block fallback that left builtins like bash uncallable.
+        ep.supports_tools = True
         ep.model_type = "llm"
         ep.endpoint_kind = "api"
         ep.model_refresh_mode = "manual"
