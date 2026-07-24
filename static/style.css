@@ -9411,6 +9411,45 @@ body.fullwidth-chat .chat-history {
   70% { opacity: 0.35; top: calc(100% - 20px); }
   100% { opacity: 0; top: calc(100% - 20px); }
 }
+.agent-thread-summary {
+  display: none;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--red) 22%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 6%, transparent);
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font: inherit;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.agent-thread-summary:hover {
+  background: color-mix(in srgb, var(--red) 11%, transparent);
+  color: var(--fg);
+}
+.agent-thread-summary-icon {
+  color: var(--red);
+  font-size: 1.05em;
+}
+.agent-thread-summary-chevron {
+  margin-left: auto;
+  font-size: 0.8em;
+  opacity: 0.65;
+  transition: transform 0.2s ease;
+}
+.agent-thread.compact .agent-thread-summary {
+  display: flex;
+}
+.agent-thread.compact:not(.compact-open) .agent-thread-node {
+  display: none;
+}
+.agent-thread.compact-open .agent-thread-summary-chevron {
+  transform: rotate(90deg);
+}
 .agent-thread-node {
   position: relative;
   padding: 5px 0;

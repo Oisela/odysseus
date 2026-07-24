@@ -2544,6 +2544,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   chatBox.appendChild(threadWrap);
                 }
                 threadWrap.classList.add('streaming');
+                threadWrap.classList.remove('compact', 'compact-open');
+                const staleSummary = threadWrap.querySelector('.agent-thread-summary');
+                if (staleSummary) staleSummary.remove();
                 lastToolThread = threadWrap;
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
                 const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
@@ -2664,6 +2667,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   const _wasOpen = currentToolBubble.classList.contains('open');
                   currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
                   currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  _refreshCompactThread(currentToolBubble.closest('.agent-thread'));
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
@@ -5385,6 +5389,33 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
   }
 
+  function _refreshCompactThread(thread) {
+    if (!thread) return;
+    const nodes = Array.from(thread.querySelectorAll('.agent-thread-node'));
+    const completed = nodes.filter((node) => !node.classList.contains('running') && !node.classList.contains('error'));
+    const failures = nodes.filter((node) => node.classList.contains('error'));
+    const active = nodes.filter((node) => node.classList.contains('running'));
+    const shouldCompact = completed.length >= 2 && failures.length === 0 && active.length === 0;
+    const wasCompact = thread.classList.contains('compact');
+
+    thread.classList.toggle('compact', shouldCompact);
+    if (!shouldCompact || !wasCompact) thread.classList.remove('compact-open');
+    if (!shouldCompact) {
+      const summary = thread.querySelector('.agent-thread-summary');
+      if (summary) summary.remove();
+      return;
+    }
+
+    let summary = thread.querySelector('.agent-thread-summary');
+    if (!summary) {
+      summary = document.createElement('button');
+      summary.type = 'button';
+      summary.className = 'agent-thread-summary';
+      thread.prepend(summary);
+    }
+    summary.innerHTML = `<span class="agent-thread-summary-icon">✓</span><span>${completed.length} actions completed</span><span class="agent-thread-summary-chevron">▸</span>`;
+  }
+
   // Public API
   const chatModule = {
     init,
@@ -5423,6 +5454,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // "needs many clicks" bug.
   if (!window.__odysseus_thread_click_bound) {
     document.body.addEventListener('click', (e) => {
+      const summary = e.target.closest('.agent-thread-summary');
+      if (summary) {
+        const thread = summary.closest('.agent-thread');
+        if (thread) thread.classList.toggle('compact-open');
+        return;
+      }
       const header = e.target.closest('.agent-thread-header');
       if (!header) return;
       const node = header.closest('.agent-thread-node');
