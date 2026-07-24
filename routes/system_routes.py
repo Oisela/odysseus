@@ -26,6 +26,7 @@ _PROD_DIR = "/opt/odysseus"
 _BETA_DIR = "/opt/odysseus-beta"
 _BETA_URL = "http://127.0.0.1:7001/api/version"
 _PROMOTE = "/home/deploy/odysseus-entwickler/promote.sh"
+_BETA_STOP = "/home/deploy/odysseus-entwickler/beta-stop.sh"
 _SWITCH = "/home/deploy/odysseus-entwickler/switch-version.sh"
 _RELEASES = "/home/deploy/odysseus-entwickler/releases.log"
 
@@ -219,10 +220,7 @@ def setup_system_routes() -> APIRouter:
     def stop_beta(request: Request):
         """Park the beta channel (compose down + free the :7001 serve)."""
         require_admin(request)
-        cmd = (
-            "cd /opt/odysseus-beta && docker compose -p odysseus-beta down; "
-            "tailscale serve --https=7001 off"
-        )
+        cmd = f"bash {_BETA_STOP}"
         try:
             r = _ssh_script(cmd, timeout=90)
         except Exception as e:

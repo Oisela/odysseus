@@ -53,3 +53,9 @@ def test_server_ensures_canonical_developer_project():
     assert 'DEVELOPER_PROJECT_TEMPLATE = "entwickler"' in routes
     assert 'DEVELOPER_PROJECT_SKILL = "odysseus-entwickler"' in routes
     assert 'raise HTTPException(409, "Developer clone is not installed")' in routes
+
+
+def test_beta_stop_ui_uses_the_idempotent_shared_script():
+    routes = _read("routes/system_routes.py")
+    assert '_BETA_STOP = "/home/deploy/odysseus-entwickler/beta-stop.sh"' in routes
+    assert 'cmd = f"bash {_BETA_STOP}"' in routes
