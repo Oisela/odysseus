@@ -1,80 +1,72 @@
-# Roadmap / Help Wanted
+# Odysseus Roadmap — lebt in /app/data/dev/ROADMAP.md
 
-Odysseus is on a voyage, but not home yet. It works great for me (lol), but this ship is moving fast and feedback/help would be appreciated! (I don't know what I'm doing, help).
+Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in die Roadmap ein: …"). Der Entwickler liest sie bei JEDEM Start, arbeitet oben nach unten, hakt Erledigtes ab ([x]) und sortiert Neues ein.
 
-If you see weird CSS, strange layout behavior, or a suspiciously murky corner of
-the codebase, you are probably right to stay away.
+## v3.1.0 — RELEASED 2026-07-15 (Prod @ e56818e)
+- [x] Versionierung (APP_VERSION 3.1.0) + Kanal-Badge in der Sidebar
+- [x] System-Karte in Settings mit "Update"-Knopf (feat/system-status-card)
+- [x] Create-Folder-Button im Projekt-Ordner-Picker (feat/create-folder-button)
+- [x] Projekt-Standard-Modell inkl. Dropdown-Fix für Gemini (feat/project-default-model)
+- [x] Anthropic-History-Caching (feat/anthropic-history-caching) — größter Kostenhebel
+- [x] Fix: Stale Pending-Draft schluckte Sends (fix/pending-chat-precedence)
+- [x] Fix: Workspace-Pill klebte nach Projekt-Chat (fix/workspace-switch-leak)
+- [x] Fix: Queued Task-Runs überleben Foreground-Aktivität (fix/queued-task-abort)
 
-## High Priority
+## v3.2.0 — RELEASED 2026-07-16 (Prod @ b76be32)
+- [x] Entwickler-Seite, Projekt-Panel, Entwickler-Werkzeuge und Tool-Output-Trunkierung
+- [x] Chroma-Collection-Präfix pro Instanz, Kalender-API-Base-Fix und E-Mail-Papierkorb
+- [x] Pomodoro-Einzel-Einträge/Statistik/Skip-Break und stabile manuelle Task-Runs
 
-- SQUASH BUGS
-- Fresh install smoke tests on Linux, macOS, and Windows. Docker, native Python,
-  and WSL all need coverage.
+## v3.3 — RELEASED 2026-07-16
+- [x] Beta-Start/Stop auf der Entwickler-Seite und Version-Switcher mit Reload-Banner
+- [x] SSH-Quoting-Hotfix und Warnung für alte Switch-Ziele
+- [x] Entwickler-Persona als Builder-Projekt-Template
 
-- Integration audit: do integrations even work? Confirm what works, what needs setup docs, and what should be removed or hidden. 
-- Self-host troubleshooting cookbook. Document the weird 30-second fixes that otherwise become 30-minute searches: Dovecot cleartext auth for local stacks, ntfy Android Instant Delivery for non-ntfy.sh servers, clipboard limits on plain-HTTP Tailscale URLs, Radicale collection URLs, and similar traps.
-- Cookbook reliability on other computers. This is probably the area most likely to need work across different machines, GPUs, drivers, shells, and Python environments.
-- Cookbook SGLang support across platforms. Make sure SGLang setup/serve works
-  predictably on Linux, Windows/WSL, macOS where possible, Docker, and common
-  NVIDIA/AMD hardware paths.
-- Deep Research model presets by hardware. Recommend approved model/parameter
-  profiles for small, medium, and large local setups so people with different
-  hardware can use Deep Research without guessing. Surface this either in Deep
-  Research settings or as a Cookbook scan/dropdown suggestion.
-- Cookbook model scan/download ranking. Prioritize newer architectures and
-  better hardware-fit models instead of scoring everything almost the same.
-  Ranking should account for architecture age, quant format, VRAM/RAM fit,
-  backend support, vision/mmproj requirements, and likely serve reliability.
-- Cookbook error feedback and logging. Failed downloads, dependency installs,
-  preflights, and serve jobs should show the actual command/output/error in the
-  UI, with copyable logs and clear next steps instead of just "crashed".
-- Agent prompt/context bloat. Agent mode is too heavy for smaller local models:
-  tool schemas, skills, memory, documents, and instructions can eat the context
-  before the user request really starts. We need slimmer prompts, better tool
-  selection, smaller default tool sets, and clearer guidance for models with
-  4k/8k/16k context windows.
-- Skill/tool prompt-injection audit. User-editable skills, notes, documents,
-  fetched pages, and memories should be treated as untrusted data. Keep testing
-  whether models follow malicious instructions from those surfaces.
-- Better degraded-state reporting for ChromaDB, SearXNG, email, ntfy, and provider probes.
-- Email performance audit. Fetching, searching, opening, deleting, and sending
-  email can feel slow, especially over IMAP/SMTP providers with high latency.
-  Need someone who knows mail performance to profile the current flow, identify
-  whether the bottleneck is IMAP folder select/fetch, cache invalidation,
-  attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
-  propose safer caching/prefetch/batching without breaking multi-account state.
-- Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
+## v3.5 — RELEASED 2026-07-17 (Prod @ c496c42)
+- [x] Parallele Tool-Calls, Kontext-Kompaktierung und Claude-5-Kontextfenster-Fix
+- [x] Projekt-Chat-Sortierung, Endpoint-Umbenennung und Quote-and-Ask
+- [x] Korrektur-Memories, einklappbare Roadmap und ask_user-Options-Fix
 
-## Refactor Targets
-- CSS cleanup. `static/style.css` basically Calypso's island atm.
-- Tour core helper. The onboarding tours have too much copy-pasted scaffolding; promote a shared `tour-core.js` helper before adding more tours.
-- Modal/window positioning cleanup. Some window controls have improved, but the
-  underlying popup/dropdown/fixed-position behavior is still too fragile.
-- Mobile media override discoverability. A lot of "CSS did not move" bugs are mobile `@media` overrides of the same selector; comments or linting around desktop/mobile paired rules would help.
-- Dead code pass for old routes, stale feature flags, and unused UI states.
+## v3.6 — RELEASED 2026-07-21 (Prod @ c0a708d)
+- [x] Projekt-Preset-Scope, E-Mail-Stale-Serve und ask_user-Options-Layout
+- [x] Notes für schmale Panels, TickTick-UI und Projekt-von-Neuem-Chat-Fix
+- [x] Pomodoro-Sounds, Hauptnavigation, vorzeitiges Buchen und Kalender-Logging
+- [x] Roadmap-Screenshots, Sidebar-Dot-Fix, PDF-Markierungen und PDF-Textmarker
+- [x] Delegate-Worker, Ntfy-Integration, Shopping-&-Recipes-Modul und globale Chat-Suche
+- [x] Simple-UI-Modus, deutsche Kernoberfläche, Persona-Skills/-Prompt-Dateien und Mobile-Politur
+- [x] Persistente PDF-Markierungen und PC-Terminal-Zugriff als umgesetzt dokumentiert
 
-## Frontend
+## v3.7 — RELEASED 2026-07-22 (Prod @ b4dbb84)
+- [x] Model-Picker-/Modell-Call-Refactors, Button-min-height, E-Mail-Filter-Tabelle und serverseitige Projekt-Presets
+- [x] Notes-Event-Delegation, zentraler Upload-Bild-Regex und Prefs-Store-Refactor
+- [x] Vollständiger eager-modulepreload
+- [x] Sortierbare Todos, Fenster-Positions-Restore und Listen-Umbenennung
+- [x] Pomodoro-Presets/Trink-Tracker, Skill-Paket und Sticky-Session-Tools-Fix
 
-- Expand the Editor for quicker, more robust everyday use. Better file/document
-  handling, smoother window behavior, clearer save/export flows, stronger image
-  editing affordances, and fewer brittle edge cases.
-- Better AI integration for Notes and Todos. Notes should be easier for the
-  agent to read, update, summarize, and turn into actions. Todos should be
-  assignable to an agent from the UI, possibly through a button, task action,
-  or dedicated skill/tool flow.
-- Mobile gallery/editor polish. Easier to launch/download inpaint model or any missing pieces.
-- Accessibility pass: keyboard navigation, focus states, contrast, reduced motion.
-- Improve empty states and error messages on fresh installs.
-- Tighten first-run setup, hints, and tours so they do not repeat or fight each other.
-- Vendor CDN assets eventually for a more fully self-hosted/offline mode.
+## v3.8 — RELEASED 2026-07-23 (Prod @ 93789ad)
+- [x] SRS-/Flashcard-Modul als eigener machbarer RemNote-Kern
+- [x] Separate Accounts als eigene Beta-Runde
+- [x] Pomodoro-UI-Redesign
+- [x] Upstream-Merge-Check als Runden-Routine
 
-## Backend
+## v3.9.0 — OFFENES PAKET
 
-- More tests around endpoint probing and provider setup.
-- Better task scheduler defaults and visibility.
-- Backup/restore guide and helper flow for `data/`.
-- Security hardening around admin-only tools and clear docs for their risk.
+### Chat-Chaining & Token-Effizienz
+- [ ] **Chat-Chaining / kompakte Delegation:** Chats bzw. spezialisierte Worker können Aufgaben übernehmen; an den Hauptchat gehen nur Ergebnis, Belege und ein kompaktes Hand-off statt des vollständigen Verlaufs zurück.
+- [ ] **Token-Budget & Kontext-Effizienz:** Budgets pro Aufgabe, komprimierte Übergaben, Code-/Projekt-Map, gezielte Ausgaben, Caching häufiger Architektur-/Git-/Testinformationen und günstige Worker für Extraktion, Suche und Review. **Erste Ausbaustufe gebaut:** Delegate-Worker begrenzt Task- und Antwortbudget, kürzt große Hand-offs transparent und zeigt beide Budgets in Settings → Delegate Worker; weiter offen: projektweite Maps/Caches und Worker-Routing.
 
-## Not The Focus Right Now
+### Offene Bugs & Betriebsaufgaben
+- [ ] **RemNote-Puffer-Flush als Scheduled Task:** den vorhandenen Task über die UI anlegen (kein Code; Prompt im Setup-Repo).
+- [ ] **Agent-Modus-Bug:** Neuer Chat mit aktivem Agent-Modus meldet gelegentlich „kein Agent-Modus"; Reproduktion mit Screenshot, Wortlaut und Ablauf sammeln.
+- [ ] **Doppelte Chat-Module:** `chat.js` und `chatRenderer.js` werden einmal über Root-Script-Tags mit Query und zusätzlich per Import geladen; Verhalten prüfen und doppelte Modulinstanzen entfernen.
+- [ ] **Altbestand-Tests prüfen:** `test_email_linkify_security_js`, `test_security_regressions::test_email_thread_rendering_sanitizes_body_html`, `test_preset_local_storage_js` und `test_security_regressions::test_gmail_mcp_preset_uses_contained_oauth_paths` — echte Regression oder veraltete Tests klären.
 
-I prob shouldnt add more themes.
+### Neue Features
+- [ ] **Server-Live-Ansicht:** nicht nur für Admins eine sichere Live-Ansicht des Hosts (CPU, RAM usw.).
+- [ ] **Modell-/API-Preisvergleich:** Kosten und Eignung der integrierten Modelle/Anbieter (z. B. Gemini, Claude, ChatGPT) transparent vergleichen, besonders für Physik/Mathe.
+- [ ] **RemNote-Offlinespeicher:** einen klaren Ort für Rems, wenn RemNote nicht verbunden ist; später gezielt an RemNote übertragen, mit Zuordnung zum gewünschten Rem/Pfad.
+
+## Später / Ideen-Speicher
+- [ ] **Selbst-Loop-Retry:** Odysseus-Entwickler soll eine Runde bevorzugt selbst bauen lassen; zuvor verworfen, weil der Selbst-Loop die Arbeit wirklich selbst leisten soll.
+
+## Eingang (unsortiert — Alessio wirft hier rein)

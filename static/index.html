@@ -1776,6 +1776,15 @@
                 <span class="adm-model-logo" id="set-delegateModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-delegateModelSelect" class="settings-select"></select>
               </div>
+              <div class="settings-row">
+                <label class="settings-label" title="Approximate maximum tokens sent to the worker">Task budget</label>
+                <input id="set-delegateTaskBudget" class="settings-select" type="number" min="256" max="32000" step="256" inputmode="numeric" aria-label="Delegate task token budget">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" title="Approximate maximum tokens returned by the worker">Response budget</label>
+                <input id="set-delegateResponseBudget" class="settings-select" type="number" min="256" max="32000" step="256" inputmode="numeric" aria-label="Delegate response token budget">
+              </div>
+              <div class="admin-toggle-sub" style="margin-top:2px">Compact hand-offs limit worker input and output. The lead model receives the worker's concise result.</div>
               <div id="set-delegateMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);margin-top:2px;"></div>
             </div>
           </div>

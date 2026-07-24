@@ -749,7 +749,7 @@ function initTeacherModel() {
 // Delegate worker = cheaper model the agent hands self-contained
 // subtasks to via the `delegate` tool.
 function initDelegateWorker() {
-  return initModelPickerCard({
+  initModelPickerCard({
     label: 'delegate worker',
     toggleId: 'set-delegateEnabledToggle',
     epSelectId: 'set-delegateEpSelect',
@@ -758,6 +758,42 @@ function initDelegateWorker() {
     enabledKey: 'delegate_enabled',
     modelKey: 'delegate_worker_model'
   });
+
+  const taskBudget = el('set-delegateTaskBudget');
+  const responseBudget = el('set-delegateResponseBudget');
+  const msg = el('set-delegateMsg');
+  if (!taskBudget || !responseBudget) return;
+  const bounds = (value, fallback) => {
+    const n = Number.parseInt(value, 10);
+    return Number.isFinite(n) && n >= 256 && n <= 32000 ? n : fallback;
+  };
+  const load = async () => {
+    try {
+      const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+      const data = await res.json();
+      taskBudget.value = bounds(data.delegate_task_token_budget, 6000);
+      responseBudget.value = bounds(data.delegate_response_token_budget, 4000);
+    } catch (e) { /* Defaults remain usable when settings are unavailable. */ }
+  };
+  const save = async () => {
+    const task = bounds(taskBudget.value, 6000);
+    const response = bounds(responseBudget.value, 4000);
+    taskBudget.value = task;
+    responseBudget.value = response;
+    try {
+      await fetch('/api/auth/settings', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delegate_task_token_budget: task, delegate_response_token_budget: response })
+      });
+      if (msg) { msg.textContent = 'Token budgets saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000); }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Failed to save token budgets'; msg.style.color = 'var(--red)'; }
+    }
+  };
+  load();
+  taskBudget.addEventListener('change', save);
+  responseBudget.addEventListener('change', save);
 }
 
 /* ── Shopping list sharing ── */
