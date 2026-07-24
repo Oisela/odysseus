@@ -3155,7 +3155,20 @@ async function _loadDevStatus() {
 
 async function _initBuilderLink(_attempt = 0) {
   const btn = el('dev-builder-btn');
-  if (!btn) return;
+  const prepareBtn = el('dev-prepare-btn');
+  const msg = el('dev-chat-msg');
+  if (!btn || !prepareBtn) return;
+  const setMsg = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = ok ? 'admin-success' : 'admin-error';
+  };
+  const prepareMode = () => {
+    if (typeof window.__odysseusPrepareDeveloperMode !== 'function') {
+      throw new Error('Developer mode controls are not ready');
+    }
+    window.__odysseusPrepareDeveloperMode();
+  };
   try {
     const m = await import('./projects.js');
     const projs = (m.getProjects && m.getProjects()) || [];
@@ -3171,6 +3184,7 @@ async function _initBuilderLink(_attempt = 0) {
       return;
     }
     btn.style.display = '';
+    prepareBtn.style.display = '';
     btn.addEventListener('click', async () => {
       try {
         if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
@@ -3180,9 +3194,34 @@ async function _initBuilderLink(_attempt = 0) {
           await m.startProjectChat(builder.id);
         } else if ((builder.sessions || []).length) {
           const s = await import('./sessions.js');
-          s.selectSession(builder.sessions[0].id);
+          await s.selectSession(builder.sessions[0].id);
         }
-      } catch (e) { console.warn('start developer chat failed', e); }
+        prepareMode();
+        if (uiModule?.showToast) uiModule.showToast('Developer chat ready — Agent mode and Shell are active.');
+      } catch (e) {
+        console.warn('start developer chat failed', e);
+        setMsg('Could not start a developer chat: ' + e.message, false);
+        if (uiModule?.showError) uiModule.showError('Could not start a developer chat');
+      }
+    });
+    prepareBtn.addEventListener('click', async () => {
+      prepareBtn.disabled = true;
+      setMsg('', true);
+      try {
+        if (!m.prepareCurrentProjectChat) throw new Error('Project setup action is unavailable');
+        await m.prepareCurrentProjectChat(builder.id);
+        prepareMode();
+        if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+        if (uiModule?.showToast) {
+          uiModule.showToast('Developer chat ready — Builder project, Agent mode and Shell are active.');
+        }
+      } catch (e) {
+        console.warn('prepare developer chat failed', e);
+        setMsg('Could not prepare this chat: ' + e.message, false);
+        if (uiModule?.showError) uiModule.showError('Could not prepare this chat');
+      } finally {
+        prepareBtn.disabled = false;
+      }
     });
   } catch (e) { /* projects module unavailable — keep button hidden */ }
 }

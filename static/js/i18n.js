@@ -182,6 +182,15 @@ const DE = {
   'Users': 'Benutzer',
   'System': 'System',
   'Developer': 'Entwickler',
+  'Prepare current chat': 'Aktuellen Chat vorbereiten',
+  'Attach the current chat to the Builder project and enable Agent mode plus Shell':
+    'Aktuellen Chat dem Builder-Projekt zuordnen und Agent-Modus sowie Shell aktivieren',
+  'Developer chat ready — Agent mode and Shell are active.':
+    'Entwickler-Chat bereit — Agent-Modus und Shell sind aktiv.',
+  'Developer chat ready — Builder project, Agent mode and Shell are active.':
+    'Entwickler-Chat bereit — Builder-Projekt, Agent-Modus und Shell sind aktiv.',
+  'Could not prepare this chat': 'Dieser Chat konnte nicht vorbereitet werden',
+  'Could not start a developer chat': 'Entwickler-Chat konnte nicht gestartet werden',
 
   // ── Appearance / UI mode / Language ──
   'UI mode': 'UI-Modus',

@@ -1794,6 +1794,7 @@ function initializeEventListeners() {
       if (btn.style.display === 'none') return;
       const on = loadToolPref(stateKey, mode);
       btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
     });
   }
@@ -1830,6 +1831,17 @@ function initializeEventListeners() {
       setTimeout(() => applyModeToToggles(mode), 500);
     }
     window.__odysseusSetChatMode = setMode;
+    window.__odysseusPrepareDeveloperMode = () => {
+      // The Developer-page setup action needs a deterministic Agent + Shell
+      // state, independent of whatever per-mode preference the chat last used.
+      // Project/persona/workspace selection is handled by projects.js.
+      const resChk = el('research-toggle');
+      if (resChk && resChk.checked) _syncResearchIndicator(false);
+      setMode('agent');
+      saveToolPref('bash', 'agent', true);
+      applyModeToToggles('agent');
+      return { mode: 'agent', bash: true };
+    };
     agentBtn.addEventListener('click', () => {
       // Agent mode turns off research if active
       const resChk = el('research-toggle');
