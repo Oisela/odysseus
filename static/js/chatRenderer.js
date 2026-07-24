@@ -2386,6 +2386,17 @@ export function addMessage(role, content, modelName, metadata) {
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
+          // Compact successful multi-action runs after a reload, matching the live stream.
+          const completedCount = Array.from(threadWrap.querySelectorAll('.agent-thread-node:not(.error)')).length;
+          const failureCount = threadWrap.querySelectorAll('.agent-thread-node.error').length;
+          if (completedCount >= 2 && failureCount === 0) {
+            threadWrap.classList.add('compact');
+            const summary = document.createElement('button');
+            summary.type = 'button';
+            summary.className = 'agent-thread-summary';
+            summary.innerHTML = `<span class="agent-thread-summary-icon">✓</span><span>${completedCount} actions completed</span><span class="agent-thread-summary-chevron">▸</span>`;
+            threadWrap.prepend(summary);
+          }
           // Check if next round has text — extend line down to connect
           const nextTxt = (roundTexts[r + 1] || '').trim();
           if (nextTxt) threadWrap.classList.add('has-bottom');
