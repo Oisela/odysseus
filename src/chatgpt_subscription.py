@@ -299,17 +299,56 @@ def to_http_exception(exc: Exception) -> HTTPException:
     return HTTPException(502, str(exc))
 
 
+def _message_text(content: Any) -> str:
+    if isinstance(content, list):
+        return "\n".join(
+            str(part.get("text") or part.get("content") or "")
+            for part in content
+            if isinstance(part, dict)
+        )
+    return "" if content is None else str(content)
+
+
 def build_responses_input(messages: list[dict]) -> list[dict]:
+    """Translate Odysseus' canonical OpenAI-style messages into Responses-API
+    input items.
+
+    Plain messages become ``{role, content:[{type, text}]}``. Agentic turns are
+    carried structurally so multi-round tool use survives (the model must see
+    its own prior calls and their results, or round 2 loses the thread):
+      - an assistant ``tool_calls`` list -> one ``function_call`` item each
+        (``call_id``/``name``/``arguments``), preceded by any assistant prose;
+      - a ``role: "tool"`` result -> a ``function_call_output`` item keyed by
+        the same ``tool_call_id``.
+    ``call_id`` round-trips: the stream parser stores the Codex call_id as the
+    tool call ``id``, the agent loop echoes it as ``tool_call_id``, and here it
+    maps back to ``call_id`` so the pairing the API requires stays intact.
+    """
     input_items: list[dict] = []
     for msg in messages or []:
         role = msg.get("role") or "user"
+        tool_calls = msg.get("tool_calls") if role == "assistant" else None
+
         if role == "tool":
-            role = "user"
-        content = msg.get("content")
-        if isinstance(content, list):
-            text = "\n".join(str(part.get("text") or part.get("content") or "") for part in content if isinstance(part, dict))
-        else:
-            text = "" if content is None else str(content)
-        input_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+            # A tool result. Pair it to its call via call_id, not a text turn.
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.get("tool_call_id") or "",
+                "output": _message_text(msg.get("content")),
+            })
+            continue
+
+        text = _message_text(msg.get("content"))
+        if text:
+            input_type = "output_text" if role == "assistant" else "input_text"
+            input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+
+        for tc in tool_calls or []:
+            fn = tc.get("function") or {}
+            input_items.append({
+                "type": "function_call",
+                "call_id": tc.get("id") or "",
+                "name": fn.get("name") or tc.get("name") or "",
+                "arguments": fn.get("arguments") if fn.get("arguments") is not None else tc.get("arguments") or "{}",
+            })
     return input_items
