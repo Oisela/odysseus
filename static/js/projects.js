@@ -56,6 +56,17 @@ export async function loadProjects() {
   render();
 }
 
+/**
+ * Return the canonical Odysseus self-development project. The server creates
+ * or repairs it on demand, so the Developer-page buttons also work with a
+ * fresh or isolated data directory.
+ */
+export async function ensureDeveloperProject() {
+  const project = await _json('/api/projects/developer/ensure', { method: 'POST' });
+  await loadProjects();
+  return _projects.find(p => String(p.id) === String(project.id)) || project;
+}
+
 function _saveExpanded() {
   localStorage.setItem('ody-projects-expanded', JSON.stringify(_expanded));
 }

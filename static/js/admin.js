@@ -3153,7 +3153,7 @@ async function _loadDevStatus() {
   }
 }
 
-async function _initBuilderLink(_attempt = 0) {
+async function _initBuilderLink() {
   const btn = el('dev-builder-btn');
   const prepareBtn = el('dev-prepare-btn');
   const msg = el('dev-chat-msg');
@@ -3171,22 +3171,24 @@ async function _initBuilderLink(_attempt = 0) {
   };
   try {
     const m = await import('./projects.js');
-    const projs = (m.getProjects && m.getProjects()) || [];
-    const builder = projs.find(p => /\/dev\/odysseus\b/.test(p.workspace || ''))
-      || projs.find(p => /entwickler|builder/i.test(p.name || ''));
-    if (!builder) {
-      // Projects load async at app start. When this init runs first, the
-      // cache is still empty and the Go button stayed hidden forever (seen
-      // on prod 2026-07-17). Retry briefly until the list is in — on
-      // instances without a builder project (e.g. the beta) the retries
-      // fizzle out and the button legitimately stays hidden.
-      if (_attempt < 8) setTimeout(() => _initBuilderLink(_attempt + 1), 900);
-      return;
-    }
     btn.style.display = '';
     prepareBtn.style.display = '';
+    try {
+      const versionRes = await fetch('/api/version', { credentials: 'same-origin' });
+      const version = await versionRes.json();
+      if (version.channel === 'beta') {
+        btn.disabled = prepareBtn.disabled = true;
+        btn.title = prepareBtn.title = 'Developer chat setup is available on the main instance';
+        setMsg('Developer chat setup is intentionally disabled on beta (no host or clone access).', true);
+        return;
+      }
+    } catch (e) { /* status failure: let the server endpoint enforce access */ }
     btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      setMsg('', true);
       try {
+        if (!m.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+        const builder = await m.ensureDeveloperProject();
         if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
         // Fresh developer chat in the builder project (pinned skill + clone
         // workspace ride along server-side). Fallback: open its last chat.
@@ -3202,12 +3204,16 @@ async function _initBuilderLink(_attempt = 0) {
         console.warn('start developer chat failed', e);
         setMsg('Could not start a developer chat: ' + e.message, false);
         if (uiModule?.showError) uiModule.showError('Could not start a developer chat');
+      } finally {
+        btn.disabled = false;
       }
     });
     prepareBtn.addEventListener('click', async () => {
       prepareBtn.disabled = true;
       setMsg('', true);
       try {
+        if (!m.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+        const builder = await m.ensureDeveloperProject();
         if (!m.prepareCurrentProjectChat) throw new Error('Project setup action is unavailable');
         await m.prepareCurrentProjectChat(builder.id);
         prepareMode();

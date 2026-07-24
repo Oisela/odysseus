@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from core.database import Project, Session as DbSession, SessionLocal
+from core.middleware import require_admin
 from src.auth_helpers import effective_user
 from src.constants import DATA_DIR
 
@@ -25,6 +26,14 @@ logger = logging.getLogger(__name__)
 # Project folders live here unless an explicit folder inside DATA_DIR is given
 # (e.g. a pre-existing lecture folder like data/vorlesungen/tiii).
 PROJECTS_BASE = os.path.join(DATA_DIR, "projekte")
+DEVELOPER_PROJECT_NAME = "Odysseus Builder"
+DEVELOPER_PROJECT_WORKSPACE = os.path.join(DATA_DIR, "dev", "odysseus")
+DEVELOPER_PROJECT_TEMPLATE = "entwickler"
+DEVELOPER_PROJECT_SKILL = "odysseus-entwickler"
+DEVELOPER_PROJECT_INSTRUCTIONS = (
+    "Develop Odysseus itself. Follow the pinned odysseus-entwickler skill "
+    "and keep the shared ROADMAP and project context current."
+)
 
 _MAX_PROJECT_FILE_BYTES = 100 * 1024 * 1024  # 100 MB per file is plenty here
 
@@ -182,6 +191,69 @@ def setup_project_routes():
             db.refresh(p)
             _seed_project_context(folder, p.name)
             logger.info(f"Project created: {p.id} '{p.name}' -> {folder}")
+            return _project_to_dict(p)
+        finally:
+            db.close()
+
+    @router.post("/developer/ensure")
+    def ensure_developer_project(request: Request):
+        """Create or repair the canonical self-development project.
+
+        Fresh and isolated data directories do not necessarily contain the
+        Builder project. The Developer-page action must remain usable there
+        instead of silently hiding its button.
+        """
+        require_admin(request)
+        owner = effective_user(request)
+        workspace = _vet_project_dir(DEVELOPER_PROJECT_WORKSPACE)
+        if not os.path.isdir(os.path.join(workspace, ".git")):
+            raise HTTPException(409, "Developer clone is not installed")
+
+        db = SessionLocal()
+        try:
+            q = db.query(Project).filter(Project.archived == False)  # noqa: E712
+            if owner:
+                q = q.filter(Project.owner == owner)
+            projects = q.all()
+            p = next(
+                (
+                    item for item in projects
+                    if os.path.realpath(item.workspace or "") == os.path.realpath(workspace)
+                    or (item.name or "").strip().lower() == DEVELOPER_PROJECT_NAME.lower()
+                ),
+                None,
+            )
+
+            if p is None:
+                p = Project(
+                    id=str(uuid.uuid4())[:8],
+                    owner=owner,
+                    name=DEVELOPER_PROJECT_NAME,
+                    workspace=workspace,
+                    instructions=DEVELOPER_PROJECT_INSTRUCTIONS,
+                    template_id=DEVELOPER_PROJECT_TEMPLATE,
+                    pinned_skills=[DEVELOPER_PROJECT_SKILL],
+                    default_model="",
+                )
+                db.add(p)
+                db.commit()
+                db.refresh(p)
+                _seed_project_context(workspace, p.name)
+                logger.info("Canonical developer project created: %s", p.id)
+            else:
+                pinned = list(p.pinned_skills or [])
+                if DEVELOPER_PROJECT_SKILL not in pinned:
+                    pinned = [DEVELOPER_PROJECT_SKILL, *pinned][:4]
+                p.name = DEVELOPER_PROJECT_NAME
+                p.workspace = workspace
+                p.template_id = DEVELOPER_PROJECT_TEMPLATE
+                p.pinned_skills = pinned
+                if not (p.instructions or "").strip():
+                    p.instructions = DEVELOPER_PROJECT_INSTRUCTIONS
+                db.commit()
+                db.refresh(p)
+                logger.info("Canonical developer project verified: %s", p.id)
+
             return _project_to_dict(p)
         finally:
             db.close()
