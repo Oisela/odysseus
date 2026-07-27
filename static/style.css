@@ -36563,6 +36563,30 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   border-radius: 3px;
   padding: 0 2px;
+  cursor: text;
+}
+.note-rich-raw:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+/* Source-editing state of an island: monospace + accent frame, so it's
+   unmistakable that you're looking at the raw LaTeX, not the rendering. */
+.note-rich-raw-editing {
+  display: inline-block;
+  font-family: inherit;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  color: var(--fg);
+}
+.note-rich-raw-editing.note-rich-raw-block {
+  display: block;
+  padding: 4px 6px;
+  margin: 4px 0;
+  overflow-x: auto;
 }
 .note-rich-raw-block {
   display: block;

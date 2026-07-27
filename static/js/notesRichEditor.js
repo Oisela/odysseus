@@ -147,7 +147,7 @@ function mdToEditorHtml(md) {
     const raw = raws[Number(i)];
     if (!raw) return '';
     const blockCls = raw.display === 'block' ? ' note-rich-raw-block' : '';
-    return `<span class="note-rich-raw${blockCls}" contenteditable="false" data-md="${encodeURIComponent(raw.md)}" title="Edit via raw markdown (toolbar toggle)">${_rawIslandInner(raw)}</span>`;
+    return `<span class="note-rich-raw${blockCls}" contenteditable="false" data-md="${encodeURIComponent(raw.md)}" title="Click to edit the source">${_rawIslandInner(raw)}</span>`;
   });
 
   const host = document.createElement('div');
@@ -396,7 +396,7 @@ function _mathIslandEl(fullMd, inner, display) {
   span.className = 'note-rich-raw' + (display ? ' note-rich-raw-block' : '');
   span.contentEditable = 'false';
   span.setAttribute('data-md', encodeURIComponent(fullMd));
-  span.title = 'Edit via raw markdown (toolbar toggle)';
+  span.title = 'Click to edit the source';
   try {
     if (window.katex) {
       span.innerHTML = katex.renderToString(inner.trim(), { displayMode: display, throwOnError: false });
@@ -407,6 +407,94 @@ function _mathIslandEl(fullMd, inner, display) {
   code.textContent = fullMd;
   span.appendChild(code);
   return span;
+}
+
+// Rebuild an island (or plain text) from edited source. Classifying by
+// delimiter means stripping the $…$ turns a formula back into prose, which is
+// the natural way to "undo" a formula.
+function _islandFromSource(src) {
+  const s = (src || '').trim();
+  if (!s) return null;
+  let inner = null, display = false;
+  if (/^\$\$[\s\S]*\$\$$/.test(s)) { inner = s.slice(2, -2); display = true; }
+  else if (/^\\\[[\s\S]*\\\]$/.test(s)) { inner = s.slice(2, -2); display = true; }
+  else if (/^\$[^$]*\$$/.test(s)) { inner = s.slice(1, -1); }
+  else if (/^\\\([\s\S]*\\\)$/.test(s)) { inner = s.slice(2, -2); }
+  if (inner !== null) return _mathIslandEl(s, inner, display);
+  // Mermaid fence or pipe table stay atomic; anything else becomes text.
+  const isFence = /^```/.test(s);
+  const isTable = /^[^\n]*\|[^\n]*\|/.test(s) && s.includes('\n');
+  if (isFence || isTable) {
+    const span = document.createElement('span');
+    span.className = 'note-rich-raw note-rich-raw-block';
+    span.contentEditable = 'false';
+    span.setAttribute('data-md', encodeURIComponent(s));
+    span.title = 'Click to edit the source';
+    span.innerHTML = _rawIslandInner({ md: s, kind: isTable ? 'table' : 'mermaid', display: 'block' });
+    return span;
+  }
+  return document.createTextNode(s);
+}
+
+// Click an island → swap it for an inline editable showing its raw source.
+// Enter (or blur) commits and re-renders; Escape restores the original.
+function _beginIslandEdit(island, rich, sync) {
+  if (island._nreEditing) return;
+  let src = island.getAttribute('data-md') || '';
+  try { src = decodeURIComponent(src); } catch (_) {}
+  const isBlock = island.classList.contains('note-rich-raw-block');
+  const box = document.createElement(isBlock ? 'div' : 'span');
+  box.className = 'note-rich-raw-editing' + (isBlock ? ' note-rich-raw-block' : '');
+  box.contentEditable = 'true';
+  box.spellcheck = false;
+  box.textContent = src;
+  box._nreEditing = true;
+  island.replaceWith(box);
+
+  let closed = false;
+  const finish = (commit) => {
+    if (closed) return;
+    closed = true;
+    const text = commit ? box.textContent : src;
+    const rebuilt = _islandFromSource(text);
+    if (rebuilt) {
+      box.replaceWith(rebuilt);
+      // Park the caret after the island so typing continues in prose.
+      try {
+        const sel = window.getSelection();
+        const r = document.createRange();
+        r.setStartAfter(rebuilt);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      } catch (_) {}
+    } else {
+      box.remove();
+    }
+    sync();
+  };
+  box.addEventListener('keydown', (e) => {
+    e.stopPropagation();  // don't let the note form's Escape/Enter shortcuts fire
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    else if (e.key === 'Enter' && !e.shiftKey && (!isBlock || e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      finish(true);
+    }
+  });
+  box.addEventListener('blur', () => finish(true));
+
+  // Select the whole source so retyping replaces it; the user can also click
+  // to place the caret precisely.
+  requestAnimationFrame(() => {
+    box.focus();
+    try {
+      const sel = window.getSelection();
+      const r = document.createRange();
+      r.selectNodeContents(box);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    } catch (_) {}
+  });
 }
 
 function _caretBlock(rich) {
@@ -728,7 +816,14 @@ export function attach(ta, opts = {}) {
   });
   // Checkbox toggles inside contenteditable fire click but not input.
   rich.addEventListener('click', (e) => {
-    if (e.target && e.target.matches && e.target.matches('input[type="checkbox"]')) syncToTextarea();
+    if (e.target && e.target.matches && e.target.matches('input[type="checkbox"]')) { syncToTextarea(); return; }
+    // Clicking a rendered formula/table/diagram opens its source inline —
+    // without this the islands could only be deleted, never corrected.
+    const island = e.target && e.target.closest ? e.target.closest('.note-rich-raw') : null;
+    if (island && rich.contains(island)) {
+      e.preventDefault();
+      _beginIslandEdit(island, rich, syncToTextarea);
+    }
   });
 
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (_) {}
