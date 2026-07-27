@@ -174,6 +174,8 @@ function htmlToMd(rootEl) {
   // regex only matches exactly "- [ ]", so checkboxes would render as
   // literal brackets after one save. Normalize marker padding to one space.
   md = md.replace(/^([ \t]*)- {2,}/gm, '$1- ').replace(/^([ \t]*)(\d+)\. {2,}/gm, '$1$2. ');
+  // The task checkbox carries an NBSP spacer — collapse "[ ]  text".
+  md = md.replace(/^([ \t]*- \[[ xX]\]) +/gm, '$1 ');
   // Zero-width spaces are caret parking spots from the inline input rules —
   // never part of the note.
   md = md.replace(/​/g, '');
@@ -411,8 +413,19 @@ function _wireInputRules(rich, sync) {
         cut.selectNodeContents(block2);
         cut.setEnd(r2.startContainer, r2.startOffset);
         cut.deleteContents();
+        if (isCheck && block2.tagName === 'LI' && !block2.querySelector(':scope > input[type="checkbox"]')) {
+          block2.classList.add('note-rich-task');
+          block2.insertAdjacentHTML('afterbegin', '<input type="checkbox" contenteditable="false"> ');
+        }
+        // The live selection still references the removed marker node —
+        // typing would land OUTSIDE the converted block. Park the caret at
+        // the block's end (after a task item's fresh checkbox).
+        const caret = document.createRange();
+        caret.selectNodeContents(block2);
+        caret.collapse(false);
+        s2.removeAllRanges();
+        s2.addRange(caret);
       }
-      if (isCheck) _makeTaskLi(rich);
     } catch (_) {} finally { applying = false; }
     sync();
   };
