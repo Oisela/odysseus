@@ -2086,7 +2086,9 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
       const detail = body.querySelector('.notes-md-detail');
       if (!detail) return;
       _editingId = '__new__';
-      const { note: draft, restored } = _applyDraftToNote({ note_type: 'todo', label: (_activeLabel || '') }, '__new__');
+      // Follow the active type filter: with "Notes" selected the + button
+      // should open a note, not a to-do the filter immediately hides.
+      const { note: draft, restored } = _applyDraftToNote({ note_type: _mdTypeFilter === 'note' ? 'note' : 'todo', label: (_activeLabel || '') }, '__new__');
       const form = _buildForm(draft);
       form.classList.add('note-form-new');
       detail.innerHTML = '';
@@ -2428,6 +2430,13 @@ function _wireMdQuickAdd(input) {
         _selectedNoteId = created.id;
       } else {
         await _fetchNotes();
+      }
+      // Creating an entry the active type filter would hide looks like the
+      // add silently failed ("kommt einfach nicht") — flip to All so the
+      // fresh entry is visible.
+      if ((_mdTypeFilter === 'note' && type === 'todo') || (_mdTypeFilter === 'todo' && type === 'note')) {
+        _mdTypeFilter = 'all';
+        try { localStorage.setItem('odysseus-notes-md-typefilter', _mdTypeFilter); } catch (_) {}
       }
       _renderNotes();
     } catch (err) {
