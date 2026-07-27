@@ -2974,15 +2974,14 @@ function _roadmapSections(text) {
       sections.push(cur);
       return;
     }
-    // Three states so the board can show real progress: [ ] planned,
-    // [~] in progress, [x] done. `~` is invisible to the developer skill
-    // (it reads the file as prose), so the marker stays a pure UI concern.
-    if (cur && /^- \[[ xX~]\] /.test(line)) {
+    // Pipeline states: [ ] planned, [~] in progress, [!] ready for review,
+    // [x] done. The developer reads the same markers from ROADMAP.md.
+    if (cur && /^- \[[ xX~!]\] /.test(line)) {
       const mark = line.charAt(3);
       cur.items.push({
         line: i,
         done: mark === 'x' || mark === 'X',
-        status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : 'planned',
+        status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : mark === '!' ? 'review' : 'planned',
         text: line.slice(6).trim(),
         extra: [],
         extraLines: [],   // raw line indices of the continuation lines (for editing)
@@ -2998,30 +2997,97 @@ function _roadmapSections(text) {
   return { lines, sections };
 }
 
-// Stable-ish item identity for linking a "Build" run back to its card: a
-// roadmap item has no database row (it lives in a text file), and the line
-// number shifts on every unrelated edit, so hash the cleaned title text
-// instead. Editing the title after starting a build orphans the old link —
-// an accepted tradeoff for staying file-based (see RoadmapBuild model).
-function _itemKey(text) {
-  const s = _rmCardText({ text });
+const _RM_DETAIL_LABELS = {
+  beschreibung: 'description',
+  ziel: 'goal',
+  akzeptanzkriterien: 'acceptance',
+  priorität: 'priority',
+  prioritaet: 'priority',
+  abhängigkeiten: 'dependencies',
+  abhaengigkeiten: 'dependencies',
+  notizen: 'notes',
+};
+
+function _roadmapDetails(item) {
+  const details = {
+    id: '', description: '', goal: '', acceptance: '',
+    priority: 'Normal', dependencies: '', notes: '', screenshots: [],
+  };
+  let field = '';
+  const legacy = [];
+  for (const raw of item.extra || []) {
+    const idMatch = raw.match(/^<!--\s*ody:id=([a-zA-Z0-9_-]+)\s*-->$/);
+    if (idMatch) { details.id = idMatch[1]; continue; }
+    let line = raw;
+    line = line.replace(uploadImageMdRe('\\s*'), (_, url) => { details.screenshots.push(url); return ''; }).trim();
+    if (!line) continue;
+    const label = line.match(/^\*\*([^*]+):\*\*\s*(.*)$/);
+    if (label) {
+      field = _RM_DETAIL_LABELS[label[1].trim().toLowerCase()] || '';
+      if (field) {
+        const value = label[2].trim();
+        if (value) details[field] = value;
+        continue;
+      }
+    }
+    if (field) {
+      const value = line.replace(/^-\s+/, '').trim();
+      details[field] += (details[field] ? '\n' : '') + value;
+    } else {
+      legacy.push(line);
+    }
+  }
+  if (!details.description && legacy.length) details.description = legacy.join('\n');
+  return details;
+}
+
+function _newRoadmapId() {
+  if (globalThis.crypto?.randomUUID) return `rm-${crypto.randomUUID().slice(0, 12)}`;
+  return `rm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// New and edited cards carry a stable ID in a hidden Markdown comment. Legacy
+// cards retain the title hash until they are edited.
+function _itemKey(item) {
+  const details = _roadmapDetails(item);
+  if (details.id) return details.id;
+  const s = _rmCardText(item);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
   return h.toString(16);
 }
 
-// Rewrite one item's title + description in place, replacing its full
-// original span (title line through its last continuation line) with a
-// freshly formatted block. Continuation lines use a fixed 6-space indent —
-// the same alignment "- [ ] " already gives the title text.
-async function _saveItemEdit(item, newTitle, newDescription) {
-  const lines = _roadmapText.split('\n');
-  const mark = item.status === 'done' ? 'x' : item.status === 'wip' ? '~' : ' ';
-  const block = [`- [${mark}] ${newTitle.trim()}`];
-  for (const raw of (newDescription || '').split('\n')) {
-    const t = raw.trim();
-    if (t) block.push(`      ${t}`);
+function _roadmapItemBlock(mark, title, details, images = []) {
+  const id = details.id || _newRoadmapId();
+  const block = [`- [${mark}] ${title.trim()}`, `      <!-- ody:id=${id} -->`];
+  const addText = (label, value) => {
+    const rows = (value || '').split('\n').map(v => v.trim()).filter(Boolean);
+    if (!rows.length) return;
+    block.push(`      **${label}:** ${rows[0]}`);
+    for (const row of rows.slice(1)) block.push(`      ${row}`);
+  };
+  addText('Beschreibung', details.description);
+  addText('Ziel', details.goal);
+  const criteria = (details.acceptance || '').split('\n').map(v => v.replace(/^-\s*/, '').trim()).filter(Boolean);
+  if (criteria.length) {
+    block.push('      **Akzeptanzkriterien:**');
+    for (const criterion of criteria) block.push(`        - ${criterion}`);
   }
+  addText('Priorität', details.priority && details.priority !== 'Normal' ? details.priority : '');
+  addText('Abhängigkeiten', details.dependencies);
+  addText('Notizen', details.notes);
+  for (const url of images) block.push(`      ![screenshot](${url})`);
+  return block;
+}
+
+async function _saveItemEdit(item, newTitle, details) {
+  const lines = _roadmapText.split('\n');
+  const mark = item.status === 'done' ? 'x' : item.status === 'review' ? '!' : item.status === 'wip' ? '~' : ' ';
+  const previous = _roadmapDetails(item);
+  // Preserve a legacy title-hash as the new stable ID so an existing build
+  // association remains reachable after the first structured edit.
+  details.id = previous.id || _itemKey(item);
+  const block = _roadmapItemBlock(mark, newTitle, details, previous.screenshots);
   lines.splice(item.line, item.endLine - item.line + 1, ...block);
   const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
   if (ok) _renderRoadmap();
@@ -3064,9 +3130,10 @@ function _roadmapCollapsedState() {
 // the board is a second lens on the same file, and a status click rewrites
 // only that line's marker.
 const _RM_COLS = [
-  { key: 'planned', label: 'Planned', mark: ' ' },
-  { key: 'wip', label: 'In progress', mark: '~' },
-  { key: 'done', label: 'Done', mark: 'x' },
+  { key: 'planned', label: 'Geplant', mark: ' ' },
+  { key: 'wip', label: 'In Arbeit', mark: '~' },
+  { key: 'review', label: 'Testbereit', mark: '!' },
+  { key: 'done', label: 'Erledigt', mark: 'x' },
 ];
 let _roadmapView = null;
 
@@ -3082,7 +3149,7 @@ async function _setItemStatus(item, statusKey) {
   const col = _RM_COLS.find(c => c.key === statusKey);
   if (!col) return;
   const ls = _roadmapText.split('\n');
-  ls[item.line] = ls[item.line].replace(/^- \[[ xX~]\]/, `- [${col.mark}]`);
+  ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, `- [${col.mark}]`);
   if (await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'))) _renderRoadmap();
 }
 
@@ -3146,18 +3213,31 @@ async function _openBuildChat(sessionId) {
   }
 }
 
-function _buildPrompt(title, description) {
-  const desc = (description || '').trim();
-  return `Bau bitte dieses Roadmap-Item aus der ROADMAP.md um:\n\n`
-    + `**${title.trim()}**\n`
-    + (desc ? `${desc}\n\n` : `(Keine weitere Beschreibung — bei Unklarheiten kurz nachfragen.)\n\n`)
-    + `Nutze deinen odysseus-entwickler-Workflow (dev.sh, CONTRIBUTING.md, Gate 1/2). `
-    + `Melde dich mit einer kurzen Zusammenfassung, sobald es auf Beta läuft oder du blockiert bist.`;
+function _buildPrompt(item, buildMode) {
+  const title = _rmCardText(item);
+  const d = _roadmapDetails(item);
+  const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
+  const approach = buildMode === 'plan'
+    ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
+    : `Arbeite autonom bis Gate 1. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+  return `Setze dieses Roadmap-Feature aus der ROADMAP.md um.\n\n`
+    + `**Roadmap-ID:** ${_itemKey(item)}\n`
+    + `**Titel:** ${title}\n`
+    + section('Beschreibung', d.description)
+    + section('Ziel / Problem', d.goal)
+    + section('Akzeptanzkriterien', d.acceptance)
+    + section('Priorität', d.priority)
+    + section('Abhängigkeiten', d.dependencies)
+    + section('Technische Notizen / Grenzen', d.notes)
+    + `\n${approach}\n\n`
+    + `Nutze den Odysseus-Entwickler-Workflow und halte dieses Roadmap-Item aktuell: `
+    + `Beim Start [~], nach erfolgreichem Gate 1 auf Beta [!], und erst nach Alessios Beta-Freigabe/Gate 2 [x]. `
+    + `Ergänze relevante Entscheidungen und den Beta-Commit beim Item. `
+    + `Melde dich mit einer kurzen Testanleitung, sobald es auf Beta bereit ist, oder mit dem konkreten Blocker.`;
 }
 
-async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
+async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) {
   const title = _rmCardText(it);
-  const description = it.extra.join('\n');
   const projectsMod = await import('./projects.js');
   if (!projectsMod.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
   const builder = await projectsMod.ensureDeveloperProject();
@@ -3184,7 +3264,7 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
 
   const msgInput = document.getElementById('message');
   if (!msgInput) throw new Error('Composer not found — cannot send the build prompt');
-  msgInput.value = _buildPrompt(title, description);
+  msgInput.value = _buildPrompt(it, buildMode);
   msgInput.dispatchEvent(new Event('input', { bubbles: true }));
   const chatMod = await import('./chat.js');
   await chatMod.handleChatSubmit({ preventDefault() {} });
@@ -3194,9 +3274,14 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        item_key: _itemKey(it.text), item_title: title, session_id: sess.id,
+        item_key: _itemKey(it), item_title: title, session_id: sess.id,
         endpoint_id: endpointId, model, model_label: modelLabel,
       }),
+    });
+    if (!_roadmapBuilds) _roadmapBuilds = new Map();
+    _roadmapBuilds.set(_itemKey(it), {
+      item_key: _itemKey(it), item_title: title, session_id: sess.id,
+      endpoint_id: endpointId, model, model_label: modelLabel,
     });
   } catch (_) { /* the chat already sent — a lost association chip is cosmetic */ }
   await _setItemStatus(it, 'wip');
@@ -3206,31 +3291,59 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
 function _cardBuildFormHtml() {
   return `
     <div class="rm-buildform">
-      ${_channelIsBeta ? '<div class="rm-hint">Building is only available on the main instance (no host/clone access from beta).</div>' : `
+      ${_channelIsBeta ? `<div class="rm-hint">Der echte Build wird auf Prod gestartet, weil nur dort der Builder auf das Server-Repo zugreifen darf. Das Feature-Briefing kannst du hier vollständig testen.</div>
+      <div class="rm-actions"><button type="button" class="memory-toolbar-btn rm-build-cancel">Zurück</button></div>` : `
       <label class="rm-field"><span>Endpoint</span>
         <span class="adm-model-logo" id="rm-build-ep-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-ep"></select></label>
       <label class="rm-field"><span>Model</span>
         <span class="adm-model-logo" id="rm-build-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-model"></select></label>
+      <label class="rm-field"><span>Ablauf</span>
+        <select class="settings-select rm-build-mode">
+          <option value="build">Autonom bis Beta bauen</option>
+          <option value="plan">Erst Plan und Rückfragen</option>
+        </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-build-cancel">Cancel</button>
-        <button type="button" class="memory-toolbar-btn rm-build-start">Start build</button>
+        <button type="button" class="memory-toolbar-btn rm-build-cancel">Abbrechen</button>
+        <button type="button" class="memory-toolbar-btn rm-build-start">Build starten</button>
       </div>`}
     </div>`;
 }
 
 function _cardEditFormHtml(it) {
+  const d = _roadmapDetails(it);
   return `
     <div class="rm-editform">
-      <input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" />
-      <textarea class="rm-edit-desc" rows="3" placeholder="Description — define the feature precisely (build prompt uses this)">${esc(it.extra.join('\n'))}</textarea>
+      <label class="rm-edit-field"><span>Titel</span><input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" /></label>
+      <label class="rm-edit-field"><span>Beschreibung</span><textarea class="rm-edit-desc" rows="3" placeholder="Was soll passieren?">${esc(d.description)}</textarea></label>
+      <label class="rm-edit-field"><span>Ziel / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Warum brauchen wir das?">${esc(d.goal)}</textarea></label>
+      <label class="rm-edit-field"><span>Fertig, wenn …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="Ein prüfbares Kriterium pro Zeile">${esc(d.acceptance)}</textarea></label>
+      <div class="rm-edit-grid">
+        <label class="rm-edit-field"><span>Priorität</span><select class="settings-select rm-edit-priority">
+          ${['Niedrig', 'Normal', 'Hoch', 'Kritisch'].map(v => `<option${d.priority === v ? ' selected' : ''}>${v}</option>`).join('')}
+        </select></label>
+        <label class="rm-edit-field"><span>Abhängigkeiten</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="Keine" /></label>
+      </div>
+      <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Cancel</button>
-        <button type="button" class="memory-toolbar-btn rm-edit-save">Save</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Abbrechen</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-save">Speichern</button>
       </div>
     </div>`;
+}
+
+function _detailsFromForm(root, prefix = '.rm-edit-') {
+  const value = name => root.querySelector(`${prefix}${name}`)?.value?.trim() || '';
+  return {
+    description: value('desc'),
+    goal: value('goal'),
+    acceptance: value('acceptance'),
+    priority: value('priority') || 'Normal',
+    dependencies: value('dependencies'),
+    notes: value('notes'),
+  };
 }
 
 function _renderRoadmapBoard(list, sections) {
@@ -3262,8 +3375,9 @@ function _renderRoadmapBoard(list, sections) {
       card.className = 'rm-card' + (col.key === 'done' ? ' rm-card-done' : '');
       card.draggable = true;
       card.dataset.line = String(it.line);
-      const itemKey = _itemKey(it.text);
+      const itemKey = _itemKey(it);
       const build = _roadmapBuilds ? _roadmapBuilds.get(itemKey) : null;
+      const details = _roadmapDetails(it);
 
       const renderView = () => {
         card.innerHTML = '';
@@ -3271,12 +3385,12 @@ function _renderRoadmapBoard(list, sections) {
         const title = document.createElement('div');
         title.className = 'rm-card-text';
         title.textContent = _rmCardText(it);
-        if (it.extra.length) title.title = it.extra.join('\n');
+        if (details.description) title.title = details.description;
         card.appendChild(title);
-        if (it.extra.length) {
+        if (details.description) {
           const desc = document.createElement('div');
           desc.className = 'rm-card-desc';
-          desc.textContent = it.extra.join(' ');
+          desc.textContent = details.description.replace(/\n/g, ' ');
           card.appendChild(desc);
         }
         const meta = document.createElement('div');
@@ -3285,27 +3399,40 @@ function _renderRoadmapBoard(list, sections) {
         secChip.className = 'rm-chip';
         secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
         meta.appendChild(secChip);
+        if (details.priority && details.priority !== 'Normal') {
+          const priorityChip = document.createElement('span');
+          priorityChip.className = `rm-chip rm-priority rm-priority-${details.priority.toLowerCase()}`;
+          priorityChip.textContent = details.priority;
+          meta.appendChild(priorityChip);
+        }
+        if (details.acceptance) {
+          const criteriaChip = document.createElement('span');
+          criteriaChip.className = 'rm-chip';
+          criteriaChip.title = details.acceptance;
+          criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} Kriterien`;
+          meta.appendChild(criteriaChip);
+        }
         if (build) {
           const buildChip = document.createElement('button');
           buildChip.type = 'button';
           buildChip.className = 'rm-chip rm-chip-build';
           buildChip.title = 'Open the build chat';
-          buildChip.textContent = `Building — ${build.model_label || build.model || 'chat'}`;
+          buildChip.textContent = `${it.status === 'review' ? 'Beta testen' : it.status === 'done' ? 'Build-Chat' : 'Building'} — ${build.model_label || build.model || 'chat'}`;
           buildChip.addEventListener('click', (e) => { e.stopPropagation(); _openBuildChat(build.session_id); });
           meta.appendChild(buildChip);
         }
         const editBtn = document.createElement('button');
         editBtn.type = 'button';
         editBtn.className = 'rm-move-btn';
-        editBtn.title = 'Edit title and description';
-        editBtn.textContent = 'Edit';
+        editBtn.title = 'Feature genauer definieren';
+        editBtn.textContent = 'Bearbeiten';
         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
         meta.appendChild(editBtn);
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
-        buildBtn.title = _channelIsBeta ? 'Only available on the main instance' : 'Build this with an agent chat';
-        buildBtn.textContent = 'Build';
+        buildBtn.title = _channelIsBeta ? 'Auf Prod starten, damit der Builder das Server-Repo erreicht' : 'Dieses Feature in einem verknüpften Agent-Chat bauen';
+        buildBtn.textContent = build ? 'Neu bauen' : 'Bauen';
         buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
         meta.appendChild(buildBtn);
         const moves = document.createElement('span');
@@ -3316,7 +3443,7 @@ function _renderRoadmapBoard(list, sections) {
           b.type = 'button';
           b.className = 'rm-move-btn';
           b.title = `Move to ${target.label}`;
-          b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : 'Done';
+          b.textContent = target.key === 'planned' ? 'Planen' : target.key === 'wip' ? 'Start' : target.key === 'review' ? 'Test' : 'Fertig';
           b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
           moves.appendChild(b);
         }
@@ -3331,12 +3458,11 @@ function _renderRoadmapBoard(list, sections) {
         card.querySelector('.rm-edit-save').addEventListener('click', async (e) => {
           e.stopPropagation();
           const newTitle = card.querySelector('.rm-edit-title').value;
-          const newDesc = card.querySelector('.rm-edit-desc').value;
           if (!newTitle.trim()) return;
-          await _saveItemEdit(it, newTitle, newDesc);
+          await _saveItemEdit(it, newTitle, _detailsFromForm(card));
         });
-        card.querySelector('.rm-edit-title').addEventListener('click', (e) => e.stopPropagation());
-        card.querySelector('.rm-edit-desc').addEventListener('click', (e) => e.stopPropagation());
+        card.querySelectorAll('input, textarea, select').forEach(control =>
+          control.addEventListener('click', (e) => e.stopPropagation()));
       };
 
       const renderBuild = async () => {
@@ -3344,10 +3470,21 @@ function _renderRoadmapBoard(list, sections) {
         card.innerHTML = _cardBuildFormHtml();
         const form = card.querySelector('.rm-buildform');
         form.addEventListener('click', (e) => e.stopPropagation());
+        card.querySelector('.rm-build-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); renderView(); });
         if (_channelIsBeta) return;
         const epSel = card.querySelector('.rm-build-ep');
         const modelSel = card.querySelector('.rm-build-model');
+        const modeSel = card.querySelector('.rm-build-mode');
         const msgBox = card.querySelector('.rm-build-msg');
+        const missing = [];
+        if (!details.description) missing.push('Beschreibung');
+        if (!details.goal) missing.push('Ziel');
+        if (!details.acceptance) missing.push('Akzeptanzkriterien');
+        if (missing.length) {
+          msgBox.textContent = `Noch ungenau: ${missing.join(', ')}. Du kannst trotzdem starten oder zuerst Bearbeiten wählen.`;
+          msgBox.classList.add('rm-build-warning');
+          msgBox.style.display = '';
+        }
         let endpoints = [];
         try {
           endpoints = await fetchModelEndpoints();
@@ -3362,7 +3499,6 @@ function _renderRoadmapBoard(list, sections) {
           msgBox.textContent = 'Could not load models: ' + e.message;
           msgBox.style.display = '';
         }
-        card.querySelector('.rm-build-cancel').addEventListener('click', (e) => { e.stopPropagation(); renderView(); });
         card.querySelector('.rm-build-start').addEventListener('click', async (e) => {
           e.stopPropagation();
           const startBtn = e.currentTarget;
@@ -3375,9 +3511,9 @@ function _renderRoadmapBoard(list, sections) {
           const epLabel = epSel.options[epSel.selectedIndex]?.textContent || endpointId;
           const modelLabel = modelSel.options[modelSel.selectedIndex]?.textContent || model;
           startBtn.disabled = true;
-          msgBox.style.display = 'none';
+          if (!missing.length) msgBox.style.display = 'none';
           try {
-            await _startRoadmapBuild(it, endpointId, model, `${epLabel} · ${modelLabel}`);
+            await _startRoadmapBuild(it, endpointId, model, `${epLabel} · ${modelLabel}`, modeSel.value);
           } catch (err) {
             msgBox.textContent = 'Could not start the build: ' + err.message;
             msgBox.style.display = '';
@@ -3464,7 +3600,7 @@ function _renderRoadmap() {
       cb.checked = item.done;
       cb.addEventListener('change', async () => {
         const ls = _roadmapText.split('\n');
-        ls[item.line] = ls[item.line].replace(/^- \[[ xX]\]/, cb.checked ? '- [x]' : '- [ ]');
+        ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, cb.checked ? '- [x]' : '- [ ]');
         if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
       });
       // Markdown screenshots in the entry (or its wrapped lines) render as
@@ -3481,7 +3617,12 @@ function _renderRoadmap() {
       }
       const span = document.createElement('span');
       span.textContent = cleanText;
-      if (item.extra.length) span.title = item.extra.join('\n');
+      const itemDetails = _roadmapDetails(item);
+      const detailSummary = [
+        itemDetails.description, itemDetails.goal, itemDetails.acceptance,
+        itemDetails.dependencies, itemDetails.notes,
+      ].filter(Boolean).join('\n');
+      if (detailSummary) span.title = detailSummary;
       if (item.done) span.style.cssText = 'opacity:0.5;text-decoration:line-through;';
       row.appendChild(cb); row.appendChild(span);
       if (imgs.length) {
@@ -3721,7 +3862,14 @@ function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
   const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
   const imgBtn = el('dev-roadmap-img');
+  const detailsBtn = el('dev-roadmap-details'), detailsPanel = el('dev-roadmap-new-details');
   const msg = el('dev-roadmap-msg');
+  detailsBtn?.addEventListener('click', () => {
+    const opening = detailsPanel?.classList.contains('hidden');
+    detailsPanel?.classList.toggle('hidden');
+    detailsBtn.textContent = opening ? 'Details schließen' : 'Genauer definieren';
+    if (opening) el('dev-roadmap-description')?.focus();
+  });
   // Screenshots attached to the next entry (bug reports need pictures).
   // Uploaded immediately; the markdown link goes into the entry on Add.
   let pendingImgs = [];
@@ -3771,10 +3919,19 @@ function initDeveloper() {
     const text = (input.value || '').trim();
     if (!text && !pendingImgs.length) return;
     // New entries always land in Eingang, tagged by type — the developer
-    // sorts them into a version when picking them up. Date so age is visible.
+    // sorts them into a version when picking them up.
     const kind = (typeSel && typeSel.value) || 'Idee';
-    const imgMd = pendingImgs.map(u => ` ![screenshot](${u})`).join('');
-    const entry = `- [ ] **${kind}:** ${text || '(screenshot)'}${imgMd} (${new Date().toISOString().slice(0, 10)})`;
+    const details = {
+      id: _newRoadmapId(),
+      description: el('dev-roadmap-description')?.value?.trim() || '',
+      goal: el('dev-roadmap-goal')?.value?.trim() || '',
+      acceptance: el('dev-roadmap-acceptance')?.value?.trim() || '',
+      priority: el('dev-roadmap-priority')?.value || 'Normal',
+      dependencies: el('dev-roadmap-dependencies')?.value?.trim() || '',
+      notes: el('dev-roadmap-notes')?.value?.trim() || '',
+    };
+    const title = `**${kind}:** ${text || '(Screenshot)'}`;
+    const entryBlock = _roadmapItemBlock(' ', title, details, pendingImgs);
     const { lines, sections } = _roadmapSections(_roadmapText);
     const sec = sections.find(s => /^Eingang/i.test(s.title));
     let ls;
@@ -3782,16 +3939,24 @@ function initDeveloper() {
       // Empty/missing file: start a minimal queue with an Eingang section.
       ls = _roadmapText ? _roadmapText.split('\n') : [];
       if (ls.length && ls[ls.length - 1].trim() !== '') ls.push('');
-      ls.push('## Eingang', entry);
+      ls.push('## Eingang', ...entryBlock);
     } else {
       // Insert at the section end, before trailing blank lines.
       let at = sec.end;
       ls = lines.slice();
       while (at > sec.start + 1 && ls[at - 1].trim() === '') at--;
-      ls.splice(at, 0, entry);
+      ls.splice(at, 0, ...entryBlock);
     }
     if (await _saveRoadmap(ls.join('\n'), msg)) {
       input.value = '';
+      for (const id of [
+        'dev-roadmap-description', 'dev-roadmap-goal', 'dev-roadmap-acceptance',
+        'dev-roadmap-dependencies', 'dev-roadmap-notes',
+      ]) {
+        const control = el(id);
+        if (control) control.value = '';
+      }
+      if (el('dev-roadmap-priority')) el('dev-roadmap-priority').value = 'Normal';
       pendingImgs = [];
       _syncImgBtn();
       _renderRoadmap();
@@ -3820,6 +3985,10 @@ function initDeveloper() {
     try { localStorage.setItem('ody-roadmap-view', _roadmapView); } catch (_) {}
     if (_roadmapView === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
+  });
+  el('dev-roadmap-refresh')?.addEventListener('click', async () => {
+    _roadmapBuilds = null;
+    await _loadRoadmap();
   });
 
   el('dev-status-refresh')?.addEventListener('click', () => {

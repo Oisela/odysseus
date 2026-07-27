@@ -41437,7 +41437,7 @@ body.theme-frosted .modal {
 }
 .rm-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   align-items: start;
 }
@@ -41526,10 +41526,16 @@ body.theme-frosted .modal {
   font-family: inherit;
 }
 .rm-chip-build:hover { background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent); }
+.rm-priority-hoch, .rm-priority-kritisch {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+  opacity: 0.85;
+}
 /* Inline edit / build forms — replace the card body in place. */
 .rm-editform, .rm-buildform { display: flex; flex-direction: column; gap: 6px; }
 .rm-edit-title { margin: 0; font-size: 11.5px; }
-.rm-edit-desc {
+.rm-edit-desc, .rm-edit-goal, .rm-edit-acceptance, .rm-edit-notes,
+.rm-new-details textarea {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -41540,15 +41546,46 @@ body.theme-frosted .modal {
   resize: vertical;
   outline: none;
 }
-.rm-edit-desc:focus { border-color: var(--fg); }
+.rm-edit-desc:focus, .rm-edit-goal:focus, .rm-edit-acceptance:focus,
+.rm-edit-notes:focus, .rm-new-details textarea:focus { border-color: var(--fg); }
+.rm-edit-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rm-edit-field > span {
+  font-size: 9.5px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+.rm-edit-field .styled-prompt-input, .rm-edit-field .settings-select {
+  width: 100%;
+  margin: 0;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.rm-edit-grid { display: grid; grid-template-columns: minmax(90px, .45fr) minmax(130px, 1fr); gap: 6px; }
+.rm-new-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.rm-new-details.hidden { display: none; }
+.rm-detail-intro { font-size: 10.5px; line-height: 1.45; opacity: 0.6; }
 .rm-field { display: flex; align-items: center; gap: 5px; font-size: 10px; }
 .rm-field > span:first-child { opacity: 0.6; min-width: 52px; flex-shrink: 0; }
 .rm-field .settings-select { margin: 0; flex: 1; min-width: 0; height: 26px; font-size: 11px; }
 .rm-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .rm-build-msg { font-size: 10px; color: var(--red); line-height: 1.4; }
+.rm-build-warning { color: var(--fg); opacity: 0.65; }
 .rm-hint { font-size: 10.5px; opacity: 0.6; line-height: 1.45; }
+@media (max-width: 1050px) {
+  .rm-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 700px) {
   .rm-board { grid-template-columns: 1fr; }
+  .rm-edit-grid { grid-template-columns: 1fr; }
 }
 
 /* ── RemNote window (bridge status + offline buffer) ── */
