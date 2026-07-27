@@ -47,6 +47,13 @@ function _turndown() {
     emDelimiter: '*',
   });
   td.use(window.turndownPluginGfm.gfm);
+  // markdown.js has no concept of backslash-escapes: anything Turndown
+  // escapes (\* \_ \# …) renders literally INCLUDING the backslash, and the
+  // next serialize escapes that backslash again — every open/save cycle
+  // doubled the garbage (found live on the beta, 2026-07-27). Serialize
+  // verbatim instead: literal markdown syntax typed into the rich editor
+  // simply renders on the next open, exactly like the old raw textarea.
+  td.escape = (s) => s;
   // Protected islands (math/mermaid/tables) → their original markdown.
   td.addRule('nreProtectedRaw', {
     filter: (node) => node.nodeType === 1 && node.classList && node.classList.contains('note-rich-raw'),
