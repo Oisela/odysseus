@@ -837,6 +837,10 @@ app.include_router(setup_note_routes(task_scheduler))
 from routes.shopping_routes import setup_shopping_routes
 app.include_router(setup_shopping_routes())
 
+# RemNote (bridge status + offline card buffer)
+from routes.remnote_routes import setup_remnote_routes
+app.include_router(setup_remnote_routes())
+
 # Pomodoro (focus timer: ntfy pings + persistent learned-time stats)
 from routes.pomodoro_routes import setup_pomodoro_routes
 app.include_router(setup_pomodoro_routes())

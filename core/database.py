@@ -1767,6 +1767,35 @@ class Note(TimestampMixin, Base):
     agent_session_id  = Column(String, nullable=True)
 
 
+class RemnotePending(TimestampMixin, Base):
+    """A flashcard parked because the RemNote bridge was unreachable.
+
+    Until now the offline buffer was only a CONVENTION in the remnote skill
+    ("append a PENDING block to a note called RemNote-Eingang") — no store, no
+    UI, and the flush task was never created, so a card written while Alessios
+    PC was off had nowhere to go (found 2026-07-27). This table is the real
+    place: every parked card keeps the fields needed to send it later, plus the
+    outcome of the last attempt so the RemNote page can show WHY it failed.
+    """
+    __tablename__ = "remnote_pending"
+
+    id         = Column(String, primary_key=True, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    # "Journal" or a RemNote document path ("Physik/TIII/Kapitel 3")
+    target     = Column(String, default="Journal")
+    card_type  = Column(String, default="basic")    # basic | cloze | concept | note
+    front      = Column(Text, default="")           # cloze/note: the whole text
+    back       = Column(Text, nullable=True)
+    status     = Column(String, default="pending", index=True)  # pending | sent | failed
+    attempts   = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+    last_try_at = Column(DateTime, nullable=True)
+    sent_at    = Column(DateTime, nullable=True)
+    rem_id     = Column(String, nullable=True)      # RemNote id once created
+    source     = Column(String, default="agent")    # agent | user
+    session_id = Column(String, nullable=True)      # chat it came from
+
+
 class Recipe(TimestampMixin, Base):
     """A cooking recipe in the Shopping & Recipes module (NOT a note)."""
     __tablename__ = "recipes"
