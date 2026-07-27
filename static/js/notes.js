@@ -2106,6 +2106,13 @@ function _renderMasterDetail(body, sorted, activeReminderHighlights) {
   // Toolbar reflects state on every render (it survives layout reuse).
   layout.querySelectorAll('.notes-md-typefilter button').forEach(b =>
     b.classList.toggle('active', b.dataset.tf === _mdTypeFilter));
+  // Quick-add mirrors the filter-aware Enter behavior (see _wireMdQuickAdd).
+  const _qa = layout.querySelector('.notes-md-quickadd-input');
+  if (_qa) {
+    const _noteMode = _mdTypeFilter === 'note';
+    _qa.placeholder = _noteMode ? '+ Add a note' : '+ Add a to-do';
+    _qa.title = _noteMode ? 'Enter = note · Shift+Enter = to-do' : 'Enter = to-do · Shift+Enter = note';
+  }
   const sortSel = layout.querySelector('.notes-md-sortsel');
   if (sortSel) sortSel.value = _mdSort;
   const rowsEl = layout.querySelector('.notes-md-rows');
@@ -2464,7 +2471,12 @@ function _wireMdQuickAdd(input) {
     const text = input.value.trim();
     if (!text) return;
     e.preventDefault();
-    const type = e.shiftKey ? 'note' : 'todo';
+    // Enter follows the active type filter (Notes filter -> Enter makes a
+    // note); Shift+Enter creates the OTHER type. Before, Enter always made
+    // a to-do — with the Notes filter active that read as "creating a note
+    // gives me a todo".
+    const base = _mdTypeFilter === 'note' ? 'note' : 'todo';
+    const type = e.shiftKey ? (base === 'note' ? 'todo' : 'note') : base;
     input.value = '';
     input.disabled = true;
     try {

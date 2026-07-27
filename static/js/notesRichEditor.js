@@ -330,6 +330,136 @@ function _applyAction(rich, action, sync) {
   sync();
 }
 
+// ── Live input rules: typing markdown converts as you go ──
+// Block rules fire on Space when the marker is the entire text before the
+// caret; inline rules fire when the closing character completes a pair.
+const _BLOCK_RULES = [
+  { re: /^#$/, run: () => document.execCommand('formatBlock', false, 'h1'), inLi: false },
+  { re: /^##$/, run: () => document.execCommand('formatBlock', false, 'h2'), inLi: false },
+  { re: /^###$/, run: () => document.execCommand('formatBlock', false, 'h3'), inLi: false },
+  { re: /^(?:-|\*)$/, run: () => document.execCommand('insertUnorderedList'), inLi: false },
+  { re: /^\d+\.$/, run: () => document.execCommand('insertOrderedList'), inLi: false },
+  { re: /^>$/, run: () => document.execCommand('formatBlock', false, 'blockquote'), inLi: false },
+];
+
+function _caretBlock(rich) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+  let n = sel.getRangeAt(0).startContainer;
+  if (n.nodeType === 3) n = n.parentNode;
+  while (n && n !== rich) {
+    if (n.tagName && /^(P|DIV|LI|H1|H2|H3|H4|H5|H6|BLOCKQUOTE|PRE)$/.test(n.tagName)) return n;
+    n = n.parentNode;
+  }
+  return n === rich ? rich : null;
+}
+
+function _makeTaskLi(rich) {
+  const sel = window.getSelection();
+  let n = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+  if (n && n.nodeType === 3) n = n.parentNode;
+  const li = n && n.closest ? n.closest('li') : null;
+  if (li && rich.contains(li) && !li.querySelector(':scope > input[type="checkbox"]')) {
+    li.classList.add('note-rich-task');
+    li.insertAdjacentHTML('afterbegin', '<input type="checkbox" contenteditable="false"> ');
+  }
+}
+
+function _wireInputRules(rich, sync) {
+  let applying = false;
+
+  rich.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' || applying) return;
+    const block = _caretBlock(rich);
+    if (!block) return;
+    if (block !== rich && block.closest && block.closest('.note-rich-raw, pre')) return;
+    const sel = window.getSelection();
+    const r = sel.getRangeAt(0);
+    const pre = document.createRange();
+    pre.selectNodeContents(block);
+    pre.setEnd(r.startContainer, r.startOffset);
+    const marker = pre.toString();
+    const inLi = block.tagName === 'LI';
+    const isCheck = marker === '[]' || marker === '-[]';
+    const rule = isCheck ? null : _BLOCK_RULES.find(x => x.re.test(marker) && (!inLi || x.inLi));
+    if (!rule && !isCheck) return;
+    e.preventDefault();
+    applying = true;
+    try {
+      pre.deleteContents();
+      if (isCheck) {
+        if (!inLi) document.execCommand('insertUnorderedList');
+        _makeTaskLi(rich);
+      } else {
+        rule.run();
+      }
+    } catch (_) {} finally { applying = false; }
+    sync();
+  });
+
+  rich.addEventListener('input', (e) => {
+    if (applying || !e || e.inputType !== 'insertText') return;
+    const ch = e.data;
+    if (ch !== '*' && ch !== '`' && ch !== '~') return;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
+    const node = sel.getRangeAt(0).startContainer;
+    if (node.nodeType !== 3) return;
+    const host = node.parentNode;
+    if (!host || (host.closest && host.closest('.note-rich-raw, pre, code'))) return;
+    const off = sel.getRangeAt(0).startOffset;
+    const s = node.textContent.slice(0, off);
+
+    const apply = (m, kind) => {
+      const full = m[0], inner = m[1];
+      const start = off - full.length;
+      applying = true;
+      try {
+        const r = document.createRange();
+        r.setStart(node, start);
+        r.setEnd(node, off);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        if (kind === 'code') {
+          const el = document.createElement('code');
+          el.textContent = inner;
+          r.deleteContents();
+          r.insertNode(el);
+          const after = document.createRange();
+          after.setStartAfter(el);
+          after.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(after);
+        } else {
+          document.execCommand('insertText', false, inner);
+          const cur = window.getSelection().getRangeAt(0);
+          const r2 = document.createRange();
+          r2.setStart(cur.startContainer, cur.startOffset - inner.length);
+          r2.setEnd(cur.startContainer, cur.startOffset);
+          sel.removeAllRanges();
+          sel.addRange(r2);
+          document.execCommand(kind);
+          // Collapse to the end and toggle the mark back off, so typing
+          // continues in plain text after the completed pair.
+          const end = window.getSelection().getRangeAt(0).cloneRange();
+          end.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(end);
+          document.execCommand(kind);
+        }
+      } catch (_) {} finally { applying = false; }
+      sync();
+      return true;
+    };
+
+    let m;
+    if (ch === '*' && (m = /\*\*([^*\n]+)\*\*$/.exec(s))) { apply(m, 'bold'); return; }
+    if (ch === '*' && (m = /(?<!\*)\*([^*\n]+)\*$/.exec(s)) && !m[1].startsWith('*')) { apply(m, 'italic'); return; }
+    if (ch === '`' && (m = /`([^`\n]+)`$/.exec(s))) { apply(m, 'code'); return; }
+    if (ch === '~' && (m = /~~([^~\n]+)~~$/.exec(s))) { apply(m, 'strikeThrough'); }
+  });
+}
+
 /**
  * Mount the rich editor next to a hidden source textarea.
  * The textarea keeps holding markdown (mirrored on every input), so all
@@ -442,6 +572,9 @@ export function attach(ta, opts = {}) {
   // Keep the selection in the editor: toolbar mousedown must not steal focus.
   toolbar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
 
+  // Input rules BEFORE the mirror listener: a rule that rewrites the DOM
+  // should be serialized in the same tick, not one keystroke later.
+  _wireInputRules(rich, syncToTextarea);
   rich.addEventListener('input', syncToTextarea);
   rich.addEventListener('change', syncToTextarea); // checkbox clicks
   // Paste as plain text — pasted HTML from chat/web brings styling that
