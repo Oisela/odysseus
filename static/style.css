@@ -36452,6 +36452,106 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .note-form-content:focus { border-color: var(--fg); }
 
+/* WYSIWYG note editor (notesRichEditor.js). The wrap takes over the
+   .note-form-content border treatment; the toolbar rides the documents
+   .doc-md-toolbar classes and only gets compact overrides here. */
+.note-rich-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.note-rich-wrap:focus-within { border-color: var(--fg); }
+.doc-md-toolbar.note-rich-toolbar {
+  height: 30px;
+  padding: 1px 4px;
+  background: transparent;
+  border-radius: 4px 4px 0 0;
+  /* The doc toolbar's edge fade is for a full-width bar — inside the small
+     note form it just makes the outer buttons look broken. */
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+.note-rich-toolbar .md-toolbar-items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.note-rich-toolbar .md-toolbar-items::-webkit-scrollbar { display: none; }
+.doc-md-toolbar.note-rich-toolbar button {
+  min-height: 24px;
+  padding: 3px 6px;
+  font-size: 10px;
+}
+.note-rich-toolbar .note-rich-rawtoggle { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.note-rich-toolbar .note-rich-rawtoggle .md-view-label { font-size: 10px; }
+.note-form-content-rich {
+  flex: 1;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  outline: none;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 90px;
+  cursor: text;
+  word-break: break-word;
+}
+.note-form-content-rich:empty::before {
+  content: attr(data-placeholder);
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* Editable checklist items inside the rich editor */
+.note-form-content-rich li.note-rich-task { list-style: none; margin-left: -18px; }
+.note-form-content-rich li.note-rich-task input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin-right: 4px;
+  vertical-align: middle;
+}
+/* Atomic islands (math / mermaid / tables) — edited via the raw toggle.
+   A subtle tint signals "one unit" without shouting. */
+.note-rich-raw {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.note-rich-raw-block {
+  display: block;
+  padding: 4px 6px;
+  margin: 4px 0;
+  overflow-x: auto;
+}
+/* "Back to rich" affordance under the raw-markdown textarea */
+.note-rich-backtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.7;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+.note-rich-backtoggle:hover { opacity: 1; }
+.note-rich-backtoggle .md-view-label { font-size: 10px; }
+/* Fullscreen mobile editing gets the same generous height as the textarea */
+.note-fullscreen-overlay .note-rich-wrap { min-height: 55vh; }
+.note-fullscreen-overlay .note-form-content-rich {
+  max-height: none;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
 .note-form-meta {
   display: flex;
   align-items: center;

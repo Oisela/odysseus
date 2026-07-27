@@ -14,6 +14,7 @@ import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
 import { topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import notesRichEditor from './notesRichEditor.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -3676,13 +3677,17 @@ function _buildForm(note = null) {
           || (_stashedTodoItems || _stashedGoalItems || []).map(i => i.text).join('\n');
         bodyEl.innerHTML = `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(text)}</textarea>`;
         _wireHashtag(bodyEl.querySelector('.note-form-content'));
+        form._richEditor = notesRichEditor.attach(bodyEl.querySelector('.note-form-content'));
       }
       const focusEl = newType === 'note'
         ? bodyEl.querySelector('.note-form-content')
         : newType === 'todo'
           ? bodyEl.querySelector('.note-cl-text')
           : null;
-      if (focusEl) {
+      if (newType === 'note' && form._richEditor) {
+        // The textarea is hidden behind the rich editor — focus that instead.
+        requestAnimationFrame(() => form._richEditor.focus());
+      } else if (focusEl) {
         requestAnimationFrame(() => {
           focusEl.focus({ preventScroll: true });
           try {
@@ -4146,6 +4151,7 @@ function _buildForm(note = null) {
   form.querySelector('.note-form-title').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
+      if (form._richEditor) { form._richEditor.focus(); return; }
       const ta = form.querySelector('.note-form-content');
       if (ta) { ta.focus(); return; }
       const firstItem = form.querySelector('.note-cl-text');
@@ -4160,7 +4166,12 @@ function _buildForm(note = null) {
   const _hashtagRe = /(^|\s)#([A-Za-z0-9][\w-]*)\s$/;
   function _wireHashtag(el) {
     if (!el || !labelInput) return;
-    el.addEventListener('input', () => {
+    el.addEventListener('input', (ev) => {
+      // The rich editor mirrors markdown into the hidden textarea via
+      // synthetic input events — cutting "#tag" out of the mirrored value
+      // would desync it from the visible rich content, so only react to
+      // real typing.
+      if (ev && ev.isTrusted === false) return;
       const m = _hashtagRe.exec(el.value);
       if (!m) return;
       const tag = m[2];
@@ -4181,6 +4192,13 @@ function _buildForm(note = null) {
   }
   _wireHashtag(form.querySelector('.note-form-title'));
   _wireHashtag(form.querySelector('.note-form-content'));
+  // WYSIWYG editing for plain notes: the rich editor renders the markdown
+  // and mirrors edits back into the (hidden) textarea, so every existing
+  // draft/save/stash path that reads .note-form-content.value stays intact.
+  if (type === 'note') {
+    const _richTa = form.querySelector('.note-form-content');
+    if (_richTa) form._richEditor = notesRichEditor.attach(_richTa);
+  }
   // Pressing Enter in the tag field commits the current word as its own tag
   // and parks the cursor after a trailing space, so the next word becomes a
   // separate tag rather than overwriting the previous one.
@@ -5315,6 +5333,7 @@ function _editNote(id) {
   // for plain notes, the first checklist item for todos, fall back to title.
   const _focusBest = () => {
     if (note.note_type === 'note' || !note.note_type) {
+      if (form._richEditor) { form._richEditor.focus(); return; }
       const ta = form.querySelector('.note-form-content');
       if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch {} return; }
     }
@@ -5530,8 +5549,10 @@ function _openMobileFullscreenEdit(id, fromCard) {
   // layered above the textarea. Tapping anywhere in the overlay that
   // ISN'T a link hides the overlay and focuses the textarea so the user
   // can edit the raw markdown. Tapping a link opens it.
+  // With the rich editor attached the content is already rendered AND
+  // editable in place, so the overlay would just get in the way.
   const ta = form.querySelector('.note-form-content');
-  if (ta && (note.content || '').trim()) {
+  if (ta && !ta._nreAttached && (note.content || '').trim()) {
     const reader = document.createElement('div');
     reader.className = 'note-form-content-reader note-md';
     reader.innerHTML = _mdRender(note.content || '');
