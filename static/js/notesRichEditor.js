@@ -338,13 +338,16 @@ function _applyAction(rich, action, sync) {
 // ── Live input rules: typing markdown converts as you go ──
 // Block rules fire on Space when the marker is the entire text before the
 // caret; inline rules fire when the closing character completes a pair.
+// Conversions are pure DOM (no execCommand): Chrome's editing commands
+// depend on the live selection, which is unreliable right after our own
+// DOM edits — formatBlock silently no-opped or ate the typed text.
 const _BLOCK_RULES = [
-  { re: /^# $/, run: () => document.execCommand('formatBlock', false, 'h1'), inLi: false },
-  { re: /^## $/, run: () => document.execCommand('formatBlock', false, 'h2'), inLi: false },
-  { re: /^### $/, run: () => document.execCommand('formatBlock', false, 'h3'), inLi: false },
-  { re: /^(?:-|\*) $/, run: () => document.execCommand('insertUnorderedList'), inLi: false },
-  { re: /^\d+\. $/, run: () => document.execCommand('insertOrderedList'), inLi: false },
-  { re: /^> $/, run: () => document.execCommand('formatBlock', false, 'blockquote'), inLi: false },
+  { re: /^# $/, kind: 'h1' },
+  { re: /^## $/, kind: 'h2' },
+  { re: /^### $/, kind: 'h3' },
+  { re: /^(?:-|\*) $/, kind: 'ul' },
+  { re: /^\d+\. $/, kind: 'ol' },
+  { re: /^> $/, kind: 'blockquote' },
 ];
 
 function _caretBlock(rich) {
@@ -393,39 +396,70 @@ function _wireInputRules(rich, sync) {
     const marker = pre.toString().replace(/ /g, ' ');
     const inLi = block.tagName === 'LI';
     const isCheck = marker === '[] ' || marker === '-[] ';
-    const rule = isCheck ? null : _BLOCK_RULES.find(x => x.re.test(marker) && (!inLi || x.inLi));
+    if (inLi && !isCheck) return; // inside a list only the checkbox rule applies
+    const rule = isCheck ? null : _BLOCK_RULES.find(x => x.re.test(marker));
     if (!rule && !isCheck) return;
     applying = true;
     try {
-      // Convert FIRST, strip the marker AFTER: deleting the marker first
-      // can leave an empty root, and formatBlock/insertList on an empty
-      // root is a silent no-op in Chrome (the marker just vanished).
-      if (isCheck) {
-        if (!inLi) document.execCommand('insertUnorderedList');
-      } else {
-        rule.run();
+      // 1) Strip the marker characters from the block's leading text nodes.
+      let remaining = marker.length;
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let tn;
+      while (remaining > 0 && (tn = walker.nextNode())) {
+        const take = Math.min(remaining, tn.textContent.length);
+        tn.textContent = tn.textContent.slice(take);
+        remaining -= take;
       }
-      const s2 = window.getSelection();
-      if (s2 && s2.rangeCount) {
-        const r2 = s2.getRangeAt(0);
-        const block2 = _caretBlock(rich) || rich;
-        const cut = document.createRange();
-        cut.selectNodeContents(block2);
-        cut.setEnd(r2.startContainer, r2.startOffset);
-        cut.deleteContents();
-        if (isCheck && block2.tagName === 'LI' && !block2.querySelector(':scope > input[type="checkbox"]')) {
-          block2.classList.add('note-rich-task');
-          block2.insertAdjacentHTML('afterbegin', '<input type="checkbox" contenteditable="false"> ');
+
+      // 2) Convert. When the caret sits in bare text directly under the
+      //    root, only the leading inline run belongs to this "line" —
+      //    later block elements must stay outside the new block.
+      const isBlockEl = (nd) => nd.nodeType === 1 && /^(P|DIV|UL|OL|H[1-6]|BLOCKQUOTE|PRE|TABLE)$/.test(nd.tagName);
+      const takeContents = (into) => {
+        if (block === rich) {
+          let c = rich.firstChild;
+          const run = [];
+          while (c && !isBlockEl(c)) { run.push(c); c = c.nextSibling; }
+          run.forEach(nd => into.appendChild(nd));
+          return c; // insertion anchor (first block el or null)
         }
-        // The live selection still references the removed marker node —
-        // typing would land OUTSIDE the converted block. Park the caret at
-        // the block's end (after a task item's fresh checkbox).
-        const caret = document.createRange();
-        caret.selectNodeContents(block2);
-        caret.collapse(false);
-        s2.removeAllRanges();
-        s2.addRange(caret);
+        while (block.firstChild) into.appendChild(block.firstChild);
+        return null;
+      };
+      const kind = isCheck ? 'check' : rule.kind;
+      let target; // element that receives the caret
+      if (kind === 'ul' || kind === 'ol' || kind === 'check') {
+        const li = (inLi && isCheck) ? block : document.createElement('li');
+        if (li !== block) {
+          const list = document.createElement(kind === 'ol' ? 'ol' : 'ul');
+          list.appendChild(li);
+          const anchor = takeContents(li);
+          if (block === rich) rich.insertBefore(list, anchor);
+          else block.replaceWith(list);
+        }
+        if (kind === 'check' && !li.querySelector(':scope > input[type="checkbox"]')) {
+          li.classList.add('note-rich-task');
+          li.insertAdjacentHTML('afterbegin', '<input type="checkbox" contenteditable="false"> ');
+        }
+        target = li;
+      } else {
+        const el = document.createElement(kind);
+        const anchor = takeContents(el);
+        if (block === rich) rich.insertBefore(el, anchor);
+        else block.replaceWith(el);
+        target = el;
       }
+      // An emptied block needs a placeholder so the caret can live inside.
+      if (!target.firstChild) target.appendChild(document.createElement('br'));
+
+      // 3) Caret to the block's end (after a task item's fresh checkbox).
+      const caret = document.createRange();
+      if (target.lastChild && target.lastChild.nodeName === 'BR') caret.setStart(target, target.childNodes.length - 1);
+      else { caret.selectNodeContents(target); caret.collapse(false); }
+      caret.collapse(true);
+      const s2 = window.getSelection();
+      s2.removeAllRanges();
+      s2.addRange(caret);
     } catch (_) {} finally { applying = false; }
     sync();
   };
