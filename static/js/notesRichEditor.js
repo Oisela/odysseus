@@ -387,6 +387,11 @@ function _wireInputRules(rich, sync) {
     applying = true;
     try {
       pre.deleteContents();
+      // deleteContents leaves `pre` collapsed at the cut — make that the
+      // live selection so the command targets the right spot.
+      const s2 = window.getSelection();
+      s2.removeAllRanges();
+      s2.addRange(pre);
       if (isCheck) {
         if (!inLi) document.execCommand('insertUnorderedList');
         _makeTaskLi(rich);
@@ -397,66 +402,52 @@ function _wireInputRules(rich, sync) {
     sync();
   });
 
-  rich.addEventListener('input', (e) => {
-    if (applying || !e || e.inputType !== 'insertText') return;
-    const ch = e.data;
-    if (ch !== '*' && ch !== '`' && ch !== '~') return;
+  // Inline pairs are applied with pure DOM surgery, DEFERRED out of the
+  // input event: running execCommand (or heavy DOM moves) inside an input
+  // handler that was itself triggered by editing made Chrome misplace the
+  // edits (content jumped to the end of the editor).
+  const applyInline = () => {
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
     const node = sel.getRangeAt(0).startContainer;
-    if (node.nodeType !== 3) return;
+    if (node.nodeType !== 3 || !rich.contains(node)) return;
     const host = node.parentNode;
     if (!host || (host.closest && host.closest('.note-rich-raw, pre, code'))) return;
     const off = sel.getRangeAt(0).startOffset;
     const s = node.textContent.slice(0, off);
 
-    const apply = (m, kind) => {
-      const full = m[0], inner = m[1];
-      const start = off - full.length;
-      applying = true;
-      try {
-        const r = document.createRange();
-        r.setStart(node, start);
-        r.setEnd(node, off);
-        sel.removeAllRanges();
-        sel.addRange(r);
-        if (kind === 'code') {
-          const el = document.createElement('code');
-          el.textContent = inner;
-          r.deleteContents();
-          r.insertNode(el);
-          const after = document.createRange();
-          after.setStartAfter(el);
-          after.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(after);
-        } else {
-          document.execCommand('insertText', false, inner);
-          const cur = window.getSelection().getRangeAt(0);
-          const r2 = document.createRange();
-          r2.setStart(cur.startContainer, cur.startOffset - inner.length);
-          r2.setEnd(cur.startContainer, cur.startOffset);
-          sel.removeAllRanges();
-          sel.addRange(r2);
-          document.execCommand(kind);
-          // Collapse to the end and toggle the mark back off, so typing
-          // continues in plain text after the completed pair.
-          const end = window.getSelection().getRangeAt(0).cloneRange();
-          end.collapse(false);
-          sel.removeAllRanges();
-          sel.addRange(end);
-          document.execCommand(kind);
-        }
-      } catch (_) {} finally { applying = false; }
-      sync();
-      return true;
-    };
+    let m, tag;
+    if ((m = /\*\*([^*\n]+)\*\*$/.exec(s))) tag = 'strong';
+    else if ((m = /(?<!\*)\*([^*\n]+)\*$/.exec(s)) && !m[1].startsWith('*')) tag = 'em';
+    else if ((m = /`([^`\n]+)`$/.exec(s))) tag = 'code';
+    else if ((m = /~~([^~\n]+)~~$/.exec(s))) tag = 's';
+    else return;
 
-    let m;
-    if (ch === '*' && (m = /\*\*([^*\n]+)\*\*$/.exec(s))) { apply(m, 'bold'); return; }
-    if (ch === '*' && (m = /(?<!\*)\*([^*\n]+)\*$/.exec(s)) && !m[1].startsWith('*')) { apply(m, 'italic'); return; }
-    if (ch === '`' && (m = /`([^`\n]+)`$/.exec(s))) { apply(m, 'code'); return; }
-    if (ch === '~' && (m = /~~([^~\n]+)~~$/.exec(s))) { apply(m, 'strikeThrough'); }
+    applying = true;
+    try {
+      const r = document.createRange();
+      r.setStart(node, off - m[0].length);
+      r.setEnd(node, off);
+      r.deleteContents();
+      const el = document.createElement(tag);
+      el.textContent = m[1];
+      r.insertNode(el);
+      // Caret after the element, at parent level — continued typing is
+      // plain text, not more of the completed mark.
+      const after = document.createRange();
+      after.setStartAfter(el);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
+    } catch (_) {} finally { applying = false; }
+    sync();
+  };
+
+  rich.addEventListener('input', (e) => {
+    if (applying || !e || e.inputType !== 'insertText') return;
+    const ch = e.data;
+    if (ch !== '*' && ch !== '`' && ch !== '~') return;
+    setTimeout(applyInline, 0);
   });
 }
 
