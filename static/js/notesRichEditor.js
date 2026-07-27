@@ -395,23 +395,24 @@ function _wireInputRules(rich, sync) {
     if (!rule && !isCheck) return;
     applying = true;
     try {
-      pre.deleteContents();
-      // `pre` now references the removed text node — a stale range makes
-      // the follow-up command a silent no-op. Build a FRESH collapsed
-      // range at the block start (= the cut point, the marker was the
-      // block's prefix).
-      const fresh = document.createRange();
-      fresh.setStart(block, 0);
-      fresh.collapse(true);
-      const s2 = window.getSelection();
-      s2.removeAllRanges();
-      s2.addRange(fresh);
+      // Convert FIRST, strip the marker AFTER: deleting the marker first
+      // can leave an empty root, and formatBlock/insertList on an empty
+      // root is a silent no-op in Chrome (the marker just vanished).
       if (isCheck) {
         if (!inLi) document.execCommand('insertUnorderedList');
-        _makeTaskLi(rich);
       } else {
         rule.run();
       }
+      const s2 = window.getSelection();
+      if (s2 && s2.rangeCount) {
+        const r2 = s2.getRangeAt(0);
+        const block2 = _caretBlock(rich) || rich;
+        const cut = document.createRange();
+        cut.selectNodeContents(block2);
+        cut.setEnd(r2.startContainer, r2.startOffset);
+        cut.deleteContents();
+      }
+      if (isCheck) _makeTaskLi(rich);
     } catch (_) {} finally { applying = false; }
     sync();
   };
