@@ -174,6 +174,9 @@ function htmlToMd(rootEl) {
   // regex only matches exactly "- [ ]", so checkboxes would render as
   // literal brackets after one save. Normalize marker padding to one space.
   md = md.replace(/^([ \t]*)- {2,}/gm, '$1- ').replace(/^([ \t]*)(\d+)\. {2,}/gm, '$1$2. ');
+  // Zero-width spaces are caret parking spots from the inline input rules —
+  // never part of the note.
+  md = md.replace(/​/g, '');
   return md;
 }
 
@@ -432,10 +435,13 @@ function _wireInputRules(rich, sync) {
       const el = document.createElement(tag);
       el.textContent = m[1];
       r.insertNode(el);
-      // Caret after the element, at parent level — continued typing is
-      // plain text, not more of the completed mark.
+      // Chrome keeps typing INSIDE a trailing inline element even with the
+      // caret set after it — the standard escape hatch is a zero-width
+      // space the caret can sit in (stripped again on serialize).
+      const zw = document.createTextNode('​');
+      el.after(zw);
       const after = document.createRange();
-      after.setStartAfter(el);
+      after.setStart(zw, 1);
       after.collapse(true);
       sel.removeAllRanges();
       sel.addRange(after);
