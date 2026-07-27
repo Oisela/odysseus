@@ -169,7 +169,12 @@ function htmlToMd(rootEl) {
   rootEl.querySelectorAll('li input[type="checkbox"]').forEach((cb) => {
     if (cb.checked) cb.setAttribute('checked', ''); else cb.removeAttribute('checked');
   });
-  return _turndown().turndown(rootEl.innerHTML).trim();
+  let md = _turndown().turndown(rootEl.innerHTML).trim();
+  // Turndown pads list markers ("-   x", "1.  x") — markdown.js's task-list
+  // regex only matches exactly "- [ ]", so checkboxes would render as
+  // literal brackets after one save. Normalize marker padding to one space.
+  md = md.replace(/^([ \t]*)- {2,}/gm, '$1- ').replace(/^([ \t]*)(\d+)\. {2,}/gm, '$1$2. ');
+  return md;
 }
 
 // ── Toolbar (compact reuse of the documents md-toolbar visual language) ──
