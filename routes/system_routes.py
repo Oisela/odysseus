@@ -35,6 +35,34 @@ _RELEASES = "/home/deploy/odysseus-entwickler/releases.log"
 _ROADMAP = os.path.join(DATA_DIR, "dev", "ROADMAP.md")
 
 
+def _roadmap_freshness(version: str) -> dict:
+    """Does the roadmap have a section for the version being built?
+
+    Found 2026-07-27: the last documented section was v3.7 while the code had
+    moved on to 3.9.5 — two whole rounds undocumented, and the developer skill
+    reads this file on every start, so it was planning from a stale picture.
+    Surfacing the gap is what keeps it honest; the Developer page shows a
+    banner and the status payload carries the same flag.
+    """
+    want = ".".join(str(version or "").split(".")[:2])   # "3.9.5" -> "3.9"
+    out = {"expected_section": f"v{want}" if want else None, "current": True,
+           "sections": [], "missing": False}
+    if not want:
+        return out
+    try:
+        with open(_ROADMAP, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        out.update(current=False, missing=True)
+        return out
+    heads = [ln[3:].strip() for ln in text.split("\n") if ln.startswith("## ")]
+    out["sections"] = heads[-6:]
+    # A matching head is any "## v3.9…" — released, open package, whatever the
+    # round is called, as long as the version appears.
+    out["current"] = any(h.lower().startswith(f"v{want}") for h in heads)
+    return out
+
+
 class RoadmapBody(BaseModel):
     content: str = Field(..., max_length=200_000)
 
@@ -160,7 +188,13 @@ def setup_system_routes() -> APIRouter:
             "beta_commit": beta_commit,
             "beta_in_dev": beta_in_dev,
             "promotable": promotable,
+            "roadmap": _roadmap_freshness(dev_version or APP_VERSION),
         }
+
+    @router.get("/roadmap-freshness")
+    def roadmap_freshness(request: Request):
+        require_admin(request)
+        return _roadmap_freshness(APP_VERSION)
 
     @router.get("/roadmap")
     def get_roadmap(request: Request):

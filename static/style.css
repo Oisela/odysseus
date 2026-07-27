@@ -41405,6 +41405,113 @@ body.theme-frosted .modal {
   flex-direction: column;
 }
 
+/* ── Roadmap board (Developer tab) ── */
+/* Same segment-control language as the documents Edit/Preview switch. */
+.rm-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  height: 24px;
+  margin-bottom: 8px;
+}
+.rm-view-toggle .rm-view-opt {
+  height: 100%;
+  padding: 0 10px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+.rm-view-toggle .rm-view-opt:hover { opacity: 0.8; }
+.rm-view-toggle .rm-view-opt.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+}
+.rm-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+.rm-col {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.rm-col-over {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+}
+.rm-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+.rm-col-body { display: flex; flex-direction: column; gap: 6px; }
+.rm-col-empty { font-size: 11px; opacity: 0.35; padding: 4px 0; }
+.rm-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--card, var(--panel));
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: grab;
+}
+.rm-card:active { cursor: grabbing; }
+.rm-card.rm-dragging { opacity: 0.5; }
+.rm-card-done .rm-card-text { opacity: 0.55; text-decoration: line-through; }
+.rm-card-text { font-size: 11.5px; line-height: 1.4; word-break: break-word; }
+.rm-card-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.rm-chip {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  opacity: 0.6;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-card-moves { display: inline-flex; gap: 3px; margin-left: auto; }
+.rm-move-btn {
+  font-family: inherit;
+  font-size: 9px;
+  padding: 1px 6px;
+  height: auto;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+}
+.rm-move-btn:hover { opacity: 1; border-color: var(--fg); }
+@media (max-width: 700px) {
+  .rm-board { grid-template-columns: 1fr; }
+}
+
 /* ── RemNote window (bridge status + offline buffer) ── */
 .remnote-modal-content {
   width: min(620px, 94vw);

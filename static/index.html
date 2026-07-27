@@ -2685,6 +2685,11 @@
           <div class="admin-card" id="settings-dev-roadmap-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Roadmap</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">The developer's work queue — it reads this list on every run. Check off, add, or edit entries; changes are saved to the shared file.</div>
+            <div id="dev-roadmap-stale" class="admin-error" style="display:none;margin-bottom:8px;line-height:1.45;"></div>
+            <div class="rm-view-toggle" id="dev-roadmap-view" role="group" aria-label="Roadmap view">
+              <button type="button" class="rm-view-opt" data-rmview="list">List</button>
+              <button type="button" class="rm-view-opt" data-rmview="board">Board</button>
+            </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
               <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Add a bug or idea…" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
               <select id="dev-roadmap-type" style="height:34px;">

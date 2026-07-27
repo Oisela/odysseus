@@ -2974,8 +2974,18 @@ function _roadmapSections(text) {
       sections.push(cur);
       return;
     }
-    if (cur && /^- \[[ xX]\] /.test(line)) {
-      cur.items.push({ line: i, done: /^- \[[xX]\]/.test(line), text: line.slice(6).trim(), extra: [] });
+    // Three states so the board can show real progress: [ ] planned,
+    // [~] in progress, [x] done. `~` is invisible to the developer skill
+    // (it reads the file as prose), so the marker stays a pure UI concern.
+    if (cur && /^- \[[ xX~]\] /.test(line)) {
+      const mark = line.charAt(3);
+      cur.items.push({
+        line: i,
+        done: mark === 'x' || mark === 'X',
+        status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : 'planned',
+        text: line.slice(6).trim(),
+        extra: [],
+      });
     } else if (cur && cur.items.length && /^\s{2,}\S/.test(line)) {
       cur.items[cur.items.length - 1].extra.push(line.trim());
     }
@@ -3013,12 +3023,132 @@ function _roadmapCollapsedState() {
   return _roadmapCollapsed;
 }
 
+// ── Board view ──
+// Alessio 2026-07-27: "roadmap mit cards wie geplant / in progress … halt mit
+// statusen". ROADMAP.md stays the source of truth (the developer reads it);
+// the board is a second lens on the same file, and a status click rewrites
+// only that line's marker.
+const _RM_COLS = [
+  { key: 'planned', label: 'Planned', mark: ' ' },
+  { key: 'wip', label: 'In progress', mark: '~' },
+  { key: 'done', label: 'Done', mark: 'x' },
+];
+let _roadmapView = null;
+
+function _roadmapViewMode() {
+  if (!_roadmapView) {
+    try { _roadmapView = localStorage.getItem('ody-roadmap-view') || 'list'; }
+    catch (_) { _roadmapView = 'list'; }
+  }
+  return _roadmapView === 'board' ? 'board' : 'list';
+}
+
+async function _setItemStatus(item, statusKey) {
+  const col = _RM_COLS.find(c => c.key === statusKey);
+  if (!col) return;
+  const ls = _roadmapText.split('\n');
+  ls[item.line] = ls[item.line].replace(/^- \[[ xX~]\]/, `- [${col.mark}]`);
+  if (await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'))) _renderRoadmap();
+}
+
+function _rmCardText(item) {
+  // Strip screenshot links and the leading **Bug:**-style prefix for a
+  // compact card title; the full wrapped text goes in the tooltip.
+  const IMG_RE = uploadImageMdRe('\\s*');
+  return item.text.replace(IMG_RE, '').replace(/\*\*/g, '').trim();
+}
+
+function _renderRoadmapBoard(list, sections) {
+  // Released sections are history — the board is about what is moving now.
+  const live = sections.filter(s => !/RELEASED/i.test(s.title));
+  const board = document.createElement('div');
+  board.className = 'rm-board';
+  for (const col of _RM_COLS) {
+    const items = [];
+    for (const sec of live) {
+      for (const it of sec.items) {
+        if ((it.status || 'planned') === col.key) items.push({ it, sec });
+      }
+    }
+    const colEl = document.createElement('div');
+    colEl.className = 'rm-col';
+    colEl.dataset.col = col.key;
+    colEl.innerHTML = `<div class="rm-col-head">${col.label}<span class="folder-count">${items.length}</span></div>`;
+    const body = document.createElement('div');
+    body.className = 'rm-col-body';
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'rm-col-empty';
+      empty.textContent = col.key === 'wip' ? 'Nothing in progress' : 'Empty';
+      body.appendChild(empty);
+    }
+    for (const { it, sec } of items) {
+      const card = document.createElement('div');
+      card.className = 'rm-card' + (col.key === 'done' ? ' rm-card-done' : '');
+      card.draggable = true;
+      card.dataset.line = String(it.line);
+      const title = document.createElement('div');
+      title.className = 'rm-card-text';
+      title.textContent = _rmCardText(it);
+      if (it.extra.length) card.title = it.extra.join('\n');
+      const meta = document.createElement('div');
+      meta.className = 'rm-card-meta';
+      const secChip = document.createElement('span');
+      secChip.className = 'rm-chip';
+      secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
+      meta.appendChild(secChip);
+      const moves = document.createElement('span');
+      moves.className = 'rm-card-moves';
+      for (const target of _RM_COLS) {
+        if (target.key === col.key) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'rm-move-btn';
+        b.title = `Move to ${target.label}`;
+        b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : 'Done';
+        b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
+        moves.appendChild(b);
+      }
+      meta.appendChild(moves);
+      card.appendChild(title);
+      card.appendChild(meta);
+      card.addEventListener('dragstart', (e) => {
+        card.classList.add('rm-dragging');
+        try { e.dataTransfer.setData('text/plain', String(it.line)); } catch (_) {}
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragend', () => card.classList.remove('rm-dragging'));
+      body.appendChild(card);
+    }
+    colEl.appendChild(body);
+    colEl.addEventListener('dragover', (e) => { e.preventDefault(); colEl.classList.add('rm-col-over'); });
+    colEl.addEventListener('dragleave', () => colEl.classList.remove('rm-col-over'));
+    colEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      colEl.classList.remove('rm-col-over');
+      let lineNo = NaN;
+      try { lineNo = parseInt(e.dataTransfer.getData('text/plain'), 10); } catch (_) {}
+      if (!Number.isFinite(lineNo)) return;
+      _setItemStatus({ line: lineNo }, col.key);
+    });
+    board.appendChild(colEl);
+  }
+  list.appendChild(board);
+}
+
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
   const msg = el('dev-roadmap-msg');
   if (!list) return;
   const { lines, sections } = _roadmapSections(_roadmapText);
   list.innerHTML = '';
+  const mode = _roadmapViewMode();
+  document.querySelectorAll('#dev-roadmap-view .rm-view-opt').forEach(b =>
+    b.classList.toggle('active', b.dataset.rmview === mode));
+  if (mode === 'board' && sections.length) {
+    _renderRoadmapBoard(list, sections);
+    return;
+  }
   if (!sections.length) {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
     return;
@@ -3147,10 +3277,27 @@ async function _loadDevStatus() {
         upd.textContent = 'up to date';
       }
     }
+    _renderRoadmapFreshness(d.roadmap);
   } catch (e) {
     pkg.textContent = prod.textContent = beta.textContent = 'error';
     if (upd) upd.textContent = '—';
   }
+}
+
+// Nag when the roadmap has no section for the version being built — the
+// developer reads that file on every start, so a gap means it plans from a
+// stale picture (v3.7 documented while the code was at 3.9.5, 2026-07-27).
+function _renderRoadmapFreshness(rm) {
+  const box = el('dev-roadmap-stale');
+  if (!box) return;
+  if (!rm || rm.current) { box.style.display = 'none'; box.textContent = ''; return; }
+  const want = rm.expected_section || '?';
+  box.style.display = '';
+  box.textContent = rm.missing
+    ? 'No roadmap file yet — the developer has nothing to work from. Add an entry below.'
+    : `Roadmap is behind: no "## ${want}" section, but that is the version being built. `
+      + `Last sections: ${(rm.sections || []).join(' · ')}. Add the round's section so the `
+      + `developer stops planning from an outdated picture.`;
 }
 
 async function _initBuilderLink() {
@@ -3388,6 +3535,14 @@ function initDeveloper() {
     if (await _saveRoadmap(raw.value, msg)) { closeRaw(); _renderRoadmap(); }
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
+
+  el('dev-roadmap-view')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.rm-view-opt');
+    if (!btn || btn.dataset.rmview === _roadmapViewMode()) return;
+    _roadmapView = btn.dataset.rmview;
+    try { localStorage.setItem('ody-roadmap-view', _roadmapView); } catch (_) {}
+    _renderRoadmap();
+  });
 
   el('dev-status-refresh')?.addEventListener('click', () => {
     _loadDevStatus();
