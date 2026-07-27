@@ -35902,11 +35902,12 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-md { white-space: normal; }
 .note-md p { margin: 0 0 6px; }
 .note-md p:last-child { margin-bottom: 0; }
-.note-md h1, .note-md h2, .note-md h3, .note-md h4 {
-  font-size: 1.05em;
-  font-weight: 600;
-  margin: 8px 0 4px;
-}
+/* Card previews stay compact (many cards in a grid), but the levels are
+   still distinguishable rather than all identical. */
+.note-md h1 { font-size: 1.3em; font-weight: 700; margin: 8px 0 4px; }
+.note-md h2 { font-size: 1.18em; font-weight: 650; margin: 8px 0 4px; }
+.note-md h3 { font-size: 1.08em; font-weight: 600; margin: 6px 0 3px; }
+.note-md h4 { font-size: 1em; font-weight: 600; margin: 6px 0 3px; }
 .note-md ul, .note-md ol { margin: 4px 0; padding-left: 18px; }
 .note-md li { margin: 2px 0; }
 .note-md blockquote {
@@ -36522,13 +36523,17 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   vertical-align: middle;
 }
 /* Real heading hierarchy while editing and in the master-detail read pane —
-   the compact 1.05em from .note-md stays for the small note cards. */
+   the compact 1.05em from .note-md stays for the small note cards. The steps
+   are deliberately wide: at the editor's 12px base a 1.1/1.05 pair was
+   indistinguishable ("h1 und h2 h3 sind die gleichen grössen"). */
 .note-form-content-rich h1,
-.notes-md-detail .note-content-preview h1 { font-size: 1.45em; margin: 8px 0 4px; }
+.notes-md-detail .note-content-preview h1 { font-size: 1.85em; font-weight: 700; margin: 10px 0 5px; }
 .note-form-content-rich h2,
-.notes-md-detail .note-content-preview h2 { font-size: 1.25em; margin: 8px 0 4px; }
+.notes-md-detail .note-content-preview h2 { font-size: 1.5em; font-weight: 650; margin: 9px 0 4px; }
 .note-form-content-rich h3,
-.notes-md-detail .note-content-preview h3 { font-size: 1.1em; margin: 6px 0 3px; }
+.notes-md-detail .note-content-preview h3 { font-size: 1.22em; font-weight: 600; margin: 7px 0 3px; }
+.note-form-content-rich h4,
+.notes-md-detail .note-content-preview h4 { font-size: 1.05em; font-weight: 600; margin: 6px 0 3px; }
 /* Atomic islands (math / mermaid / tables) — edited via the raw toggle.
    A subtle tint signals "one unit" without shouting. */
 .note-rich-raw {
