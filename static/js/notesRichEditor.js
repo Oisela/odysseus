@@ -184,7 +184,7 @@ function htmlToMd(rootEl) {
   md = md.replace(/^([ \t]*- \[[ xX]\]) +/gm, '$1 ');
   // Zero-width spaces are caret parking spots from the inline input rules —
   // never part of the note.
-  md = md.replace(/​/g, '');
+  md = md.replace(/\u200B/g, '');
   return md;
 }
 
@@ -203,6 +203,7 @@ const _TB_BUTTONS = [
   { action: 'check', title: 'Checklist item', html: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>' },
   { sep: true },
   { action: 'quote', title: 'Quote', html: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>' },
+  { action: 'hr', title: 'Divider (--- on its own line)', html: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/></svg>' },
   { action: 'link', title: 'Link', html: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   { action: 'code', title: 'Code block', html: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' },
 ];
@@ -319,10 +320,42 @@ function _toggleChecklist(rich) {
   }
 }
 
+// Insert a full-width divider (markdown `---`) at the caret, followed by an
+// empty paragraph so there's somewhere to keep writing below the line.
+function _insertDivider(rich) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !rich.contains(sel.getRangeAt(0).startContainer)) {
+    rich.appendChild(document.createElement('hr'));
+    const p0 = document.createElement('p');
+    p0.appendChild(document.createElement('br'));
+    rich.appendChild(p0);
+    return;
+  }
+  let block = null;
+  let n = sel.getRangeAt(0).startContainer;
+  if (n.nodeType === 3) n = n.parentNode;
+  while (n && n !== rich) {
+    if (n.parentNode === rich) { block = n; break; }
+    n = n.parentNode;
+  }
+  const hr = document.createElement('hr');
+  const p = document.createElement('p');
+  p.appendChild(document.createElement('br'));
+  if (block) block.after(hr);
+  else rich.appendChild(hr);
+  hr.after(p);
+  const caret = document.createRange();
+  caret.setStart(p, 0);
+  caret.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(caret);
+}
+
 function _applyAction(rich, action, sync) {
   rich.focus();
   if (action === 'link') { _insertLink(rich).then(sync); return; }
   if (action === 'check') { _toggleChecklist(rich); sync(); return; }
+  if (action === 'hr') { _insertDivider(rich); sync(); return; }
   const cmd = { bold: 'bold', italic: 'italic', strike: 'strikeThrough',
                 ul: 'insertUnorderedList', ol: 'insertOrderedList' };
   try {
@@ -418,8 +451,8 @@ function _wireInputRules(rich, sync) {
     const pre = document.createRange();
     pre.selectNodeContents(block);
     pre.setEnd(r.startContainer, r.startOffset);
-    // contenteditable often inserts NBSP ( ) for a typed space - normalize.
-    const marker = pre.toString().replace(/ /g, ' ');
+    // contenteditable often inserts NBSP (U+00A0) for a typed space - normalize.
+    const marker = pre.toString().replace(/\u00A0/g, ' ');
     const inLi = block.tagName === 'LI';
     const isCheck = marker === '[] ' || marker === '-[] ';
     if (inLi && !isCheck) return; // inside a list only the checkbox rule applies
@@ -508,6 +541,24 @@ function _wireInputRules(rich, sync) {
     const off = sel.getRangeAt(0).startOffset;
     const s = node.textContent.slice(0, off);
 
+    // `---` on an otherwise empty line becomes a divider straight away — no
+    // Enter needed, so it reads like the line it draws.
+    if (/^-{3,}$/.test(s.trim()) && (_caretBlock(rich) || rich).textContent.trim() === s.trim()) {
+      applying = true;
+      try {
+        const r = document.createRange();
+        r.setStart(node, 0);
+        r.setEnd(node, off);
+        r.deleteContents();
+        _insertDivider(rich);
+        const blk = _caretBlock(rich);
+        if (blk && blk !== rich && !blk.textContent.trim() && blk.previousElementSibling
+            && blk.previousElementSibling.tagName === 'HR') { /* caret already parked below */ }
+      } catch (_) {} finally { applying = false; }
+      sync();
+      return;
+    }
+
     let m, tag, math = false, display = false;
     if ((m = /\$\$([^$\n]+)\$\$$/.exec(s))) { math = true; display = true; }
     // Inline $…$: content must not start/end with whitespace, so prose
@@ -531,7 +582,7 @@ function _wireInputRules(rich, sync) {
       // Chrome keeps typing INSIDE a trailing inline element even with the
       // caret set after it — the standard escape hatch is a zero-width
       // space the caret can sit in (stripped again on serialize).
-      const zw = document.createTextNode('​');
+      const zw = document.createTextNode('\u200B');
       el.after(zw);
       const after = document.createRange();
       after.setStart(zw, 1);
@@ -547,7 +598,7 @@ function _wireInputRules(rich, sync) {
     const ch = e.data;
     if (!ch || ch.length !== 1) return;
     if (ch === ' ' || ch.charCodeAt(0) === 160) setTimeout(applyBlock, 0);
-    else if (ch === '*' || ch === '`' || ch === '~' || ch === '$') setTimeout(applyInline, 0);
+    else if (ch === '*' || ch === '`' || ch === '~' || ch === '$' || ch === '-') setTimeout(applyInline, 0);
   });
 }
 

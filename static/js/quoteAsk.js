@@ -9,6 +9,58 @@
 let _btn = null;
 let _pendingText = '';
 
+// Rebuild markdown source from a selected DOM range.
+//
+// selection.toString() is unusable on rendered answers: KaTeX emits the math
+// TWICE (a hidden .katex-mathml twin next to the visible .katex-html), so a
+// quoted formula came out duplicated and shredded across lines — "> ψ / > † /
+// > ψ=⟨ψ|ψ⟩=‖ψ‖ / > 2" instead of "> $\psi^\dagger\psi = \langle\psi|\psi\rangle
+// = \|\psi\|^2 = 1$" (Alessio 2026-07-27). So: clone the range, swap every
+// rendered formula for its original TeX (KaTeX keeps it in an <annotation>),
+// turn block elements back into line breaks, and read the text off that.
+const _QA_BLOCKS = 'p,div,li,h1,h2,h3,h4,h5,h6,pre,blockquote,tr,hr';
+
+function _rangeToMarkdown(range) {
+  const host = document.createElement('div');
+  host.appendChild(range.cloneContents());
+
+  host.querySelectorAll('.katex').forEach((k) => {
+    const ann = k.querySelector('annotation[encoding="application/x-tex"]');
+    const tex = ann ? ann.textContent.trim() : '';
+    // .katex-display wraps display math — replace the whole wrapper so the
+    // $$ ends up on its own line.
+    const wrap = k.closest('.katex-display') || k;
+    const display = wrap !== k;
+    const src = tex
+      ? (display ? `\n$$${tex}$$\n` : `$${tex}$`)
+      : (k.querySelector('.katex-html')?.textContent || k.textContent || '');
+    wrap.replaceWith(document.createTextNode(src));
+  });
+  // Any half-selected formula can leave the hidden MathML twin behind.
+  host.querySelectorAll('.katex-mathml, annotation').forEach((e) => e.remove());
+  // Chrome's copy/paste chrome inside code blocks isn't part of the quote.
+  host.querySelectorAll('.copy-code, .run-code, .edit-code').forEach((e) => e.remove());
+
+  host.querySelectorAll('br').forEach((b) => b.replaceWith(document.createTextNode('\n')));
+  host.querySelectorAll('strong,b').forEach((e) => e.replaceWith(document.createTextNode(`**${e.textContent}**`)));
+  host.querySelectorAll('em,i').forEach((e) => e.replaceWith(document.createTextNode(`*${e.textContent}*`)));
+  host.querySelectorAll('pre').forEach((pre) => {
+    const code = pre.querySelector('code');
+    const lang = code ? (code.getAttribute('data-lang') || '') : '';
+    pre.replaceWith(document.createTextNode(`\n\`\`\`${lang}\n${(code || pre).textContent.replace(/\n$/, '')}\n\`\`\`\n`));
+  });
+  host.querySelectorAll('code').forEach((c) => c.replaceWith(document.createTextNode('`' + c.textContent + '`')));
+  host.querySelectorAll('li').forEach((li) => li.insertBefore(document.createTextNode('- '), li.firstChild));
+  host.querySelectorAll('hr').forEach((h) => h.replaceWith(document.createTextNode('\n---\n')));
+  host.querySelectorAll(_QA_BLOCKS).forEach((el) => el.appendChild(document.createTextNode('\n')));
+
+  return (host.textContent || '')
+    .replace(/\u00A0/g, ' ')  // NBSP from the rendered markup
+    .split('\n').map((l) => l.replace(/[ \t]+$/, '')).join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function _ensureBtn() {
   if (_btn) return _btn;
   _btn = document.createElement('button');
@@ -60,7 +112,11 @@ function _maybeShow() {
     : range.commonAncestorContainer.parentElement;
   if (anchorEl && anchorEl.closest('textarea, input, [contenteditable="true"]')) { _hide(); return; }
 
-  _pendingText = text;
+  // Quote the markdown SOURCE, not the rendered glyphs (see _rangeToMarkdown).
+  // Fall back to the plain string if reconstruction yields nothing usable.
+  let src = '';
+  try { src = _rangeToMarkdown(range); } catch (_) { src = ''; }
+  _pendingText = src || text;
   const btn = _ensureBtn();
   const rect = range.getBoundingClientRect();
   if (!rect || (!rect.width && !rect.height)) { _hide(); return; }
