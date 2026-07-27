@@ -449,6 +449,10 @@ function _wireInputRules(rich, sync) {
         else block.replaceWith(el);
         target = el;
       }
+      // Prune now-empty text nodes first — Chrome won't keep a caret in a
+      // block whose only child is an empty text node (it normalizes the
+      // caret OUT of the block, so typing landed before the heading).
+      [...target.childNodes].forEach(nd => { if (nd.nodeType === 3 && !nd.textContent) nd.remove(); });
       // An emptied block needs a placeholder so the caret can live inside.
       if (!target.firstChild) target.appendChild(document.createElement('br'));
 
