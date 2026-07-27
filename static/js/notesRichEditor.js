@@ -47,6 +47,12 @@ function _turndown() {
     emDelimiter: '*',
   });
   td.use(window.turndownPluginGfm.gfm);
+  // The GFM plugin emits single-tilde ~strike~ — markdown.js only renders
+  // the double-tilde form, so override with ~~.
+  td.addRule('nreStrikethrough', {
+    filter: ['del', 's', 'strike'],
+    replacement: (content) => '~~' + content + '~~',
+  });
   // markdown.js has no concept of backslash-escapes: anything Turndown
   // escapes (\* \_ \# …) renders literally INCLUDING the backslash, and the
   // next serialize escapes that backslash again — every open/save cycle
