@@ -1106,6 +1106,37 @@ function initializeEventListeners() {
     });
   }
 
+  // RemNote section button
+  const toolRemnoteBtn = el('tool-remnote-btn');
+  if (toolRemnoteBtn) {
+    toolRemnoteBtn.addEventListener('click', async () => {
+      const m = await import('./js/remnote.js');
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('remnote-modal')) {
+        if (m.isRemnoteOpen()) m.closeRemnote();
+        else m.openRemnote();
+      }
+    });
+  }
+  // Sidebar dot when cards are parked — the buffer is only useful if you
+  // notice it filled up while the PC was off.
+  (async () => {
+    const dot = el('remnote-sidebar-dot');
+    if (!dot) return;
+    const sync = async () => {
+      try {
+        const res = await fetch('/api/remnote/status', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const d = await res.json();
+        const waiting = (d.counts?.pending || 0) + (d.counts?.failed || 0);
+        dot.style.display = waiting ? '' : 'none';
+        dot.textContent = waiting ? String(waiting) : '';
+      } catch (_) { /* offline is the normal case here */ }
+    };
+    sync();
+    setInterval(sync, 120000);
+  })();
+
   // Pomodoro tool button
   const toolPomodoroBtn = el('tool-pomodoro-btn');
   if (toolPomodoroBtn) {
@@ -2661,6 +2692,7 @@ function initializeEventListeners() {
     'tool-calendar':       '#tool-calendar-btn',
     'tool-pomodoro':       '#pomodoro-section',
     'tool-shopping':       '#shopping-section',
+    'tool-remnote':        '#remnote-section',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
     'tool-research':       '#tool-research-btn',
