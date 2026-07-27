@@ -337,12 +337,12 @@ function _applyAction(rich, action, sync) {
 // Block rules fire on Space when the marker is the entire text before the
 // caret; inline rules fire when the closing character completes a pair.
 const _BLOCK_RULES = [
-  { re: /^#$/, run: () => document.execCommand('formatBlock', false, 'h1'), inLi: false },
-  { re: /^##$/, run: () => document.execCommand('formatBlock', false, 'h2'), inLi: false },
-  { re: /^###$/, run: () => document.execCommand('formatBlock', false, 'h3'), inLi: false },
-  { re: /^(?:-|\*)$/, run: () => document.execCommand('insertUnorderedList'), inLi: false },
-  { re: /^\d+\.$/, run: () => document.execCommand('insertOrderedList'), inLi: false },
-  { re: /^>$/, run: () => document.execCommand('formatBlock', false, 'blockquote'), inLi: false },
+  { re: /^# $/, run: () => document.execCommand('formatBlock', false, 'h1'), inLi: false },
+  { re: /^## $/, run: () => document.execCommand('formatBlock', false, 'h2'), inLi: false },
+  { re: /^### $/, run: () => document.execCommand('formatBlock', false, 'h3'), inLi: false },
+  { re: /^(?:-|\*) $/, run: () => document.execCommand('insertUnorderedList'), inLi: false },
+  { re: /^\d+\. $/, run: () => document.execCommand('insertOrderedList'), inLi: false },
+  { re: /^> $/, run: () => document.execCommand('formatBlock', false, 'blockquote'), inLi: false },
 ];
 
 function _caretBlock(rich) {
@@ -371,22 +371,28 @@ function _makeTaskLi(rich) {
 function _wireInputRules(rich, sync) {
   let applying = false;
 
-  rich.addEventListener('keydown', (e) => {
-    if (e.key !== ' ' || applying) return;
+  // Block rules run DEFERRED off the input event (not keydown): Android
+  // IMEs don't deliver a usable keydown for space (key 229), and running
+  // editing commands inside an input handler makes Chrome misplace edits.
+  // The just-typed space is part of the marker match and gets removed
+  // together with it.
+  const applyBlock = () => {
+    if (applying) return;
     const block = _caretBlock(rich);
     if (!block) return;
     if (block !== rich && block.closest && block.closest('.note-rich-raw, pre')) return;
     const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
     const r = sel.getRangeAt(0);
     const pre = document.createRange();
     pre.selectNodeContents(block);
     pre.setEnd(r.startContainer, r.startOffset);
-    const marker = pre.toString();
+    // contenteditable often inserts NBSP ( ) for a typed space - normalize.
+    const marker = pre.toString().replace(/ /g, ' ');
     const inLi = block.tagName === 'LI';
-    const isCheck = marker === '[]' || marker === '-[]';
+    const isCheck = marker === '[] ' || marker === '-[] ';
     const rule = isCheck ? null : _BLOCK_RULES.find(x => x.re.test(marker) && (!inLi || x.inLi));
     if (!rule && !isCheck) return;
-    e.preventDefault();
     applying = true;
     try {
       pre.deleteContents();
@@ -403,7 +409,7 @@ function _wireInputRules(rich, sync) {
       }
     } catch (_) {} finally { applying = false; }
     sync();
-  });
+  };
 
   // Inline pairs are applied with pure DOM surgery, DEFERRED out of the
   // input event: running execCommand (or heavy DOM moves) inside an input
@@ -452,8 +458,9 @@ function _wireInputRules(rich, sync) {
   rich.addEventListener('input', (e) => {
     if (applying || !e || e.inputType !== 'insertText') return;
     const ch = e.data;
-    if (ch !== '*' && ch !== '`' && ch !== '~') return;
-    setTimeout(applyInline, 0);
+    if (!ch || ch.length !== 1) return;
+    if (ch === ' ' || ch.charCodeAt(0) === 160) setTimeout(applyBlock, 0);
+    else if (ch === '*' || ch === '`' || ch === '~') setTimeout(applyInline, 0);
   });
 }
 
