@@ -3138,7 +3138,7 @@ async function _loadRoadmapBuilds() {
 
 async function _openBuildChat(sessionId) {
   try {
-    if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+    settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
     const s = await import('./sessions.js');
     await s.selectSession(sessionId, { keepSidebar: true, showLoading: false });
   } catch (e) {
@@ -3178,7 +3178,7 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
 
   const sessionsMod = await import('./sessions.js');
   await sessionsMod.loadSessions();
-  if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+  settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
   await sessionsMod.selectSession(sess.id, { keepSidebar: true, showLoading: false });
   if (typeof window.__odysseusPrepareDeveloperMode === 'function') window.__odysseusPrepareDeveloperMode();
 
@@ -3613,7 +3613,7 @@ async function _initBuilderLink() {
       try {
         if (!m.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
         const builder = await m.ensureDeveloperProject();
-        if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+        settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
         // Fresh developer chat in the builder project (pinned skill + clone
         // workspace ride along server-side). Fallback: open its last chat.
         if (m.startProjectChat) {
@@ -3641,7 +3641,7 @@ async function _initBuilderLink() {
         if (!m.prepareCurrentProjectChat) throw new Error('Project setup action is unavailable');
         await m.prepareCurrentProjectChat(builder.id);
         prepareMode();
-        if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+        settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
         if (uiModule?.showToast) {
           uiModule.showToast('Developer chat ready — Builder project, Agent mode and Shell are active.');
         }
