@@ -22,7 +22,18 @@ function safeRasterDataUrl(raw) {
 }
 
 /* ── Tab switching ── */
-const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
+// 'developer' belongs here too — its whole panel (package status, roadmap,
+// beta buttons, Go button) is populated by admin.js's initDeveloper(), which
+// only runs via adminModule.open()/_initData(). Missing from this set meant
+// that if Developer was the FIRST settings tab ever clicked in a session, the
+// panel silently stayed empty forever: initTabs()'s click handler falls
+// through to a plain tab-switch (no admin init) whenever a tab isn't in
+// ADMIN_TABS, and nothing else would trigger initAll() first. It only
+// "worked" by accident when some other admin tab (System, Users, …) happened
+// to be opened first in the same session, since initAll() initializes every
+// tab's data in one pass regardless of which tab was clicked (found while
+// building the Roadmap board, 2026-07-27).
+const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system', 'developer']);
 
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
