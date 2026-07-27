@@ -58,6 +58,10 @@ function _rangeToMarkdown(range) {
     .replace(/\u00A0/g, ' ')  // NBSP from the rendered markup
     .split('\n').map((l) => l.replace(/[ \t]+$/, '')).join('\n')
     .replace(/\n{3,}/g, '\n\n')
+    // markdown.js keeps newlines between <li> tags, which after the block
+    // pass leaves a blank line between list items — collapse those so a
+    // quoted list stays a list.
+    .replace(/^(- .*)\n\n(?=- )/gm, '$1\n')
     .trim();
 }
 
