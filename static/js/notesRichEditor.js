@@ -350,6 +350,26 @@ const _BLOCK_RULES = [
   { re: /^> $/, kind: 'blockquote' },
 ];
 
+// Atomic KaTeX island for live-typed math — same shape the initial render
+// produces, so serialization (data-md) and styling are identical.
+function _mathIslandEl(fullMd, inner, display) {
+  const span = document.createElement('span');
+  span.className = 'note-rich-raw' + (display ? ' note-rich-raw-block' : '');
+  span.contentEditable = 'false';
+  span.setAttribute('data-md', encodeURIComponent(fullMd));
+  span.title = 'Edit via raw markdown (toolbar toggle)';
+  try {
+    if (window.katex) {
+      span.innerHTML = katex.renderToString(inner.trim(), { displayMode: display, throwOnError: false });
+      return span;
+    }
+  } catch (_) { /* fall through to literal */ }
+  const code = document.createElement('code');
+  code.textContent = fullMd;
+  span.appendChild(code);
+  return span;
+}
+
 function _caretBlock(rich) {
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
@@ -482,8 +502,12 @@ function _wireInputRules(rich, sync) {
     const off = sel.getRangeAt(0).startOffset;
     const s = node.textContent.slice(0, off);
 
-    let m, tag;
-    if ((m = /\*\*([^*\n]+)\*\*$/.exec(s))) tag = 'strong';
+    let m, tag, math = false, display = false;
+    if ((m = /\$\$([^$\n]+)\$\$$/.exec(s))) { math = true; display = true; }
+    // Inline $…$: content must not start/end with whitespace, so prose
+    // like "5$ und 3$" (currency) never converts.
+    else if ((m = /(?<!\$)\$([^\s$][^$\n]*?)\$$/.exec(s)) && !/\s$/.test(m[1])) math = true;
+    else if ((m = /\*\*([^*\n]+)\*\*$/.exec(s))) tag = 'strong';
     else if ((m = /(?<!\*)\*([^*\n]+)\*$/.exec(s)) && !m[1].startsWith('*')) tag = 'em';
     else if ((m = /`([^`\n]+)`$/.exec(s))) tag = 'code';
     else if ((m = /~~([^~\n]+)~~$/.exec(s))) tag = 's';
@@ -495,8 +519,8 @@ function _wireInputRules(rich, sync) {
       r.setStart(node, off - m[0].length);
       r.setEnd(node, off);
       r.deleteContents();
-      const el = document.createElement(tag);
-      el.textContent = m[1];
+      const el = math ? _mathIslandEl(m[0], m[1], display) : document.createElement(tag);
+      if (!math) el.textContent = m[1];
       r.insertNode(el);
       // Chrome keeps typing INSIDE a trailing inline element even with the
       // caret set after it — the standard escape hatch is a zero-width
@@ -517,7 +541,7 @@ function _wireInputRules(rich, sync) {
     const ch = e.data;
     if (!ch || ch.length !== 1) return;
     if (ch === ' ' || ch.charCodeAt(0) === 160) setTimeout(applyBlock, 0);
-    else if (ch === '*' || ch === '`' || ch === '~') setTimeout(applyInline, 0);
+    else if (ch === '*' || ch === '`' || ch === '~' || ch === '$') setTimeout(applyInline, 0);
   });
 }
 

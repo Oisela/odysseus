@@ -2396,6 +2396,9 @@ body.bg-pattern-sparkles {
       display: flex;
       flex-direction: column;
       gap: 8px;
+      /* Breathing room below the composer — the bar used to sit flush on
+         the viewport edge. */
+      margin-bottom: 10px;
       max-width: 800px;
       margin-left: auto;
       margin-right: auto;
@@ -4456,8 +4459,9 @@ body.bg-pattern-sparkles {
         min-height: 14px;
         margin-top: -31px;
         /* Keep the title row below the iOS status bar (viewport-fit=cover
-           lets the page extend underneath it). */
-        padding-top: calc(31px + env(safe-area-inset-top, 0px));
+           lets the page extend underneath it) — plus a little extra air at
+           the top, the row felt glued to the notch. */
+        padding-top: calc(35px + env(safe-area-inset-top, 0px));
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
@@ -4618,9 +4622,12 @@ body.bg-pattern-sparkles {
         padding: 6px !important;
         border-radius: 12px !important;
       }
-      /* Safe area padding for notched devices */
+      /* Notched devices: the safe area becomes a real GAP below the bar
+         (outer margin) instead of inflating the bar itself — reads as
+         breathing room, not as a fat input box. */
       .chat-input-bar {
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: 10px;
+        margin-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
       }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
@@ -36514,6 +36521,14 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   margin-right: 4px;
   vertical-align: middle;
 }
+/* Real heading hierarchy while editing and in the master-detail read pane —
+   the compact 1.05em from .note-md stays for the small note cards. */
+.note-form-content-rich h1,
+.notes-md-detail .note-content-preview h1 { font-size: 1.45em; margin: 8px 0 4px; }
+.note-form-content-rich h2,
+.notes-md-detail .note-content-preview h2 { font-size: 1.25em; margin: 8px 0 4px; }
+.note-form-content-rich h3,
+.notes-md-detail .note-content-preview h3 { font-size: 1.1em; margin: 6px 0 3px; }
 /* Atomic islands (math / mermaid / tables) — edited via the raw toggle.
    A subtle tint signals "one unit" without shouting. */
 .note-rich-raw {
