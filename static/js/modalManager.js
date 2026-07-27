@@ -232,8 +232,34 @@ function _loadDockState() {
 // Push the remembered dock position onto the live element. Called on every
 // render because the empty-dock branch wipes inline styles via cssText='',
 // which would otherwise drop the position the moment the dock clears.
+// Default home: a flow row directly above the composer inside the chat
+// column, so the chips never cover messages ("floaties über dem Chat",
+// Alessio 2026-07-27). Dragging by the grip promotes the dock to a free
+// floating pad on <body>; double-clicking the grip brings it home.
+function _homeDock(dock) {
+  const bar = document.querySelector('#chat-container .chat-input-bar');
+  if (_dockPos || !bar || !bar.parentElement) {
+    // Free-floating: must live on <body> so `position: fixed` coordinates
+    // aren't affected by an ancestor transform.
+    dock.classList.remove('dock-inflow');
+    if (dock.parentElement !== document.body) document.body.appendChild(dock);
+    return;
+  }
+  dock.classList.add('dock-inflow');
+  if (dock.nextElementSibling !== bar) bar.parentElement.insertBefore(dock, bar);
+}
+
 function _applyDockPos(dock) {
-  if (!_dockPos) return;
+  _homeDock(dock);
+  if (!_dockPos) {
+    // In-flow: drop every inline coordinate the floating mode left behind.
+    dock.style.left = '';
+    dock.style.top = '';
+    dock.style.right = '';
+    dock.style.bottom = '';
+    dock.style.transform = '';
+    return;
+  }
   dock.style.left = `${_dockPos.left}px`;
   dock.style.top = `${_dockPos.top}px`;
   dock.style.right = 'auto';
@@ -346,6 +372,16 @@ function _renderDock() {
   // first time it re-populates after every chip was restored.
   _applyDockPos(dock);
   dock.innerHTML = '';
+  // Grip: the ONE place that moves the whole dock, so every chip stays free
+  // to reorder. Same dot-grid glyph as the notes/checklist row grips.
+  if (renderIds.length) {
+    const grip = document.createElement('span');
+    grip.className = 'minimized-dock-grip';
+    grip.title = 'Drag to move the group · double-click to dock it back below the chat';
+    grip.innerHTML = '<svg width="8" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.3"/><circle cx="7" cy="3" r="1.3"/><circle cx="3" cy="8" r="1.3"/><circle cx="7" cy="8" r="1.3"/><circle cx="3" cy="13" r="1.3"/><circle cx="7" cy="13" r="1.3"/></svg>';
+    _wireDockGripDrag(grip, dock);
+    dock.appendChild(grip);
+  }
   for (const id of renderIds) {
     const meta = _LABELS[id] || { label: id, icon: '' };
     const chip = document.createElement('button');
@@ -624,6 +660,50 @@ function _stepChain(state, trashZone, captureRadius) {
   }
 }
 
+// Drag the whole chip group by its grip. Double-click resets to the CSS
+// default position (centred above the composer), which is also the "get it
+// out of the way of the chat" escape hatch.
+function _wireDockGripDrag(grip, dock) {
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const dr = dock.getBoundingClientRect();
+    const startLeft = dr.left, startTop = dr.top;
+    dock.classList.add('dock-dragging');
+    let moved = false;
+    const onMove = (ev) => {
+      const left = Math.max(8, Math.min(window.innerWidth - dock.offsetWidth - 8, startLeft + ev.clientX - startX));
+      const top = Math.max(8, Math.min(window.innerHeight - dock.offsetHeight - 8, startTop + ev.clientY - startY));
+      // First real move promotes the in-flow row to a floating pad — but only
+      // past a small threshold, so a sloppy click doesn't tear it loose.
+      if (!moved) {
+        if (Math.abs(ev.clientX - startX) < 4 && Math.abs(ev.clientY - startY) < 4) return;
+        moved = true;
+      }
+      _dockPos = { left, top };
+      _applyDockPos(dock);
+    };
+    const onUp = () => {
+      dock.classList.remove('dock-dragging');
+      document.removeEventListener('pointermove', onMove);
+      _saveDockState();
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp, { once: true });
+    document.addEventListener('pointercancel', onUp, { once: true });
+  });
+  grip.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _dockPos = null;
+    _chipPositions.clear();
+    _applyDockPos(dock);
+    _saveDockState();
+  });
+}
+
 function _wireChipDrag(chip, dock) {
   let startX = 0, startY = 0, dragging = false;
   let dragMode = null; // 'reorder' | 'move-dock' | 'free' | 'chain'
@@ -738,12 +818,12 @@ function _wireChipDrag(chip, dock) {
       return;
     }
 
-    // Desktop — reorder vs move-dock
+    // Desktop — every chip reorders; moving the whole dock is the grip's job
+    // (see _dockGrip). The old rule keyed on "is this an edge chip", which
+    // made reordering IMPOSSIBLE with two chips (both are edges) and limited
+    // it to the middle one with three — Alessio 2026-07-27.
     const chips = [...dock.querySelectorAll('.minimized-dock-chip')];
-    const idx = chips.indexOf(chip);
-    const isEdge = idx === 0 || idx === chips.length - 1;
-    dragMode = (isEdge && chips.length >= 2) ? 'move-dock' : (chips.length >= 2 ? 'reorder' : 'move-dock');
-    if (chips.length === 1) dragMode = 'move-dock';
+    dragMode = chips.length >= 2 ? 'reorder' : 'move-dock';
     if (dragMode === 'move-dock') {
       const dr = dock.getBoundingClientRect();
       dockStartLeft = dr.left;

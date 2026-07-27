@@ -942,12 +942,35 @@ body.bg-pattern-sparkles {
       transition: none;
       box-shadow: 0 8px 24px rgba(0,0,0,0.45);
     }
-    /* Subtle visual cue that edge chips drag the whole dock */
-    #minimized-dock .minimized-dock-chip:first-child:not(:only-child),
-    #minimized-dock .minimized-dock-chip:last-child:not(:only-child) {
-      box-shadow: 0 4px 14px rgba(0,0,0,0.35),
-                  inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+    /* Default home: a flow row above the composer inside the chat column, so
+       the chips never sit on top of the messages. The grip promotes it to the
+       floating pad above (position: fixed) on demand. */
+    #minimized-dock.dock-inflow {
+      position: static;
+      transform: none;
+      left: auto; top: auto; right: auto; bottom: auto;
+      justify-content: center;
+      max-width: 800px;
+      margin: 0 auto 6px;
+      padding: 0 4px;
+      z-index: auto;
     }
+    /* Grip — the single handle that moves the whole group, so every chip
+       stays free to reorder. Mirrors .note-row-grip. */
+    #minimized-dock .minimized-dock-grip {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      align-self: center;
+      padding: 4px 2px;
+      color: var(--fg);
+      opacity: 0.35;
+      cursor: grab;
+      touch-action: none;
+      transition: opacity 0.15s;
+    }
+    #minimized-dock .minimized-dock-grip:hover { opacity: 0.85; }
+    #minimized-dock .minimized-dock-grip:active { cursor: grabbing; }
     .minimized-dock-chip svg { opacity: 0.7; flex-shrink: 0; }
     .minimized-dock-label { white-space: nowrap; }
 
