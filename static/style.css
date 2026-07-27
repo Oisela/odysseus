@@ -41089,6 +41089,31 @@ body.theme-frosted .modal {
   font-size: 12px;
   min-width: 0;
 }
+/* Rename mode: input + trash side by side (delete lives in rename mode,
+   same "manage the active list" gesture). Trash mirrors .note-x-btn. */
+.notes-md-renamelist-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.notes-md-renamelist-row .notes-md-newlist-input { flex: 1; }
+.notes-md-listdel-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+  color: var(--fg);
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  transition: opacity 0.15s, color 0.15s;
+}
+.notes-md-listdel-btn:hover {
+  opacity: 1;
+  color: var(--red);
+}
 
 .notes-md-rows-col {
   width: 262px;

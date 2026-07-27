@@ -959,6 +959,46 @@ def setup_note_routes(task_scheduler=None):
         finally:
             db.close()
 
+    # --- DELETE LABEL (list) ---
+    @router.post("/delete-label")
+    async def delete_label(request: Request):
+        """Remove a label token from every note of this owner.
+
+        Deleting a "list" in the sidebar must strip the token from each
+        note — the sidebar re-collects labels from the notes on every
+        render, so a prefs-only removal would make the list reappear.
+        The client prunes its note_lists prefs registry separately.
+        """
+        user = _owner(request)
+        body = await request.json()
+        label = str(body.get("label") or "").strip()
+        if not label:
+            raise HTTPException(400, "label is required")
+        try:
+            from core.auth import AuthManager
+            _allow_null = not AuthManager().is_configured
+        except Exception:
+            _allow_null = False
+        db = SessionLocal()
+        try:
+            q = db.query(Note).filter(Note.label.isnot(None), Note.label != "")
+            if user is not None:
+                if _allow_null:
+                    q = q.filter((Note.owner == user) | (Note.owner == None))  # noqa: E711
+                else:
+                    q = q.filter(Note.owner == user)
+            changed = 0
+            for note in q.all():
+                tokens = (note.label or "").split()
+                if label not in tokens:
+                    continue
+                note.label = " ".join(t for t in tokens if t != label)
+                changed += 1
+            db.commit()
+            return {"ok": True, "count": changed}
+        finally:
+            db.close()
+
     # --- REORDER NOTES ---
     @router.post("/reorder")
     async def reorder_notes(request: Request):

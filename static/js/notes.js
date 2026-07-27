@@ -2345,8 +2345,13 @@ function _startListRename(btn) {
   const el = btn.closest('.notes-md-sidebar');
   // Swap the WHOLE entry button for an input — an <input> inside a <button>
   // is invalid HTML and doesn't reliably take focus/keys. Same pattern as
-  // the "New list" flow above.
-  btn.outerHTML = '<input type="text" class="notes-md-newlist-input notes-md-renamelist-input" maxlength="40" />';
+  // the "New list" flow above. The trash button beside it is the list's
+  // delete affordance (rename mode = the list's "manage" mode).
+  btn.outerHTML = '<span class="notes-md-renamelist-row">'
+    + '<input type="text" class="notes-md-newlist-input notes-md-renamelist-input" maxlength="40" />'
+    + '<button type="button" class="notes-md-listdel-btn" title="Delete list (removes the tag from its notes — notes are kept)">'
+    + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>'
+    + '</button></span>';
   const inp = el.querySelector('.notes-md-renamelist-input');
   if (!inp) { _renderNotes(); return; }
   inp.value = oldName;
@@ -2372,6 +2377,54 @@ function _startListRename(btn) {
   });
   inp.addEventListener('blur', () => finish(true));
   inp.addEventListener('click', (ev) => ev.stopPropagation());
+  const delBtn = el.querySelector('.notes-md-listdel-btn');
+  if (delBtn) {
+    // mousedown preventDefault keeps focus on the input, so its blur
+    // handler can't commit a rename before the delete click lands.
+    delBtn.addEventListener('mousedown', (ev) => ev.preventDefault());
+    delBtn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      if (done) return;
+      done = true;
+      const count = _notes.filter(n => !n.archived && _visibleNoteTags(n).includes(oldName)).length;
+      const ok = await uiModule.styledConfirm(
+        count
+          ? `Delete list "${oldName}"? The tag is removed from ${count} note${count === 1 ? '' : 's'} — the notes themselves are kept.`
+          : `Delete list "${oldName}"?`,
+        { confirmText: 'Delete', danger: true });
+      if (!ok) { _renderNotes(); return; }
+      _commitListDelete(oldName);
+    });
+  }
+}
+
+async function _commitListDelete(name) {
+  try {
+    const res = await fetch(`${API_BASE}/api/notes/delete-label`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: name }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    uiModule.showError('Delete failed');
+    _renderNotes();
+    return;
+  }
+  _prefLists = _prefLists.filter(t => t !== name);
+  _savePrefLists();
+  // Mirror the server-side token strip locally so the sidebar and cards
+  // agree without a refetch (same idea as _commitListRename).
+  for (const n of _notes) {
+    if (!n.label) continue;
+    const tokens = n.label.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.includes(name)) continue;
+    n.label = tokens.filter(t => t !== name).join(' ');
+  }
+  if (_activeLabel === name) _activeLabel = null;
+  _renderNotes();
+  uiModule.showToast(`List "${name}" deleted`);
 }
 
 async function _commitListRename(oldName, newName) {
