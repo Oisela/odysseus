@@ -3330,6 +3330,14 @@ function initializeEventListeners() {
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear workspace too — a project chat sets it and it must not leak into fresh chats
       try { workspaceModule.setWorkspace(''); } catch (_) {}
+      // …and the project pill/context. _startFreshChat does this, but the
+      // model-preferring branch below returns before ever reaching it, so a
+      // New Chat started with a usable model kept showing the old project
+      // ("neuer chat aber projekt ist immer noch aktiviert", 2026-07-27).
+      try {
+        const _pm = await import('./js/projects.js');
+        _pm.onSessionSwitch(null, null);
+      } catch (_) {}
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
