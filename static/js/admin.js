@@ -3,7 +3,7 @@
 
 import uiModule from './ui.js';
 import { uploadImageMdRe } from './markdown.js';
-import settingsModule from './settings.js';
+import settingsModule, { fetchModelEndpoints, fillEndpointSelect, fillModelSelect } from './settings.js';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
@@ -2985,12 +2985,47 @@ function _roadmapSections(text) {
         status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : 'planned',
         text: line.slice(6).trim(),
         extra: [],
+        extraLines: [],   // raw line indices of the continuation lines (for editing)
+        endLine: i,       // last line belonging to this item — grows below
       });
     } else if (cur && cur.items.length && /^\s{2,}\S/.test(line)) {
-      cur.items[cur.items.length - 1].extra.push(line.trim());
+      const item = cur.items[cur.items.length - 1];
+      item.extra.push(line.trim());
+      item.extraLines.push(i);
+      item.endLine = i;
     }
   });
   return { lines, sections };
+}
+
+// Stable-ish item identity for linking a "Build" run back to its card: a
+// roadmap item has no database row (it lives in a text file), and the line
+// number shifts on every unrelated edit, so hash the cleaned title text
+// instead. Editing the title after starting a build orphans the old link —
+// an accepted tradeoff for staying file-based (see RoadmapBuild model).
+function _itemKey(text) {
+  const s = _rmCardText({ text });
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
+// Rewrite one item's title + description in place, replacing its full
+// original span (title line through its last continuation line) with a
+// freshly formatted block. Continuation lines use a fixed 6-space indent —
+// the same alignment "- [ ] " already gives the title text.
+async function _saveItemEdit(item, newTitle, newDescription) {
+  const lines = _roadmapText.split('\n');
+  const mark = item.status === 'done' ? 'x' : item.status === 'wip' ? '~' : ' ';
+  const block = [`- [${mark}] ${newTitle.trim()}`];
+  for (const raw of (newDescription || '').split('\n')) {
+    const t = raw.trim();
+    if (t) block.push(`      ${t}`);
+  }
+  lines.splice(item.line, item.endLine - item.line + 1, ...block);
+  const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
+  if (ok) _renderRoadmap();
+  return ok;
 }
 
 async function _saveRoadmap(text, msgEl) {
@@ -3058,6 +3093,146 @@ function _rmCardText(item) {
   return item.text.replace(IMG_RE, '').replace(/\*\*/g, '').trim();
 }
 
+// ── Build workflow ──
+// Alessio 2026-07-27: "damit ich Beschreibungen hinzufügen kann, damit ich
+// die Feature genauer definieren kann ... in die eigene Entwicklungspipeline
+// einbauen, am besten mit Klick auf Button, dann baut er das Feature ... im
+// Hintergrund, Modell auswählen können auf dieser Seite."
+//
+// Workflow a Build click runs, end to end:
+//  1. Ensure the Builder project exists (projects.js, same as the Go button).
+//  2. Create a chat session with the CHOSEN endpoint/model directly
+//     (POST /api/session — same call materializePendingSession uses), then
+//     attach it to the Builder project (POST /api/projects/{id}/sessions/{sid}).
+//  3. Switch to that chat, close Settings, force Agent+Shell
+//     (window.__odysseusPrepareDeveloperMode — the exact function the Go
+//     button already calls, so behavior stays identical).
+//  4. Fill the composer with a prompt built from the card's title +
+//     description and submit it via chat.handleChatSubmit — the SAME send
+//     path a typed message takes, so streaming/tools/detach-on-navigate all
+//     work unchanged. This is what "runs in the background" means here:
+//     once sent, the turn keeps going even if you switch chats or close
+//     Settings, exactly like any other in-flight agent turn.
+//  5. Record {item_key, session_id, model} so the card shows "Building —
+//     open chat" after a reload, and flip the item's marker to "in progress".
+//
+// Disabled on beta (no host/clone access there), mirroring the Go button.
+let _roadmapBuilds = null;   // Map item_key -> build record, or null = not loaded
+let _channelIsBeta = null;
+
+async function _loadRoadmapBuilds() {
+  try {
+    const res = await fetch('/api/system/roadmap/builds', { credentials: 'same-origin' });
+    const d = await res.json();
+    _roadmapBuilds = new Map((d.builds || []).map(b => [b.item_key, b]));
+  } catch (_) {
+    _roadmapBuilds = new Map();
+  }
+  if (_channelIsBeta === null) {
+    try {
+      const v = await fetch('/api/version', { credentials: 'same-origin' }).then(r => r.json());
+      _channelIsBeta = v.channel === 'beta';
+    } catch (_) { _channelIsBeta = false; }
+  }
+}
+
+async function _openBuildChat(sessionId) {
+  try {
+    if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+    const s = await import('./sessions.js');
+    await s.selectSession(sessionId, { keepSidebar: true, showLoading: false });
+  } catch (e) {
+    if (uiModule?.showError) uiModule.showError('Could not open that chat: ' + e.message);
+  }
+}
+
+function _buildPrompt(title, description) {
+  const desc = (description || '').trim();
+  return `Bau bitte dieses Roadmap-Item aus der ROADMAP.md um:\n\n`
+    + `**${title.trim()}**\n`
+    + (desc ? `${desc}\n\n` : `(Keine weitere Beschreibung — bei Unklarheiten kurz nachfragen.)\n\n`)
+    + `Nutze deinen odysseus-entwickler-Workflow (dev.sh, CONTRIBUTING.md, Gate 1/2). `
+    + `Melde dich mit einer kurzen Zusammenfassung, sobald es auf Beta läuft oder du blockiert bist.`;
+}
+
+async function _startRoadmapBuild(it, endpointId, model, modelLabel) {
+  const title = _rmCardText(it);
+  const description = it.extra.join('\n');
+  const projectsMod = await import('./projects.js');
+  if (!projectsMod.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+  const builder = await projectsMod.ensureDeveloperProject();
+
+  const fd = new FormData();
+  fd.append('name', 'Chat');
+  fd.append('endpoint_id', endpointId);
+  fd.append('model', model);
+  fd.append('skip_validation', 'true');
+  const sessRes = await fetch('/api/session', { method: 'POST', body: fd, credentials: 'same-origin' });
+  if (!sessRes.ok) throw new Error(`Session creation failed (HTTP ${sessRes.status})`);
+  const sess = await sessRes.json();
+
+  const attachRes = await fetch(`/api/projects/${builder.id}/sessions/${sess.id}`, {
+    method: 'POST', credentials: 'same-origin',
+  });
+  if (!attachRes.ok) throw new Error(`Could not attach the chat to the Builder project (HTTP ${attachRes.status})`);
+
+  const sessionsMod = await import('./sessions.js');
+  await sessionsMod.loadSessions();
+  if (window.Modals && window.Modals.close) window.Modals.close('settings-modal');
+  await sessionsMod.selectSession(sess.id, { keepSidebar: true, showLoading: false });
+  if (typeof window.__odysseusPrepareDeveloperMode === 'function') window.__odysseusPrepareDeveloperMode();
+
+  const msgInput = document.getElementById('message');
+  if (!msgInput) throw new Error('Composer not found — cannot send the build prompt');
+  msgInput.value = _buildPrompt(title, description);
+  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+  const chatMod = await import('./chat.js');
+  await chatMod.handleChatSubmit({ preventDefault() {} });
+
+  try {
+    await fetch('/api/system/roadmap/builds', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        item_key: _itemKey(it.text), item_title: title, session_id: sess.id,
+        endpoint_id: endpointId, model, model_label: modelLabel,
+      }),
+    });
+  } catch (_) { /* the chat already sent — a lost association chip is cosmetic */ }
+  await _setItemStatus(it, 'wip');
+  if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
+}
+
+function _cardBuildFormHtml() {
+  return `
+    <div class="rm-buildform">
+      ${_channelIsBeta ? '<div class="rm-hint">Building is only available on the main instance (no host/clone access from beta).</div>' : `
+      <label class="rm-field"><span>Endpoint</span>
+        <span class="adm-model-logo" id="rm-build-ep-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
+        <select class="settings-select rm-build-ep"></select></label>
+      <label class="rm-field"><span>Model</span>
+        <span class="adm-model-logo" id="rm-build-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
+        <select class="settings-select rm-build-model"></select></label>
+      <div class="rm-build-msg" style="display:none;"></div>
+      <div class="rm-actions">
+        <button type="button" class="memory-toolbar-btn rm-build-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-build-start">Start build</button>
+      </div>`}
+    </div>`;
+}
+
+function _cardEditFormHtml(it) {
+  return `
+    <div class="rm-editform">
+      <input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" />
+      <textarea class="rm-edit-desc" rows="3" placeholder="Description — define the feature precisely (build prompt uses this)">${esc(it.extra.join('\n'))}</textarea>
+      <div class="rm-actions">
+        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-save">Save</button>
+      </div>
+    </div>`;
+}
+
 function _renderRoadmapBoard(list, sections) {
   // Released sections are history — the board is about what is moving now.
   const live = sections.filter(s => !/RELEASED/i.test(s.title));
@@ -3087,32 +3262,133 @@ function _renderRoadmapBoard(list, sections) {
       card.className = 'rm-card' + (col.key === 'done' ? ' rm-card-done' : '');
       card.draggable = true;
       card.dataset.line = String(it.line);
-      const title = document.createElement('div');
-      title.className = 'rm-card-text';
-      title.textContent = _rmCardText(it);
-      if (it.extra.length) card.title = it.extra.join('\n');
-      const meta = document.createElement('div');
-      meta.className = 'rm-card-meta';
-      const secChip = document.createElement('span');
-      secChip.className = 'rm-chip';
-      secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
-      meta.appendChild(secChip);
-      const moves = document.createElement('span');
-      moves.className = 'rm-card-moves';
-      for (const target of _RM_COLS) {
-        if (target.key === col.key) continue;
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'rm-move-btn';
-        b.title = `Move to ${target.label}`;
-        b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : 'Done';
-        b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
-        moves.appendChild(b);
-      }
-      meta.appendChild(moves);
-      card.appendChild(title);
-      card.appendChild(meta);
+      const itemKey = _itemKey(it.text);
+      const build = _roadmapBuilds ? _roadmapBuilds.get(itemKey) : null;
+
+      const renderView = () => {
+        card.innerHTML = '';
+        card.draggable = true;
+        const title = document.createElement('div');
+        title.className = 'rm-card-text';
+        title.textContent = _rmCardText(it);
+        if (it.extra.length) title.title = it.extra.join('\n');
+        card.appendChild(title);
+        if (it.extra.length) {
+          const desc = document.createElement('div');
+          desc.className = 'rm-card-desc';
+          desc.textContent = it.extra.join(' ');
+          card.appendChild(desc);
+        }
+        const meta = document.createElement('div');
+        meta.className = 'rm-card-meta';
+        const secChip = document.createElement('span');
+        secChip.className = 'rm-chip';
+        secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
+        meta.appendChild(secChip);
+        if (build) {
+          const buildChip = document.createElement('button');
+          buildChip.type = 'button';
+          buildChip.className = 'rm-chip rm-chip-build';
+          buildChip.title = 'Open the build chat';
+          buildChip.textContent = `Building — ${build.model_label || build.model || 'chat'}`;
+          buildChip.addEventListener('click', (e) => { e.stopPropagation(); _openBuildChat(build.session_id); });
+          meta.appendChild(buildChip);
+        }
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'rm-move-btn';
+        editBtn.title = 'Edit title and description';
+        editBtn.textContent = 'Edit';
+        editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
+        meta.appendChild(editBtn);
+        const buildBtn = document.createElement('button');
+        buildBtn.type = 'button';
+        buildBtn.className = 'rm-move-btn rm-build-btn';
+        buildBtn.title = _channelIsBeta ? 'Only available on the main instance' : 'Build this with an agent chat';
+        buildBtn.textContent = 'Build';
+        buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
+        meta.appendChild(buildBtn);
+        const moves = document.createElement('span');
+        moves.className = 'rm-card-moves';
+        for (const target of _RM_COLS) {
+          if (target.key === col.key) continue;
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'rm-move-btn';
+          b.title = `Move to ${target.label}`;
+          b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : 'Done';
+          b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
+          moves.appendChild(b);
+        }
+        meta.appendChild(moves);
+        card.appendChild(meta);
+      };
+
+      const renderEdit = () => {
+        card.draggable = false;
+        card.innerHTML = _cardEditFormHtml(it);
+        card.querySelector('.rm-edit-cancel').addEventListener('click', (e) => { e.stopPropagation(); renderView(); });
+        card.querySelector('.rm-edit-save').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const newTitle = card.querySelector('.rm-edit-title').value;
+          const newDesc = card.querySelector('.rm-edit-desc').value;
+          if (!newTitle.trim()) return;
+          await _saveItemEdit(it, newTitle, newDesc);
+        });
+        card.querySelector('.rm-edit-title').addEventListener('click', (e) => e.stopPropagation());
+        card.querySelector('.rm-edit-desc').addEventListener('click', (e) => e.stopPropagation());
+      };
+
+      const renderBuild = async () => {
+        card.draggable = false;
+        card.innerHTML = _cardBuildFormHtml();
+        const form = card.querySelector('.rm-buildform');
+        form.addEventListener('click', (e) => e.stopPropagation());
+        if (_channelIsBeta) return;
+        const epSel = card.querySelector('.rm-build-ep');
+        const modelSel = card.querySelector('.rm-build-model');
+        const msgBox = card.querySelector('.rm-build-msg');
+        let endpoints = [];
+        try {
+          endpoints = await fetchModelEndpoints();
+          fillEndpointSelect(epSel, endpoints, '', false);
+          const fillModels = () => {
+            const ep = endpoints.find(e => e.id === epSel.value);
+            fillModelSelect(modelSel, ep ? ep.models : [], '', false);
+          };
+          fillModels();
+          epSel.addEventListener('change', fillModels);
+        } catch (e) {
+          msgBox.textContent = 'Could not load models: ' + e.message;
+          msgBox.style.display = '';
+        }
+        card.querySelector('.rm-build-cancel').addEventListener('click', (e) => { e.stopPropagation(); renderView(); });
+        card.querySelector('.rm-build-start').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const startBtn = e.currentTarget;
+          const endpointId = epSel.value, model = modelSel.value;
+          if (!endpointId || !model) {
+            msgBox.textContent = 'Pick an endpoint and a model first.';
+            msgBox.style.display = '';
+            return;
+          }
+          const epLabel = epSel.options[epSel.selectedIndex]?.textContent || endpointId;
+          const modelLabel = modelSel.options[modelSel.selectedIndex]?.textContent || model;
+          startBtn.disabled = true;
+          msgBox.style.display = 'none';
+          try {
+            await _startRoadmapBuild(it, endpointId, model, `${epLabel} · ${modelLabel}`);
+          } catch (err) {
+            msgBox.textContent = 'Could not start the build: ' + err.message;
+            msgBox.style.display = '';
+            startBtn.disabled = false;
+          }
+        });
+      };
+
+      renderView();
       card.addEventListener('dragstart', (e) => {
+        if (!card.draggable) { e.preventDefault(); return; }
         card.classList.add('rm-dragging');
         try { e.dataTransfer.setData('text/plain', String(it.line)); } catch (_) {}
         e.dataTransfer.effectAllowed = 'move';
@@ -3239,6 +3515,7 @@ async function _loadRoadmap() {
     if (!res.ok) throw new Error(`load ${res.status}`);
     const d = await res.json();
     _roadmapText = d.content || '';
+    if (_roadmapViewMode() === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
   } catch (e) {
     if (msg) { msg.textContent = 'Failed to load roadmap: ' + e.message; msg.className = 'admin-error'; }
@@ -3536,11 +3813,12 @@ function initDeveloper() {
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
 
-  el('dev-roadmap-view')?.addEventListener('click', (e) => {
+  el('dev-roadmap-view')?.addEventListener('click', async (e) => {
     const btn = e.target.closest('.rm-view-opt');
     if (!btn || btn.dataset.rmview === _roadmapViewMode()) return;
     _roadmapView = btn.dataset.rmview;
     try { localStorage.setItem('ody-roadmap-view', _roadmapView); } catch (_) {}
+    if (_roadmapView === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
   });
 

@@ -5826,6 +5826,15 @@ function syncAdminVisibility() {
   });
 }
 
+// Small model-picker building blocks (endpoint list + two <select> fillers),
+// reused by the Roadmap board's "Build" popover so it doesn't reinvent the
+// Default Chat Model / Delegate Worker picker as a parallel component.
+export {
+  _fetchModelEndpoints as fetchModelEndpoints,
+  _fillEndpointSelect as fillEndpointSelect,
+  _fillModelSelect as fillModelSelect,
+};
+
 /* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */

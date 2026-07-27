@@ -1796,6 +1796,29 @@ class RemnotePending(TimestampMixin, Base):
     session_id = Column(String, nullable=True)      # chat it came from
 
 
+class RoadmapBuild(TimestampMixin, Base):
+    """Links a ROADMAP.md item to the developer chat built to implement it.
+
+    ROADMAP.md stays the source of truth (the developer skill reads it as
+    prose); this table is purely a client convenience so the Roadmap board's
+    "Build" button can show "already building — open chat" after a reload.
+    Identity is the item's TITLE TEXT hashed client-side (item_key), not the
+    line number (which shifts on every edit) or a DB id (the item lives in a
+    text file, not a row). Editing a card's title after a build was started
+    orphans the old link — an accepted tradeoff for staying file-based.
+    """
+    __tablename__ = "roadmap_builds"
+
+    id           = Column(String, primary_key=True, index=True)
+    owner        = Column(String, nullable=True, index=True)
+    item_key     = Column(String, index=True)
+    item_title   = Column(Text, nullable=True)   # snapshot, for display only
+    session_id   = Column(String, nullable=True)
+    endpoint_id  = Column(String, nullable=True)
+    model        = Column(String, nullable=True)
+    model_label  = Column(String, nullable=True)
+
+
 class Recipe(TimestampMixin, Base):
     """A cooking recipe in the Shopping & Recipes module (NOT a note)."""
     __tablename__ = "recipes"

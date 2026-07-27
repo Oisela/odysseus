@@ -41508,6 +41508,45 @@ body.theme-frosted .modal {
   cursor: pointer;
 }
 .rm-move-btn:hover { opacity: 1; border-color: var(--fg); }
+.rm-build-btn { color: var(--accent, var(--red)); border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border)); }
+.rm-card-desc {
+  font-size: 10.5px;
+  line-height: 1.4;
+  opacity: 0.65;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.rm-chip-build {
+  border: none;
+  cursor: pointer;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  font-family: inherit;
+}
+.rm-chip-build:hover { background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent); }
+/* Inline edit / build forms — replace the card body in place. */
+.rm-editform, .rm-buildform { display: flex; flex-direction: column; gap: 6px; }
+.rm-edit-title { margin: 0; font-size: 11.5px; }
+.rm-edit-desc {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 5px 6px;
+  resize: vertical;
+  outline: none;
+}
+.rm-edit-desc:focus { border-color: var(--fg); }
+.rm-field { display: flex; align-items: center; gap: 5px; font-size: 10px; }
+.rm-field > span:first-child { opacity: 0.6; min-width: 52px; flex-shrink: 0; }
+.rm-field .settings-select { margin: 0; flex: 1; min-width: 0; height: 26px; font-size: 11px; }
+.rm-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.rm-build-msg { font-size: 10px; color: var(--red); line-height: 1.4; }
+.rm-hint { font-size: 10.5px; opacity: 0.6; line-height: 1.45; }
 @media (max-width: 700px) {
   .rm-board { grid-template-columns: 1fr; }
 }

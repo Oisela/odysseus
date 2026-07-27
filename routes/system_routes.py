@@ -10,11 +10,14 @@ import logging
 import os
 import shlex
 import subprocess
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.database import SessionLocal, RoadmapBuild
 from core.middleware import require_admin
+from src.auth_helpers import get_current_user
 from src.constants import APP_VERSION, DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,15 @@ def _roadmap_freshness(version: str) -> dict:
 
 class RoadmapBody(BaseModel):
     content: str = Field(..., max_length=200_000)
+
+
+class RoadmapBuildBody(BaseModel):
+    item_key: str = Field(..., min_length=1, max_length=64)
+    item_title: str = Field("", max_length=2000)
+    session_id: str = Field(..., min_length=1, max_length=80)
+    endpoint_id: str = Field("", max_length=80)
+    model: str = Field("", max_length=200)
+    model_label: str = Field("", max_length=200)
 
 
 class SwitchBody(BaseModel):
@@ -221,6 +233,65 @@ def setup_system_routes() -> APIRouter:
         except OSError as e:
             raise HTTPException(500, f"Roadmap write failed: {e}")
         return {"ok": True}
+
+    @router.get("/roadmap/builds")
+    def list_roadmap_builds(request: Request):
+        """Latest build (if any) per roadmap item, for the board's chips."""
+        require_admin(request)
+        me = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(RoadmapBuild)
+            if me is not None:
+                q = q.filter(RoadmapBuild.owner == me)
+            rows = q.order_by(RoadmapBuild.created_at.desc()).all()
+            latest = {}
+            for r in rows:
+                if r.item_key in latest:
+                    continue  # already have a newer one (rows are DESC)
+                latest[r.item_key] = {
+                    "item_key": r.item_key,
+                    "item_title": r.item_title,
+                    "session_id": r.session_id,
+                    "endpoint_id": r.endpoint_id,
+                    "model": r.model,
+                    "model_label": r.model_label,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+            return {"builds": list(latest.values())}
+        finally:
+            db.close()
+
+    @router.post("/roadmap/builds")
+    def record_roadmap_build(body: RoadmapBuildBody, request: Request):
+        """Remember which chat is building a roadmap item.
+
+        Called right after the client starts the developer chat and sends the
+        build prompt — this endpoint does not itself talk to the model or
+        create anything, it only persists the association so the board can
+        show "already building" after a reload. A repeat build for the same
+        item just adds a new row; list_roadmap_builds always returns the
+        newest one.
+        """
+        require_admin(request)
+        me = get_current_user(request)
+        db = SessionLocal()
+        try:
+            row = RoadmapBuild(
+                id=uuid.uuid4().hex[:12],
+                owner=me,
+                item_key=body.item_key,
+                item_title=body.item_title,
+                session_id=body.session_id,
+                endpoint_id=body.endpoint_id,
+                model=body.model,
+                model_label=body.model_label,
+            )
+            db.add(row)
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
 
     @router.post("/beta-start")
     def start_beta(request: Request):
