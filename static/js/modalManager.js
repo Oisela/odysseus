@@ -167,11 +167,22 @@ let _dockOrder = [];
 // Per-chip free-floating position (mobile only). When set, the chip renders
 // at this absolute viewport position instead of inside the dock flex layout.
 const _chipPositions = new Map(); // modalId -> { left, top }
-// User-dragged position of the dock pad itself (both desktop and mobile).
-// Remembered across minimize→restore→minimize cycles so the dock reappears
-// where the user last parked it instead of snapping back to bottom-center.
-// null means "use the CSS default position".
-let _dockPos = null; // { left, top } | null
+// Where the chip group is docked. Named anchors instead of free pixels:
+// a remembered raw position stranded the dock over the chat with no obvious
+// way back ("wie kann ich das wieder zurück andocken?", Alessio 2026-07-27).
+// 'home' = a flow row above the composer; the rest are viewport edges.
+const _DOCK_ANCHORS = ['home', 'top-left', 'top', 'top-right', 'left', 'right', 'bottom-left', 'bottom', 'bottom-right'];
+const _DOCK_ANCHOR_LABELS = {
+  home: 'below the chat', top: 'top', bottom: 'bottom',
+  left: 'left', right: 'right',
+  'top-left': 'top left', 'top-right': 'top right',
+  'bottom-left': 'bottom left', 'bottom-right': 'bottom right',
+};
+let _dockAnchor = 'home';
+// Live pixel position while a touch move-dock drag is in flight. Not
+// persisted — on release the drag snaps to the nearest named anchor.
+let _dockDragFree = null;
+let _dockDragCenter = null;
 // Snapshot of which ids had a rendered chip after the last _renderDock pass.
 // Lets us detect "a brand-new chip just arrived" so we can re-dock the
 // existing free-positioned chain to absorb the newcomer.
@@ -188,7 +199,7 @@ function _saveDockState() {
   // map on desktop is harmless.
   try {
     const state = {
-      dockPos: _dockPos,
+      dockAnchor: _dockAnchor,
       chips: Object.fromEntries(_chipPositions),
     };
     localStorage.setItem(_DOCK_STORAGE_KEY, JSON.stringify(state));
@@ -212,20 +223,10 @@ function _loadDockState() {
         }
       }
     }
-    // Dock position — accept the new {left,top} shape, and fall back to the
-    // legacy dockLeft/dockTop strings written by older builds.
-    let dp = state.dockPos;
-    if (!dp && state.dockLeft && state.dockTop) {
-      dp = { left: parseFloat(state.dockLeft), top: parseFloat(state.dockTop) };
-    }
-    if (dp && Number.isFinite(dp.left) && Number.isFinite(dp.top)) {
-      // Clamp into the current viewport so a saved spot from a larger
-      // window doesn't strand the dock off-screen.
-      _dockPos = {
-        left: Math.max(8, Math.min(window.innerWidth - 60, dp.left)),
-        top:  Math.max(8, Math.min(window.innerHeight - 40, dp.top)),
-      };
-    }
+    // Named anchor (v2). Legacy free {left,top} positions are deliberately
+    // NOT restored: a remembered pixel spot from another window size is how
+    // the dock ended up stranded over the chat with no obvious way back.
+    if (_DOCK_ANCHORS.includes(state.dockAnchor)) _dockAnchor = state.dockAnchor;
   } catch {}
 }
 
@@ -238,8 +239,8 @@ function _loadDockState() {
 // floating pad on <body>; double-clicking the grip brings it home.
 function _homeDock(dock) {
   const bar = document.querySelector('#chat-container .chat-input-bar');
-  if (_dockPos || !bar || !bar.parentElement) {
-    // Free-floating: must live on <body> so `position: fixed` coordinates
+  if (_dockAnchor !== 'home' || !bar || !bar.parentElement) {
+    // Edge-anchored: must live on <body> so `position: fixed` coordinates
     // aren't affected by an ancestor transform.
     dock.classList.remove('dock-inflow');
     if (dock.parentElement !== document.body) document.body.appendChild(dock);
@@ -249,22 +250,73 @@ function _homeDock(dock) {
   if (dock.nextElementSibling !== bar) bar.parentElement.insertBefore(dock, bar);
 }
 
+// Anchor → class. Positions themselves live in CSS so they survive window
+// resizes (the whole point of naming anchors instead of storing pixels).
 function _applyDockPos(dock) {
   _homeDock(dock);
-  if (!_dockPos) {
-    // In-flow: drop every inline coordinate the floating mode left behind.
-    dock.style.left = '';
-    dock.style.top = '';
-    dock.style.right = '';
-    dock.style.bottom = '';
-    dock.style.transform = '';
-    return;
+  _DOCK_ANCHORS.forEach(a => dock.classList.remove('dock-at-' + a));
+  dock.classList.add('dock-at-' + _dockAnchor);
+  // Any inline coords from an older build's free-drag would outrank the
+  // anchor classes.
+  dock.style.left = '';
+  dock.style.top = '';
+  dock.style.right = '';
+  dock.style.bottom = '';
+  dock.style.transform = '';
+}
+
+// Nearest anchor for a pointer position: thirds of the viewport, with the
+// centre column's bottom third meaning "home" (back under the chat).
+function _anchorForPoint(x, y) {
+  const cx = x / window.innerWidth;
+  const cy = y / window.innerHeight;
+  const col = cx < 0.28 ? 'left' : cx > 0.72 ? 'right' : 'center';
+  const row = cy < 0.3 ? 'top' : cy > 0.7 ? 'bottom' : 'middle';
+  if (col === 'center') return row === 'top' ? 'top' : row === 'bottom' ? 'home' : 'home';
+  if (row === 'middle') return col;                 // left / right
+  return `${row}-${col}`;                            // top-left, bottom-right, …
+}
+
+// Translucent preview of where the group will land, mirroring the modal
+// tiling ghost so the gesture feels like the rest of the app.
+function _ensureDockGhost() {
+  let g = document.getElementById('dock-anchor-ghost');
+  if (g) return g;
+  g = document.createElement('div');
+  g.id = 'dock-anchor-ghost';
+  document.body.appendChild(g);
+  return g;
+}
+
+function _showDockGhost(anchor, dock) {
+  const g = _ensureDockGhost();
+  const w = Math.max(dock.offsetWidth, 90);
+  const h = Math.max(dock.offsetHeight, 32);
+  const pad = 12;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left, top;
+  if (anchor === 'home') {
+    const bar = document.querySelector('#chat-container .chat-input-bar');
+    const r = bar ? bar.getBoundingClientRect() : null;
+    left = r ? r.left + (r.width - w) / 2 : (vw - w) / 2;
+    top = r ? r.top - h - 6 : vh - h - pad;
+  } else {
+    const [row, col] = anchor.includes('-') ? anchor.split('-') : [anchor, anchor];
+    left = anchor === 'top' || anchor === 'bottom' ? (vw - w) / 2
+      : (col === 'left' || anchor === 'left') ? pad : vw - w - pad;
+    top = anchor === 'left' || anchor === 'right' ? (vh - h) / 2
+      : (row === 'top') ? pad : vh - h - pad;
   }
-  dock.style.left = `${_dockPos.left}px`;
-  dock.style.top = `${_dockPos.top}px`;
-  dock.style.right = 'auto';
-  dock.style.bottom = 'auto';
-  dock.style.transform = 'none';
+  g.style.width = `${w}px`;
+  g.style.height = `${h}px`;
+  g.style.left = `${Math.round(left)}px`;
+  g.style.top = `${Math.round(top)}px`;
+  g.dataset.label = _DOCK_ANCHOR_LABELS[anchor] || anchor;
+  g.classList.add('visible');
+}
+
+function _hideDockGhost() {
+  document.getElementById('dock-anchor-ghost')?.classList.remove('visible');
 }
 
 // True when `chipRect` is close enough to the dock's current location that
@@ -377,7 +429,7 @@ function _renderDock() {
   if (renderIds.length) {
     const grip = document.createElement('span');
     grip.className = 'minimized-dock-grip';
-    grip.title = 'Drag to move the group · double-click to dock it back below the chat';
+    grip.title = 'Drag to dock elsewhere (edges + corners) · double-click to dock back below the chat';
     grip.innerHTML = '<svg width="8" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.3"/><circle cx="7" cy="3" r="1.3"/><circle cx="3" cy="8" r="1.3"/><circle cx="7" cy="8" r="1.3"/><circle cx="3" cy="13" r="1.3"/><circle cx="7" cy="13" r="1.3"/></svg>';
     _wireDockGripDrag(grip, dock);
     dock.appendChild(grip);
@@ -669,38 +721,46 @@ function _wireDockGripDrag(grip, dock) {
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX, startY = e.clientY;
-    const dr = dock.getBoundingClientRect();
-    const startLeft = dr.left, startTop = dr.top;
     dock.classList.add('dock-dragging');
     let moved = false;
+    let target = _dockAnchor;
     const onMove = (ev) => {
-      const left = Math.max(8, Math.min(window.innerWidth - dock.offsetWidth - 8, startLeft + ev.clientX - startX));
-      const top = Math.max(8, Math.min(window.innerHeight - dock.offsetHeight - 8, startTop + ev.clientY - startY));
-      // First real move promotes the in-flow row to a floating pad — but only
-      // past a small threshold, so a sloppy click doesn't tear it loose.
+      // Small threshold so a sloppy click doesn't move anything.
       if (!moved) {
         if (Math.abs(ev.clientX - startX) < 4 && Math.abs(ev.clientY - startY) < 4) return;
         moved = true;
       }
-      _dockPos = { left, top };
-      _applyDockPos(dock);
+      target = _anchorForPoint(ev.clientX, ev.clientY);
+      _showDockGhost(target, dock);
     };
     const onUp = () => {
       dock.classList.remove('dock-dragging');
       document.removeEventListener('pointermove', onMove);
-      _saveDockState();
+      _hideDockGhost();
+      if (moved && target !== _dockAnchor) {
+        _dockAnchor = target;
+        _applyDockPos(dock);
+        _saveDockState();
+        // ui.js imports THIS module, so a static import would be a cycle —
+        // the app exposes the module globally for exactly this case.
+        if (window.uiModule && window.uiModule.showToast) {
+          window.uiModule.showToast(`Docked ${_DOCK_ANCHOR_LABELS[_dockAnchor] || _dockAnchor}`);
+        }
+      }
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp, { once: true });
     document.addEventListener('pointercancel', onUp, { once: true });
   });
+  // Double-click = straight home, the guaranteed way back.
   grip.addEventListener('dblclick', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    _dockPos = null;
+    _dockAnchor = 'home';
     _chipPositions.clear();
     _applyDockPos(dock);
     _saveDockState();
+    if (window.uiModule && window.uiModule.showToast) window.uiModule.showToast('Docked below the chat');
   });
 }
 
@@ -994,8 +1054,11 @@ function _wireChipDrag(chip, dock) {
       dock.style.right = 'auto';
       dock.style.bottom = 'auto';
       dock.style.transform = 'none';
-      _dockPos = { left: newLeft, top: newTop };
-      _saveDockState();
+      // Touch move-dock stays a free drag while the finger is down; on
+      // release it snaps to the nearest named anchor (see onPointerUp) so
+      // there's always a way back.
+      _dockDragFree = { left: newLeft, top: newTop };
+      _dockDragCenter = { x: newLeft + dock.offsetWidth / 2, y: newTop + dock.offsetHeight / 2 };
     }
   };
 
@@ -1004,6 +1067,17 @@ function _wireChipDrag(chip, dock) {
     chip.removeEventListener('pointermove', onPointerMove);
     activePointerId = null;
     cancelLongPress();
+    // A finished move-dock drag settles on the nearest named anchor rather
+    // than keeping raw pixels, so the group can always be brought back.
+    if (dragMode === 'move-dock' && _dockDragCenter && dragging) {
+      _dockAnchor = _anchorForPoint(_dockDragCenter.x, _dockDragCenter.y);
+      _dockDragFree = null; _dockDragCenter = null;
+      _applyDockPos(dock);
+      _saveDockState();
+      if (window.uiModule && window.uiModule.showToast) {
+        window.uiModule.showToast(`Docked ${_DOCK_ANCHOR_LABELS[_dockAnchor] || _dockAnchor}`);
+      }
+    }
     // Clear the global drag flag so the chat container's edge-swipe handler
     // can resume opening the sidebar on plain swipes.
     setTimeout(() => { window._chipDragging = false; }, 0);

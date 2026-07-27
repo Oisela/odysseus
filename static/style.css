@@ -955,6 +955,52 @@ body.bg-pattern-sparkles {
       padding: 0 4px;
       z-index: auto;
     }
+    /* Named dock anchors. Positions live here (not as stored pixels) so they
+       stay valid across window resizes. 'home' is the in-flow rule above. */
+    #minimized-dock.dock-at-top,
+    #minimized-dock.dock-at-bottom {
+      left: 50%; transform: translateX(-50%); right: auto;
+    }
+    #minimized-dock.dock-at-top { top: 12px; bottom: auto; }
+    #minimized-dock.dock-at-bottom { bottom: var(--composer-clearance, 12px); top: auto; }
+    #minimized-dock.dock-at-top-left    { top: 12px; left: 12px; right: auto; bottom: auto; transform: none; }
+    #minimized-dock.dock-at-top-right   { top: 12px; right: 12px; left: auto; bottom: auto; transform: none; }
+    #minimized-dock.dock-at-bottom-left { bottom: 12px; left: 12px; right: auto; top: auto; transform: none; }
+    #minimized-dock.dock-at-bottom-right{ bottom: 12px; right: 12px; left: auto; top: auto; transform: none; }
+    #minimized-dock.dock-at-left  { left: 12px; top: 50%; right: auto; bottom: auto; transform: translateY(-50%); }
+    #minimized-dock.dock-at-right { right: 12px; top: 50%; left: auto; bottom: auto; transform: translateY(-50%); }
+    /* Side anchors stack vertically — a horizontal row would run off-screen. */
+    #minimized-dock.dock-at-left,
+    #minimized-dock.dock-at-right { flex-direction: column; align-items: flex-start; }
+    #minimized-dock.dock-at-left .minimized-dock-grip,
+    #minimized-dock.dock-at-right .minimized-dock-grip { align-self: center; transform: rotate(90deg); }
+
+    /* Drop preview while dragging the grip — same language as the modal
+       tiling ghost (#tile-ghost), with the target's name on it. */
+    #dock-anchor-ghost {
+      position: fixed;
+      z-index: 10040;
+      pointer-events: none;
+      border: 2px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+      background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+      border-radius: 999px;
+      opacity: 0;
+      transform: scale(0.96);
+      transition: left 0.12s ease, top 0.12s ease, opacity 0.12s, transform 0.12s;
+    }
+    #dock-anchor-ghost.visible { opacity: 1; transform: scale(1); }
+    #dock-anchor-ghost::after {
+      content: attr(data-label);
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      white-space: nowrap;
+      font-family: inherit;
+      font-size: 10px;
+      color: var(--fg);
+      opacity: 0.8;
+    }
+
     /* Grip — the single handle that moves the whole group, so every chip
        stays free to reorder. Mirrors .note-row-grip. */
     #minimized-dock .minimized-dock-grip {
