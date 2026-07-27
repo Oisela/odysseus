@@ -3291,8 +3291,7 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
 function _cardBuildFormHtml() {
   return `
     <div class="rm-buildform">
-      ${_channelIsBeta ? `<div class="rm-hint">Der echte Build wird auf Prod gestartet, weil nur dort der Builder auf das Server-Repo zugreifen darf. Das Feature-Briefing kannst du hier vollständig testen.</div>
-      <div class="rm-actions"><button type="button" class="memory-toolbar-btn rm-build-cancel">Zurück</button></div>` : `
+      ${_channelIsBeta ? '<div class="rm-hint">Vorschau: Auf Beta kannst du Modell und Ablauf prüfen; der echte Start bleibt gesperrt, weil nur Prod auf das Server-Repo zugreifen darf.</div>' : ''}
       <label class="rm-field"><span>Endpoint</span>
         <span class="adm-model-logo" id="rm-build-ep-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-ep"></select></label>
@@ -3307,8 +3306,8 @@ function _cardBuildFormHtml() {
       <div class="rm-build-msg" style="display:none;"></div>
       <div class="rm-actions">
         <button type="button" class="memory-toolbar-btn rm-build-cancel">Abbrechen</button>
-        <button type="button" class="memory-toolbar-btn rm-build-start">Build starten</button>
-      </div>`}
+        <button type="button" class="memory-toolbar-btn rm-build-start"${_channelIsBeta ? ' disabled title="Nur auf Prod verfügbar"' : ''}>${_channelIsBeta ? 'Start nur auf Prod' : 'Build starten'}</button>
+      </div>
     </div>`;
 }
 
@@ -3471,7 +3470,6 @@ function _renderRoadmapBoard(list, sections) {
         const form = card.querySelector('.rm-buildform');
         form.addEventListener('click', (e) => e.stopPropagation());
         card.querySelector('.rm-build-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); renderView(); });
-        if (_channelIsBeta) return;
         const epSel = card.querySelector('.rm-build-ep');
         const modelSel = card.querySelector('.rm-build-model');
         const modeSel = card.querySelector('.rm-build-mode');
@@ -3501,6 +3499,7 @@ function _renderRoadmapBoard(list, sections) {
         }
         card.querySelector('.rm-build-start').addEventListener('click', async (e) => {
           e.stopPropagation();
+          if (_channelIsBeta) return;
           const startBtn = e.currentTarget;
           const endpointId = epSel.value, model = modelSel.value;
           if (!endpointId || !model) {

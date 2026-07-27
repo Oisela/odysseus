@@ -42,3 +42,5 @@ def test_build_prompt_uses_definition_and_selected_workflow():
     assert 'option value="build">Autonom bis Beta bauen' in ADMIN
     assert 'option value="plan">Erst Plan und Rückfragen' in ADMIN
     assert "model, modelLabel, buildMode" in ADMIN
+    assert "Auf Beta kannst du Modell und Ablauf prüfen" in ADMIN
+    assert "Start nur auf Prod" in ADMIN
