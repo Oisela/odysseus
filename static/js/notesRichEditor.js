@@ -396,11 +396,16 @@ function _wireInputRules(rich, sync) {
     applying = true;
     try {
       pre.deleteContents();
-      // deleteContents leaves `pre` collapsed at the cut — make that the
-      // live selection so the command targets the right spot.
+      // `pre` now references the removed text node — a stale range makes
+      // the follow-up command a silent no-op. Build a FRESH collapsed
+      // range at the block start (= the cut point, the marker was the
+      // block's prefix).
+      const fresh = document.createRange();
+      fresh.setStart(block, 0);
+      fresh.collapse(true);
       const s2 = window.getSelection();
       s2.removeAllRanges();
-      s2.addRange(pre);
+      s2.addRange(fresh);
       if (isCheck) {
         if (!inLi) document.execCommand('insertUnorderedList');
         _makeTaskLi(rich);
