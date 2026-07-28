@@ -4348,6 +4348,15 @@ export function _initData() {
   else refreshAll();
 }
 
+export function initDeveloperPage() {
+  if (!initialized) {
+    initAll();
+    return;
+  }
+  _loadDevStatus();
+  _loadRoadmap();
+}
+
 export function open(tab) {
   _initData();
   settingsModule.open(tab || 'services');
@@ -4358,5 +4367,11 @@ export function close() {
   settingsModule.close();
 }
 
-const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
+const adminModule = {
+  open,
+  close,
+  _initData,
+  initDeveloperPage,
+  get _initialized() { return initialized; },
+};
 export default adminModule;

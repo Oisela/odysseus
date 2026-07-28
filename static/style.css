@@ -41612,6 +41612,50 @@ body.theme-frosted .modal {
   cursor: pointer;
 }
 .remnote-header-icon-btn:hover { opacity: 1; }
+
+/* ── Developer main window ── */
+.developer-modal-content {
+  width: min(1100px, 94vw);
+  height: min(860px, 88vh);
+  max-height: 88vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.developer-modal-content .modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.developer-modal-content .modal-header h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.developer-header-spacer { flex: 1; }
+.developer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  scrollbar-width: thin;
+}
+.developer-page-panel { width: 100%; }
+.developer-page-panel > .admin-card:last-child { margin-bottom: 0; }
+
+@media (max-width: 700px) {
+  .developer-modal-content {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .developer-body { padding: 10px; }
+}
+
 .remnote-card {
   border: 1px solid var(--border);
   border-radius: 8px;

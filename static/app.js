@@ -1118,6 +1118,21 @@ function initializeEventListeners() {
       }
     });
   }
+
+  // Developer is a first-class sidebar page. Its existing settings panel is
+  // moved into the dedicated window on first open, keeping one source of truth
+  // for the roadmap and deployment controls.
+  const toolDeveloperBtn = el('tool-developer-btn');
+  if (toolDeveloperBtn) {
+    toolDeveloperBtn.addEventListener('click', async () => {
+      const m = await import('./js/developer.js');
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('developer-modal')) {
+        if (m.isDeveloperOpen()) m.closeDeveloper();
+        else m.openDeveloper();
+      }
+    });
+  }
   // Sidebar dot when cards are parked — the buffer is only useful if you
   // notice it filled up while the PC was off.
   (async () => {
@@ -1377,6 +1392,8 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      const developerSection = el('developer-section');
+      if (developerSection) developerSection.style.display = d.is_admin ? '' : 'none';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {
