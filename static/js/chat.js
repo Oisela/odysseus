@@ -4646,25 +4646,39 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
   }
 
-  export async function forkFrom(aiMsgElement) {
+  function _forkCutoff(aiMsgElement) {
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const aiIndex = allMsgs.indexOf(aiMsgElement);
-    if (aiIndex < 0) return;
+    if (aiIndex < 0) return null;
+    return {
+      keepCount: aiIndex + 1,
+      messageId: aiMsgElement.dataset.dbId || '',
+    };
+  }
 
+  async function _forkAtMessage(sessionId, aiMsgElement) {
+    const cutoff = _forkCutoff(aiMsgElement);
+    if (!cutoff) throw new Error('Could not locate that response in the chat');
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        keep_count: cutoff.keepCount,
+        through_message_id: cutoff.messageId || undefined,
+      }),
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
+    return res.json();
+  }
+
+  export async function forkFrom(aiMsgElement) {
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    const keepCount = aiIndex + 1;
-
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await _forkAtMessage(sessionId, aiMsgElement);
 
       await sessionModule.loadSessions();
       await sessionModule.selectSession(data.id);
@@ -4672,6 +4686,146 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     } catch (err) {
       console.error('Fork failed:', err);
       if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+    }
+  }
+
+  const GET_BETTER_PROMPT = `Review the complete forked conversation up to the response before this message and improve Odysseus based on concrete evidence from that history.
+
+Use the pinned odysseus-entwickler skill and the Builder project workflow. Inspect the conversation itself, relevant logs/code/skills, and identify:
+- where the user had to clarify, repeat, or correct the assistant;
+- hallucinated, unverified, misleading, or poorly scoped claims;
+- unnecessary tool calls, retries, context loss, or inefficient workflows;
+- missing or weak skills, prompts, safeguards, tests, UI affordances, or documentation.
+
+Do not stop at a generic critique. Trace each important failure to its likely cause, then autonomously implement the highest-value durable improvements in the appropriate Odysseus code or skills. Preserve intentional behavior, avoid tailoring a fix only to this one transcript, add regression tests, run the relevant checks, perform a final bug/duplication/clean-code review, update the roadmap when appropriate, and deliver the result through the normal developer Beta workflow. If a proposed change would materially alter product behavior and the evidence is ambiguous, document the decision instead of guessing.`;
+
+  async function _runBackgroundAgentTurn(sessionId, prompt) {
+    const fd = new FormData();
+    fd.append('message', prompt);
+    fd.append('session', sessionId);
+    fd.append('mode', 'agent');
+    fd.append('allow_bash', 'true');
+    fd.append('allow_web_search', 'false');
+    fd.append('use_rag', 'false');
+
+    const tzOffset = -new Date().getTimezoneOffset();
+    let tzName = '';
+    try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+
+    if (sessionModule?.markStreaming) sessionModule.markStreaming(sessionId);
+    try {
+      const res = await fetch(`${API_BASE}/api/chat_stream`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+        headers: { 'X-Tz-Offset': String(tzOffset), 'X-Tz-Name': tzName },
+      });
+      if (!res.ok) {
+        throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error('The background stream did not return a response body');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let eventType = '';
+      let sawDone = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const rawLine of lines) {
+          const line = rawLine.replace(/\r$/, '');
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+            continue;
+          }
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') {
+            sawDone = true;
+            break;
+          }
+          if (eventType === 'error') {
+            let detail = data;
+            try {
+              const parsed = JSON.parse(data);
+              detail = parsed.message || parsed.error || parsed.detail || data;
+            } catch (_) {}
+            throw new Error(String(detail));
+          }
+          eventType = '';
+        }
+        if (sawDone) break;
+      }
+      if (!sawDone) throw new Error('The background analysis ended before completion');
+      try { await reader.cancel(); } catch (_) {}
+
+      if (sessionModule?.markStreamComplete) sessionModule.markStreamComplete(sessionId);
+      await sessionModule.loadSessions();
+      try {
+        const projectsModule = await import('./projects.js');
+        await projectsModule.loadProjects();
+      } catch (_) {}
+      if (uiModule?.showToast) uiModule.showToast('Get better analysis finished — open the Builder chat to review it.');
+    } catch (err) {
+      if (sessionModule?.clearStreaming) sessionModule.clearStreaming(sessionId);
+      await sessionModule.loadSessions().catch(() => {});
+      if (uiModule?.showError) uiModule.showError('Get better failed: ' + err.message);
+      throw err;
+    }
+  }
+
+  export async function getBetterFrom(aiMsgElement) {
+    const sessionId = sessionModule.getCurrentSessionId();
+    if (!sessionId || aiMsgElement.dataset.getBetterStarting === 'true') return;
+    aiMsgElement.dataset.getBetterStarting = 'true';
+    try {
+      const versionRes = await fetch(`${API_BASE}/api/version`, { credentials: 'same-origin' });
+      if (versionRes.ok) {
+        const version = await versionRes.json();
+        if (version.channel === 'beta') {
+          throw new Error(
+            'Get better can only run on the main instance because Beta cannot access or deploy the developer clone.'
+          );
+        }
+      }
+      const projectsModule = await import('./projects.js');
+      const builder = await projectsModule.ensureDeveloperProject();
+      const data = await _forkAtMessage(sessionId, aiMsgElement);
+
+      const attachRes = await fetch(`${API_BASE}/api/projects/${builder.id}/sessions/${data.id}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!attachRes.ok) {
+        throw new Error((await attachRes.text().catch(() => '')) || `HTTP ${attachRes.status}`);
+      }
+
+      const source = sessionModule.getSessions().find(s => String(s.id) === String(sessionId));
+      const rename = new FormData();
+      rename.append('name', `Get better: ${source?.name || 'Conversation'}`.slice(0, 100));
+      await fetch(`${API_BASE}/api/session/${data.id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        body: rename,
+      }).catch(() => {});
+
+      await projectsModule.loadProjects();
+      await sessionModule.loadSessions();
+      if (uiModule?.showToast) {
+        uiModule.showToast('Get better started in the Builder project — this chat stays open.');
+      }
+      void _runBackgroundAgentTurn(data.id, GET_BETTER_PROMPT).catch(err => {
+        console.error('Get better background run failed:', err);
+      });
+    } catch (err) {
+      console.error('Get better failed:', err);
+      if (uiModule?.showError) uiModule.showError('Get better failed: ' + err.message);
+    } finally {
+      delete aiMsgElement.dataset.getBetterStarting;
     }
   }
 
@@ -5437,6 +5591,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     setPendingContinue,
     regenerateFrom,
     forkFrom,
+    getBetterFrom,
     editUserMessage,
     editAIMessage,
     resendUserMessage,

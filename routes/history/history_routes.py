@@ -570,16 +570,36 @@ def setup_history_routes(session_manager) -> APIRouter:
 
     @router.post("/api/session/{session_id}/fork")
     async def fork_session(request: Request, session_id: str):
-        """Create a new session with messages copied up to keep_count."""
+        """Create a new session with messages copied through a cutoff.
+
+        ``through_message_id`` is preferred because a paginated browser may
+        only have the newest messages in the DOM; its visible index is not the
+        message's absolute position in the session. ``keep_count`` remains as
+        the backwards-compatible fallback for older clients.
+        """
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
-            keep_count = body.get("keep_count", 0)
+            keep_count = max(0, int(body.get("keep_count", 0) or 0))
+            through_message_id = str(body.get("through_message_id") or "").strip()
 
             # Get the source session
             source = session_manager.sessions.get(session_id)
             if not source:
                 raise HTTPException(404, "Session not found")
+
+            if through_message_id:
+                for index, msg in enumerate(source.history):
+                    metadata = (
+                        msg.metadata if isinstance(msg, ChatMessage)
+                        else msg.get("metadata") if isinstance(msg, dict)
+                        else None
+                    )
+                    if isinstance(metadata, dict) and str(metadata.get("_db_id") or "") == through_message_id:
+                        keep_count = index + 1
+                        break
+                else:
+                    raise HTTPException(409, "Fork cutoff message is no longer available")
 
             # Create new session
             new_id = str(uuid.uuid4())

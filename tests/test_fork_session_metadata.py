@@ -82,3 +82,33 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     # ...and the source session's _db_id values are untouched.
     assert source.history[0].metadata["_db_id"] == "src-0"
     assert source.history[1].metadata["_db_id"] == "src-1"
+
+
+def test_fork_prefers_stable_message_id_over_paginated_dom_count(monkeypatch):
+    monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
+
+    source = _FakeSession(name="Long conversation", owner="alice")
+    source.history = [
+        ChatMessage("system", "hidden context", {"_db_id": "src-hidden", "hidden": True}),
+        ChatMessage("user", "question", {"_db_id": "src-user"}),
+        ChatMessage("assistant", "answer", {"_db_id": "src-target"}),
+        ChatMessage("user", "later message", {"_db_id": "src-later"}),
+    ]
+    sm = _FakeSessionManager(source)
+    req = SimpleNamespace()
+
+    async def _json():
+        # A paginated browser could report visible index 1 even though the
+        # target is third in the full in-memory history.
+        return {"keep_count": 1, "through_message_id": "src-target"}
+
+    req.json = _json
+    fork = _fork_handler(mod.setup_history_routes(sm))
+    result = asyncio.run(fork(request=req, session_id="src-id"))
+
+    assert result["kept"] == 3
+    assert [message.content for message in sm.created.history] == [
+        "hidden context",
+        "question",
+        "answer",
+    ]

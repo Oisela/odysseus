@@ -1481,7 +1481,7 @@ export function showWelcomeScreen() {
   }
 }
 
-// ── Dynamic action buttons (show 3 most recent, rest under ···) ──
+// ── Dynamic action buttons (show 2, rest under ···) ──
 const _ACTION_RECENTS_KEY = 'odysseus-msg-actions-recent';
 const _MAX_VISIBLE = 2;
 
@@ -1534,6 +1534,10 @@ export function createMsgFooter(msgElement) {
       e.stopPropagation();
       if (window.chatModule?.forkFrom) window.chatModule.forkFrom(msgElement);
     }},
+    { id: 'get-better', icon: '\u2726', title: 'Get better', cls: 'msg-action-btn msg-get-better-btn', handler(e) {
+      e.stopPropagation();
+      if (window.chatModule?.getBetterFrom) window.chatModule.getBetterFrom(msgElement);
+    }},
     { id: 'delete', icon: '\u2715', title: 'Delete message', cls: 'msg-action-btn msg-delete-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.deleteMessage) window.chatModule.deleteMessage(msgElement);
@@ -1543,10 +1547,12 @@ export function createMsgFooter(msgElement) {
   // Filter out unavailable actions (e.g. TTS when not enabled)
   const availableActions = allActions.filter(a => !a.available || a.available());
 
-  // Determine which 3 to show: use recent order, fallback to defaults
+  // Keep Get better prominent even for existing users whose saved recent
+  // actions predate the feature; the second slot remains usage-driven.
   const recent = _getRecentActions();
-  const defaults = ['copy', 'delete', 'fork'];
-  const order = recent.length > 0 ? recent : defaults;
+  const defaults = ['copy', 'get-better', 'delete', 'fork'];
+  const baseOrder = recent.length > 0 ? recent : defaults;
+  const order = ['get-better', ...baseOrder.filter(id => id !== 'get-better')];
   const sorted = [...availableActions].sort((a, b) => {
     const ai = order.indexOf(a.id), bi = order.indexOf(b.id);
     if (ai >= 0 && bi >= 0) return ai - bi;
