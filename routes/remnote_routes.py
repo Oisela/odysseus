@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, RemnotePending, McpServer, utcnow_naive
-from src.auth_helpers import get_current_user
+from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +111,15 @@ def _bridge_health() -> dict:
     }
 
 
-def _bridge_call(action: str, payload: dict) -> dict:
+def _bridge_call(action: str, payload: dict, active_url: Optional[str] = None) -> dict:
     """POST /call against the first reachable bridge. Raises on failure."""
-    health = _bridge_health()
-    if not health.get("ok"):
-        raise RuntimeError(health.get("error") or "Bridge unreachable")
-    url = health["active_url"]
+    if active_url:
+        url = active_url.rstrip("/")
+    else:
+        health = _bridge_health()
+        if not health.get("ok"):
+            raise RuntimeError(health.get("error") or "Bridge unreachable")
+        url = health["active_url"]
     res = requests.post(
         f"{url}/call",
         json={"action": action, "payload": payload},
@@ -167,8 +170,14 @@ def _row_dict(r: RemnotePending) -> dict:
     }
 
 
-def _send_one(r: RemnotePending) -> dict:
+def _send_one(r: RemnotePending, active_url: Optional[str] = None) -> dict:
     """Push one parked card to RemNote. Returns the bridge result."""
+    if not active_url:
+        health = _bridge_health()
+        if not health.get("ok"):
+            raise RuntimeError(health.get("error") or "Bridge unreachable")
+        active_url = health["active_url"]
+
     target = (r.target or "Journal").strip()
     ctype = (r.card_type or "basic").lower()
     front = (r.front or "").strip()
@@ -184,31 +193,36 @@ def _send_one(r: RemnotePending) -> dict:
             content = front + (f"\n{back}" if back else "")
         else:
             content = f"{front} >> {back}" if back else front
-        return _bridge_call("append_journal", {"content": content})
+        return _bridge_call("append_journal", {"content": content}, active_url)
 
     segments = [s.strip() for s in target.replace("\\", "/").split("/") if s.strip()]
     parent = _bridge_call("find_or_create_path",
-                          {"pathSegments": segments, "asFolders": True})
+                          {"pathSegments": segments, "asFolders": True},
+                          active_url)
     parent_id = parent.get("remId") or parent.get("id") if isinstance(parent, dict) else None
     if not parent_id:
         raise RuntimeError(f"Could not resolve target path '{target}'")
 
     if ctype == "cloze":
-        return _bridge_call("create_cloze_flashcard", {"parentId": parent_id, "text": front})
+        return _bridge_call("create_cloze_flashcard",
+                            {"parentId": parent_id, "text": front},
+                            active_url)
     if ctype == "note":
         return _bridge_call("create_note", {"title": front, "content": back or "",
-                                            "parentId": parent_id})
+                                            "parentId": parent_id},
+                            active_url)
     # basic + concept both map to a forward flashcard.
     return _bridge_call("create_flashcard", {"parentId": parent_id, "front": front,
-                                            "back": back, "type": "forward"})
+                                            "back": back, "type": "forward"},
+                        active_url)
 
 
-def _attempt(db, r: RemnotePending) -> dict:
+def _attempt(db, r: RemnotePending, active_url: Optional[str] = None) -> dict:
     """Try to send, recording the outcome either way."""
     r.attempts = int(r.attempts or 0) + 1
     r.last_try_at = utcnow_naive()
     try:
-        result = _send_one(r)
+        result = _send_one(r, active_url)
         r.status = "sent"
         r.sent_at = utcnow_naive()
         r.last_error = None
@@ -227,14 +241,23 @@ def _attempt(db, r: RemnotePending) -> dict:
 def setup_remnote_routes():
     router = APIRouter(prefix="/api/remnote", tags=["remnote"])
 
+    def owned_pending(db, item_id: str, owner: str) -> RemnotePending:
+        q = db.query(RemnotePending).filter(RemnotePending.id == item_id)
+        if owner:
+            q = q.filter(RemnotePending.owner == owner)
+        row = q.first()
+        if not row:
+            raise HTTPException(404, "Not found")
+        return row
+
     @router.get("/status")
     def status(request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         health = _bridge_health()
         db = SessionLocal()
         try:
             q = db.query(RemnotePending)
-            if me is not None:
+            if me:
                 q = q.filter(RemnotePending.owner == me)
             rows = q.all()
         finally:
@@ -246,11 +269,11 @@ def setup_remnote_routes():
 
     @router.get("/pending")
     def list_pending(request: Request, include_sent: bool = False):
-        me = get_current_user(request)
+        me = require_user(request)
         db = SessionLocal()
         try:
             q = db.query(RemnotePending)
-            if me is not None:
+            if me:
                 q = q.filter(RemnotePending.owner == me)
             if not include_sent:
                 q = q.filter(RemnotePending.status != "sent")
@@ -261,7 +284,7 @@ def setup_remnote_routes():
 
     @router.post("/pending")
     def add_pending(body: PendingBody, request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         ctype = (body.card_type or "basic").lower()
         if ctype not in _CARD_TYPES:
             raise HTTPException(400, f"card_type must be one of {_CARD_TYPES}")
@@ -270,7 +293,7 @@ def setup_remnote_routes():
         db = SessionLocal()
         try:
             r = RemnotePending(
-                id=_uid(), owner=me,
+                id=_uid(), owner=me or None,
                 target=(body.target or "Journal").strip() or "Journal",
                 card_type=ctype,
                 front=body.front, back=body.back,
@@ -286,12 +309,10 @@ def setup_remnote_routes():
 
     @router.patch("/pending/{item_id}")
     def patch_pending(item_id: str, body: PendingPatch, request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         db = SessionLocal()
         try:
-            r = db.query(RemnotePending).filter(RemnotePending.id == item_id).first()
-            if not r or (me is not None and r.owner != me):
-                raise HTTPException(404, "Not found")
+            r = owned_pending(db, item_id, me)
             if body.target is not None:
                 r.target = body.target.strip() or "Journal"
             if body.card_type is not None:
@@ -315,12 +336,10 @@ def setup_remnote_routes():
 
     @router.delete("/pending/{item_id}")
     def delete_pending(item_id: str, request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         db = SessionLocal()
         try:
-            r = db.query(RemnotePending).filter(RemnotePending.id == item_id).first()
-            if not r or (me is not None and r.owner != me):
-                raise HTTPException(404, "Not found")
+            r = owned_pending(db, item_id, me)
             db.delete(r)
             db.commit()
             return {"ok": True}
@@ -329,12 +348,10 @@ def setup_remnote_routes():
 
     @router.post("/pending/{item_id}/send")
     def send_pending(item_id: str, request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         db = SessionLocal()
         try:
-            r = db.query(RemnotePending).filter(RemnotePending.id == item_id).first()
-            if not r or (me is not None and r.owner != me):
-                raise HTTPException(404, "Not found")
+            r = owned_pending(db, item_id, me)
             out = _attempt(db, r)
             out["item"] = _row_dict(r)
             return out
@@ -343,7 +360,7 @@ def setup_remnote_routes():
 
     @router.post("/pending/send-all")
     def send_all(request: Request):
-        me = get_current_user(request)
+        me = require_user(request)
         # Check once up front: with the PC off, N cards would mean N timeouts.
         health = _bridge_health()
         if not health.get("ok"):
@@ -352,13 +369,13 @@ def setup_remnote_routes():
         db = SessionLocal()
         try:
             q = db.query(RemnotePending).filter(RemnotePending.status != "sent")
-            if me is not None:
+            if me:
                 q = q.filter(RemnotePending.owner == me)
             rows = q.order_by(RemnotePending.created_at.asc()).all()
             sent = failed = 0
             results = []
             for r in rows:
-                out = _attempt(db, r)
+                out = _attempt(db, r, health["active_url"])
                 results.append(out)
                 if out.get("ok"):
                     sent += 1
@@ -375,7 +392,7 @@ def setup_remnote_routes():
     @router.post("/test")
     def test_bridge(request: Request):
         """Explicit connection test for the page's Test button."""
-        get_current_user(request)
+        require_user(request)
         return _bridge_health()
 
     return router

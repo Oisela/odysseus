@@ -14,7 +14,7 @@
  * serialize. Editing those goes through the raw-markdown toggle.
  */
 
-import markdownModule from './markdown.js';
+import markdownModule, { INLINE_MATH_MD_SOURCE } from './markdown.js';
 
 // ── Lazy-load Turndown (same pattern as document.js ensureDocx) ──
 let _turndownReady = null;
@@ -106,7 +106,7 @@ function _protectSegments(md) {
   s = s.replace(/\\\[[\s\S]*?\\\]/g, (m) => { raws.push({ md: m, display: 'block', kind: 'math' }); return _RAW_TOKEN(raws.length - 1); });
   s = s.replace(/\\\([^\n]*?\\\)/g, (m) => { raws.push({ md: m, display: 'inline', kind: 'math' }); return _RAW_TOKEN(raws.length - 1); });
   s = s.replace(/\$\$[\s\S]*?\$\$/g, (m) => { raws.push({ md: m, display: 'block', kind: 'math' }); return _RAW_TOKEN(raws.length - 1); });
-  s = s.replace(/(?<!\$)\$(?!\$)[^$\n]+?\$(?!\$)/g, (m) => { raws.push({ md: m, display: 'inline', kind: 'math' }); return _RAW_TOKEN(raws.length - 1); });
+  s = s.replace(new RegExp(INLINE_MATH_MD_SOURCE, 'g'), (m) => { raws.push({ md: m, display: 'inline', kind: 'math' }); return _RAW_TOKEN(raws.length - 1); });
 
   // Pipe tables (mdToHtml's table HTML doesn't round-trip through Turndown's
   // GFM rule cleanly, so treat the whole block as atomic).
@@ -276,6 +276,11 @@ async function _insertLink(rich) {
   let url = (res.url || '').trim();
   if (!url) { rich.focus(); return; }
   if (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('//')) url = 'https://' + url;
+  if (!/^(?:https?:|mailto:|tel:)/i.test(url)) {
+    console.warn('notesRichEditor: blocked unsafe link scheme');
+    rich.focus();
+    return;
+  }
   const linkText = (res.text || '').trim() || selText || url;
   if (!savedRange) {
     savedRange = document.createRange();
@@ -651,7 +656,7 @@ function _wireInputRules(rich, sync) {
     if ((m = /\$\$([^$\n]+)\$\$$/.exec(s))) { math = true; display = true; }
     // Inline $…$: content must not start/end with whitespace, so prose
     // like "5$ und 3$" (currency) never converts.
-    else if ((m = /(?<!\$)\$([^\s$][^$\n]*?)\$$/.exec(s)) && !/\s$/.test(m[1])) math = true;
+    else if ((m = new RegExp(INLINE_MATH_MD_SOURCE + '$').exec(s))) math = true;
     else if ((m = /\*\*([^*\n]+)\*\*$/.exec(s))) tag = 'strong';
     else if ((m = /(?<!\*)\*([^*\n]+)\*$/.exec(s)) && !m[1].startsWith('*')) tag = 'em';
     else if ((m = /`([^`\n]+)`$/.exec(s))) tag = 'code';
@@ -744,19 +749,19 @@ export function attach(ta, opts = {}) {
   // is ready before the first keystroke needs it.
   ensureTurndown().catch(() => {});
 
+  const flush = async () => {
+    if (destroyed || rawMode) return ta.value;
+    await ensureTurndown();
+    if (destroyed || rawMode) return ta.value;
+    ta.value = htmlToMd(rich);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return ta.value;
+  };
   const syncToTextarea = () => {
-    if (destroyed || rawMode) return;
-    ensureTurndown().then(() => {
-      if (destroyed || rawMode) return;
-      try {
-        ta.value = htmlToMd(rich);
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
-      } catch (e) {
-        // Serializer hiccup must never eat the note — leave the textarea's
-        // last good markdown in place and log for diagnosis.
-        console.warn('notesRichEditor serialize failed:', e);
-      }
-    }).catch((e) => console.warn('notesRichEditor: turndown unavailable:', e));
+    flush().catch((e) => {
+      // Serializer hiccups must never overwrite the last good markdown.
+      console.warn('notesRichEditor serialize failed:', e);
+    });
   };
 
   const renderFromTextarea = () => {
@@ -790,7 +795,14 @@ export function attach(ta, opts = {}) {
     backBtn.style.display = on ? '' : 'none';
   };
 
-  rawBtn.addEventListener('click', () => setMode(true));
+  rawBtn.addEventListener('click', async () => {
+    try {
+      await flush();
+      setMode(true);
+    } catch (e) {
+      console.warn('notesRichEditor: cannot enter raw mode before serialization:', e);
+    }
+  });
   backBtn.addEventListener('click', () => setMode(false));
 
   items.addEventListener('click', (e) => {
@@ -835,6 +847,7 @@ export function attach(ta, opts = {}) {
     focus: () => (rawMode ? ta : rich).focus(),
     isRaw: () => rawMode,
     setRaw: setMode,
+    flush,
     refresh: renderFromTextarea,
     destroy: () => {
       destroyed = true;

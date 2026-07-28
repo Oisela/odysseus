@@ -10,6 +10,10 @@ import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js'
 
 var escapeHtml = uiModule.esc;
 
+// One canonical rule for single-dollar math. It deliberately rejects
+// currency-like prose such as "5$ und 3$" and "$5 and $6".
+export const INLINE_MATH_MD_SOURCE = String.raw`(?<![$\d])\$(?![$\s])([^$\n]*?\S)\$(?![$\d])`;
+
 function safeLinkUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (url.startsWith('#')) {
@@ -662,7 +666,7 @@ export function mdToHtml(src, opts) {
       } catch (e) { return match; }
     });
     // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    s = s.replace(new RegExp(INLINE_MATH_MD_SOURCE, 'g'), (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;

@@ -200,6 +200,21 @@ def test_inline_code_content_is_html_escaped(node_available):
     assert "<b>" not in html
 
 
+def test_inline_math_does_not_consume_currency_prose(node_available):
+    render = (
+        "(window.katex = { renderToString: (math) => "
+        "'<span class=\"katex\">' + math + '</span>' }, "
+        "globalThis.katex = window.katex, mod.mdToHtml(input))"
+    )
+
+    currency = _run_markdown_case("Das kostet 5$ und später 3$.", render)
+    formula = _run_markdown_case("Die Variable ist $x + 1$.", render)
+
+    assert 'class="katex"' not in currency
+    assert "5$ und später 3$" in currency
+    assert '<span class="katex">x + 1</span>' in formula
+
+
 def test_dotted_python_import_paths_are_not_autolinked(node_available):
     html = _run_markdown_case(
         "from imblearn.combine import SMOTETomek\n"

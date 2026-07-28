@@ -3704,13 +3704,14 @@ function _buildForm(note = null) {
 
   // Type segmented control — Note | Todo | Draw
   form.querySelectorAll('.note-form-type-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
+    pill.addEventListener('click', async () => {
       const newType = pill.dataset.type;
       if (newType === currentType) return;
       const bodyEl = form.querySelector('.note-form-body');
       // Stash whatever the user has in the current mode before swapping it
       // out, so a subsequent flip back restores their work.
       if (currentType === 'note') {
+        await form._richEditor?.flush?.();
         _stashedNoteText = form.querySelector('.note-form-content')?.value || '';
       } else if (currentType === 'todo') {
         _stashedTodoItems = _collectItems(form);
@@ -4327,6 +4328,7 @@ function _buildForm(note = null) {
     }
     _saveBtn._saving = true; _saveBtn.disabled = true; _saveBtn.style.opacity = '0.5';
     try {
+    if (currentType === 'note') await form._richEditor?.flush?.();
     const title = form.querySelector('.note-form-title').value.trim();
     // Normalize tag input: split on whitespace, strip leading #s, dedupe,
     // re-join with single spaces. Empty → null.

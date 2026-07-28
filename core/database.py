@@ -1802,10 +1802,10 @@ class RoadmapBuild(TimestampMixin, Base):
     ROADMAP.md stays the source of truth (the developer skill reads it as
     prose); this table is purely a client convenience so the Roadmap board's
     "Build" button can show "already building — open chat" after a reload.
-    Identity is the item's TITLE TEXT hashed client-side (item_key), not the
-    line number (which shifts on every edit) or a DB id (the item lives in a
-    text file, not a row). Editing a card's title after a build was started
-    orphans the old link — an accepted tradeoff for staying file-based.
+    Identity is the stable ``ody:id`` marker stored beside the item in
+    ROADMAP.md (item_key), not the line number or mutable title. Older files
+    without markers still receive a deterministic fallback key until their
+    next write adds the marker.
     """
     __tablename__ = "roadmap_builds"
 

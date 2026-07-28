@@ -3256,6 +3256,21 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
   });
   if (!attachRes.ok) throw new Error(`Could not attach the chat to the Builder project (HTTP ${attachRes.status})`);
 
+  const buildRecord = {
+    item_key: _itemKey(it), item_title: title, session_id: sess.id,
+    endpoint_id: endpointId, model, model_label: modelLabel,
+  };
+  const recordRes = await fetch('/api/system/roadmap/builds', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildRecord),
+  });
+  if (!recordRes.ok) {
+    throw new Error(`Could not link the build chat to the roadmap item (HTTP ${recordRes.status})`);
+  }
+  if (!_roadmapBuilds) _roadmapBuilds = new Map();
+  _roadmapBuilds.set(buildRecord.item_key, buildRecord);
+
   const sessionsMod = await import('./sessions.js');
   await sessionsMod.loadSessions();
   settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
@@ -3269,21 +3284,6 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
   const chatMod = await import('./chat.js');
   await chatMod.handleChatSubmit({ preventDefault() {} });
 
-  try {
-    await fetch('/api/system/roadmap/builds', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        item_key: _itemKey(it), item_title: title, session_id: sess.id,
-        endpoint_id: endpointId, model, model_label: modelLabel,
-      }),
-    });
-    if (!_roadmapBuilds) _roadmapBuilds = new Map();
-    _roadmapBuilds.set(_itemKey(it), {
-      item_key: _itemKey(it), item_title: title, session_id: sess.id,
-      endpoint_id: endpointId, model, model_label: modelLabel,
-    });
-  } catch (_) { /* the chat already sent — a lost association chip is cosmetic */ }
   await _setItemStatus(it, 'wip');
   if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
 }
@@ -3293,10 +3293,10 @@ function _cardBuildFormHtml() {
     <div class="rm-buildform">
       ${_channelIsBeta ? '<div class="rm-hint">Vorschau: Auf Beta kannst du Modell und Ablauf prüfen; der echte Start bleibt gesperrt, weil nur Prod auf das Server-Repo zugreifen darf.</div>' : ''}
       <label class="rm-field"><span>Endpoint</span>
-        <span class="adm-model-logo" id="rm-build-ep-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
+        <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-ep"></select></label>
       <label class="rm-field"><span>Model</span>
-        <span class="adm-model-logo" id="rm-build-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
+        <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-model"></select></label>
       <label class="rm-field"><span>Ablauf</span>
         <select class="settings-select rm-build-mode">

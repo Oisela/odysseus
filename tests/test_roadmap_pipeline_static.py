@@ -44,3 +44,20 @@ def test_build_prompt_uses_definition_and_selected_workflow():
     assert "model, modelLabel, buildMode" in ADMIN
     assert "Auf Beta kannst du Modell und Ablauf prüfen" in ADMIN
     assert "Start nur auf Prod" in ADMIN
+
+
+def test_build_is_recorded_before_prompt_send_and_http_errors_are_not_ignored():
+    workflow = ADMIN[ADMIN.index("async function _startRoadmapBuild"):
+                     ADMIN.index("function _cardBuildFormHtml")]
+    attach = workflow.index("if (!attachRes.ok)")
+    record = workflow.index("const recordRes = await fetch('/api/system/roadmap/builds'")
+    send = workflow.index("await chatMod.handleChatSubmit")
+    assert attach < record < send
+    assert "if (!recordRes.ok)" in workflow
+    assert "JSON.stringify(buildRecord)" in workflow
+    assert workflow.count("await fetch('/api/system/roadmap/builds'") == 1
+
+
+def test_build_form_does_not_repeat_dom_ids_per_card():
+    assert 'id="rm-build-ep-logo"' not in ADMIN
+    assert 'id="rm-build-model-logo"' not in ADMIN
