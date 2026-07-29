@@ -250,7 +250,16 @@ function _syncDockLayout() {
   const drawerOpen = window.innerWidth <= 768
     && sidebar && !sidebar.classList.contains('hidden');
   dock.classList.toggle('dock-mobile-drawer-hidden', !!drawerOpen);
-  chat.querySelectorAll(':scope > .minimized-dock-chip').forEach(chip => {
+  const looseChips = [...chat.querySelectorAll(':scope > .minimized-dock-chip')];
+  // A chip may have been detached during a chain drag. If its remembered
+  // free position was then cleared (for example by "dock home"), it must be
+  // rebuilt as a dock child immediately; otherwise the stale absolute node
+  // can remain clipped behind the sidebar until another modal changes state.
+  if (looseChips.some(chip => !_chipPositions.has(chip.dataset.modalId))) {
+    _renderDock();
+    return;
+  }
+  looseChips.forEach(chip => {
     chip.classList.toggle('dock-mobile-drawer-hidden', !!drawerOpen);
   });
   if (_dockPosition) {
@@ -848,8 +857,10 @@ function _wireDockGripDrag(grip, dock) {
     e.stopPropagation();
     _dockPosition = null;
     _chipPositions.clear();
-    _applyDockPos(dock);
     _saveDockState();
+    // Rebuild detached/free chips as children of the home dock. Merely
+    // moving the dock element leaves those absolute chip nodes behind.
+    _renderDock();
     if (window.uiModule && window.uiModule.showToast) window.uiModule.showToast('Docked below the chat');
   });
 }

@@ -956,7 +956,11 @@ body.bg-pattern-sparkles {
       transform: none;
       left: auto; top: auto; right: auto; bottom: auto;
       justify-content: center;
+      width: calc(100% - 16px);
       max-width: 800px;
+      align-self: center;
+      box-sizing: border-box;
+      overflow: hidden;
       margin: 0 auto 6px;
       padding: 0 4px;
       z-index: auto;

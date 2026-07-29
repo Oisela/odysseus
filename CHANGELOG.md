@@ -34,6 +34,10 @@ veröffentlichungsnaher Form dokumentiert.
   halbe Breite verschoben und konnten dadurch unter die Sidebar ragen.
   Freie Dock-Koordinaten verwenden nun keine Zentrier-Transformation mehr;
   lange Chip-Titel werden innerhalb der Chatbreite gekürzt.
+- Beim Zurückandocken konnten zuvor abgetrennte Einzelchips als absolute
+  Elemente hinter der Sidebar liegen bleiben. Der Home-Dock baut die Gruppe
+  nun vollständig neu auf und repariert verwaiste Chips beim nächsten
+  Layout-Sync automatisch.
 - Falsche Roadmap-WIP-Zustände nach fehlgeschlagenem Builder-Chat.
 - Verlust bekannter Tags nach dem Wechsel ins Archiv.
 - Unsortierte Erledigt-Ausgabe bei weniger als zehn Einträgen.

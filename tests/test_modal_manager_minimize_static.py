@@ -75,6 +75,20 @@ def test_free_dock_coordinates_are_not_shifted_by_the_center_transform():
     assert "text-overflow: ellipsis;" in CSS
 
 
+def test_docking_home_rebuilds_detached_chips_inside_the_dock():
+    """Clearing free positions must not leave absolute chips behind."""
+    home_handler = MODAL_MANAGER[
+        MODAL_MANAGER.index("// Double-click = straight home"):
+        MODAL_MANAGER.index("function _wireChipDrag")
+    ]
+    assert "_chipPositions.clear();" in home_handler
+    assert "_renderDock();" in home_handler
+    assert "_applyDockPos(dock);" not in home_handler
+    assert "looseChips.some(chip => !_chipPositions.has(chip.dataset.modalId))" in MODAL_MANAGER
+    assert "width: calc(100% - 16px);" in CSS
+    assert "align-self: center;" in CSS
+
+
 def test_single_chip_move_promotes_inflow_dock_before_setting_coordinates():
     assert "function _floatDockInsideChat(dock)" in MODAL_MANAGER
     move_start = MODAL_MANAGER.index("if (!dragging) {")
