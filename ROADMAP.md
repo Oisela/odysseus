@@ -115,9 +115,13 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
       einklappbarer Minimalansicht; bei fehlender Fensterpositionierungs-
       Berechtigung einen kompakten Browser-Fallback verwenden.
 
-Gate 1: Implementierung und Code-Review abgeschlossen (`f31ad16`). 4.641
-Tests bestanden, 4 übersprungen; sechs unabhängige Alt-/Umgebungstests bleiben
-rot. Die direkt betroffene Header-Regression wurde anschließend korrigiert.
+Gate 1: Implementierung und Code-Review abgeschlossen (`f31ad16` bis
+`e3f6432`). Beta 3.10.0 ist über Tailscale HTTPS erreichbar. 40 direkt
+betroffene Regressionstests plus MCP-Pin-Test sind grün; im Gesamtlauf
+bestanden 4.641 Tests, 4 wurden übersprungen. Sechs unabhängige
+Alt-/Umgebungstests bleiben separat zu prüfen. Bedienung, Architektur,
+Deployment, Rollback und Testcheckliste stehen in
+[`docs/v3.10-beta.md`](docs/v3.10-beta.md).
 
 ## Später / Ideen-Speicher
 - [ ] **Selbst-Loop-Retry:** Odysseus-Entwickler soll eine Runde bevorzugt selbst bauen lassen; zuvor verworfen, weil der Selbst-Loop die Arbeit wirklich selbst leisten soll.

@@ -9,6 +9,8 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="docs/setup.md">Setup Guide</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="docs/v3.10-beta.md">v3.10 Beta</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="ROADMAP.md">Roadmap</a>
 </p>
