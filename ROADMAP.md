@@ -97,23 +97,27 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
 
 ## v3.10 — IN ARBEIT 2026-07-29
 
-- [~] **Developer-Live-Status und Roadmap-Politur:** CPU/RAM/Hoststatus sicher
+- [!] **Developer-Live-Status und Roadmap-Politur:** CPU/RAM/Hoststatus sicher
       und live anzeigen (5-Sekunden-Aktualisierung plus Refresh), Board-/Listen-
       Werkzeugleiste dynamisch gestalten und die Erledigt-Spalte auf die letzten
       zehn Einträge begrenzen.
-- [~] **Roadmap-Versionen und Workflow:** Zielversion pro Eintrag bearbeitbar
+- [!] **Roadmap-Versionen und Workflow:** Zielversion pro Eintrag bearbeitbar
       machen, alle geplanten Einträge gesammelt einer Version zuweisen und einen
       gestarteten Build sofort als „In Arbeit“ markieren.
-- [~] **Minimierte Fenster im Chat halten:** frei verschiebbare Fensterchips
+- [!] **Minimierte Fenster im Chat halten:** frei verschiebbare Fensterchips
       ausschließlich innerhalb des Chatbereichs platzieren, bei Layoutänderungen
       neu begrenzen und Abstände sowie Reaktionszeit beim Minimieren korrigieren.
-- [~] **Notes-Tags auswählbar machen:** vorhandene Tags als Mehrfachauswahl und
+- [!] **Notes-Tags auswählbar machen:** vorhandene Tags als Mehrfachauswahl und
       Chips anbieten sowie neue Tags direkt hinzufügen, ohne das kompatible
       gespeicherte Label-Format zu verändern.
-- [~] **Kompakter Pomodoro-Fokusmodus nach TickTick:** Always-on-top-PiP als
+- [!] **Kompakter Pomodoro-Fokusmodus nach TickTick:** Always-on-top-PiP als
       kleines Fokusfenster mit Start/Pause, Restzeit, Tages-/Wochenfokus und
       einklappbarer Minimalansicht; bei fehlender Fensterpositionierungs-
       Berechtigung einen kompakten Browser-Fallback verwenden.
+
+Gate 1: Implementierung und Code-Review abgeschlossen (`f31ad16`). 4.641
+Tests bestanden, 4 übersprungen; sechs unabhängige Alt-/Umgebungstests bleiben
+rot. Die direkt betroffene Header-Regression wurde anschließend korrigiert.
 
 ## Später / Ideen-Speicher
 - [ ] **Selbst-Loop-Retry:** Odysseus-Entwickler soll eine Runde bevorzugt selbst bauen lassen; zuvor verworfen, weil der Selbst-Loop die Arbeit wirklich selbst leisten soll.

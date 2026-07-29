@@ -41984,7 +41984,7 @@ body.theme-frosted .modal {
      full window width. Restore the normal title-bar inset explicitly; without
      it the title and window controls touch the top/side border. */
   min-height: 44px;
-  padding: 10px 14px;
+  padding: 10px 14px 0;
   box-sizing: border-box;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
 }
