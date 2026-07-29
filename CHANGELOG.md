@@ -30,6 +30,10 @@ veröffentlichungsnaher Form dokumentiert.
 
 - Fehlender Abstand zwischen Developer-Titel und Fenstersteuerung.
 - Langsame beziehungsweise doppelte Reaktion beim Minimieren.
+- Frei positionierte Chip-Gruppen wurden nach dem Begrenzen nochmals um ihre
+  halbe Breite verschoben und konnten dadurch unter die Sidebar ragen.
+  Freie Dock-Koordinaten verwenden nun keine Zentrier-Transformation mehr;
+  lange Chip-Titel werden innerhalb der Chatbreite gekürzt.
 - Falsche Roadmap-WIP-Zustände nach fehlgeschlagenem Builder-Chat.
 - Verlust bekannter Tags nach dem Wechsel ins Archiv.
 - Unsortierte Erledigt-Ausgabe bei weniger als zehn Einträgen.
@@ -46,4 +50,3 @@ veröffentlichungsnaher Form dokumentiert.
 - Sechs unabhängige Alt-/Umgebungstests bleiben zur separaten Prüfung offen.
 
 Details: [v3.10-Beta-Dokumentation](docs/v3.10-beta.md).
-

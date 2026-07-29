@@ -362,6 +362,11 @@ function _applyDockPos(dock) {
   _homeDock(dock);
   if (_dockPosition) {
     dock.style.position = 'absolute';
+    // The base dock is centered with left:50% + translateX(-50%). A saved
+    // position is already an exact chat-local left coordinate, so retaining
+    // that transform would shift the whole group half its width under the
+    // sidebar even after the coordinate itself was correctly clamped.
+    dock.style.transform = 'none';
     _dockPosition = _placeChatChild(
       dock, _dockPosition.left, _dockPosition.top,
       dock.offsetWidth, dock.offsetHeight
@@ -370,10 +375,10 @@ function _applyDockPos(dock) {
     dock.style.left = '';
     dock.style.top = '';
     dock.style.position = '';
+    dock.style.transform = '';
   }
   dock.style.right = '';
   dock.style.bottom = '';
-  dock.style.transform = '';
 }
 
 function _floatDockInsideChat(dock) {
@@ -381,6 +386,8 @@ function _floatDockInsideChat(dock) {
   const chat = document.getElementById('chat-container');
   if (chat && dock.parentElement !== chat) chat.appendChild(dock);
   dock.style.position = 'absolute';
+  // Drag coordinates are chat-local pixels, not a center point.
+  dock.style.transform = 'none';
 }
 
 // True when `chipRect` is close enough to the dock's current location that

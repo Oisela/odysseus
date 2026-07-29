@@ -58,6 +58,23 @@ def test_free_dock_positions_are_clamped_and_reflow_is_throttled():
     assert "new MutationObserver(_scheduleDockLayout).observe(sidebar" in MODAL_MANAGER
 
 
+def test_free_dock_coordinates_are_not_shifted_by_the_center_transform():
+    """A clamped left value must not be translated under the sidebar again."""
+    apply_position = MODAL_MANAGER[
+        MODAL_MANAGER.index("function _applyDockPos"):
+        MODAL_MANAGER.index("function _floatDockInsideChat")
+    ]
+    float_position = MODAL_MANAGER[
+        MODAL_MANAGER.index("function _floatDockInsideChat"):
+        MODAL_MANAGER.index("function _nearDock")
+    ]
+    assert "dock.style.transform = 'none';" in apply_position
+    assert "dock.style.transform = 'none';" in float_position
+    assert "dock.style.transform = '';" in apply_position
+    assert "max-width: calc(100% - 8px);" in CSS
+    assert "text-overflow: ellipsis;" in CSS
+
+
 def test_single_chip_move_promotes_inflow_dock_before_setting_coordinates():
     assert "function _floatDockInsideChat(dock)" in MODAL_MANAGER
     move_start = MODAL_MANAGER.index("if (!dragging) {")
