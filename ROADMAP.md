@@ -90,12 +90,14 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
 - [ ] **Altbestand-Tests prüfen:** `test_email_linkify_security_js`, `test_security_regressions::test_email_thread_rendering_sanitizes_body_html`, `test_preset_local_storage_js` und `test_security_regressions::test_gmail_mcp_preset_uses_contained_oauth_paths` — echte Regression oder veraltete Tests klären.
 
 ### Neue Features
-- [ ] **Server-Live-Ansicht:** nicht nur für Admins eine sichere Live-Ansicht des Hosts (CPU, RAM usw.).
+- [ ] **Server-Live-Ansicht für Nicht-Admins:** Die sichere CPU-/RAM-/Disk-
+      Ansicht ist in v3.10 auf der Developer-Seite für Admins umgesetzt.
+      Offen bleibt eine reduzierte, rollenbasierte Ansicht für Nicht-Admins.
 - [ ] **Modell-/API-Preisvergleich:** Kosten und Eignung der integrierten Modelle/Anbieter (z. B. Gemini, Claude, ChatGPT) transparent vergleichen, besonders für Physik/Mathe.
 - [x] **RemNote-Offlinespeicher:** als RemNote-Hauptseite mit Bridge-Status,
       Offline-Puffer und gezieltem erneutem Senden umgesetzt.
 
-## v3.10 — IN ARBEIT 2026-07-29
+## v3.10 — BETA / TESTBEREIT 2026-07-29
 
 - [!] **Developer-Live-Status und Roadmap-Politur:** CPU/RAM/Hoststatus sicher
       und live anzeigen (5-Sekunden-Aktualisierung plus Refresh), Board-/Listen-
@@ -116,9 +118,10 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
       Berechtigung einen kompakten Browser-Fallback verwenden.
 
 Gate 1: Implementierung und Code-Review abgeschlossen (`f31ad16` bis
-`e3f6432`). Beta 3.10.0 ist über Tailscale HTTPS erreichbar. 40 direkt
-betroffene Regressionstests plus MCP-Pin-Test sind grün; im Gesamtlauf
-bestanden 4.641 Tests, 4 wurden übersprungen. Sechs unabhängige
+`639e268`). Beta 3.10.0 ist über Tailscale HTTPS erreichbar. Auf dem
+aktuellen Beta-Stand sind 45 relevante UI-, Backend- und
+MCP-Regressionstests grün. Der zuletzt vollständige Lauf auf `f31ad16`
+bestand 4.641 Tests und übersprang 4; sechs unabhängige
 Alt-/Umgebungstests bleiben separat zu prüfen. Bedienung, Architektur,
 Deployment, Rollback und Testcheckliste stehen in
 [`docs/v3.10-beta.md`](docs/v3.10-beta.md).

@@ -49,8 +49,11 @@ veröffentlichungsnaher Form dokumentiert.
 
 ### Validierung
 
-- 40 direkt betroffene Regressionstests plus MCP-Pin-Test grün.
-- 4.641 Tests im Gesamtlauf bestanden, 4 übersprungen.
+- 45 relevante UI-, Backend- und MCP-Regressionstests auf dem aktuellen
+  Beta-Stand `639e268` grün.
+- Der zuletzt vollständige Lauf auf `f31ad16` bestand 4.641 Tests und
+  übersprang 4; nach den beiden abschließenden Dock-Fixes wurde gezielt die
+  aktuelle 45-Test-Suite erneut ausgeführt.
 - Sechs unabhängige Alt-/Umgebungstests bleiben zur separaten Prüfung offen.
 
 Details: [v3.10-Beta-Dokumentation](docs/v3.10-beta.md).

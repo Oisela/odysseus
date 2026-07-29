@@ -48,7 +48,9 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 - **Compare** — blind side-by-side model testing and synthesis.
 - **Documents** — writing-first editor with AI edits, suggestions, Markdown, HTML, CSV, and syntax highlighting.
 - **Email** — IMAP/SMTP inbox with triage, tags, summaries, reminders, and reply drafts.
-- **Notes, Tasks + Calendar** — reminders, todos, scheduled agent tasks, and CalDAV sync.
+- **Notes, Tasks + Calendar** — multi-select note tags, reminders, todos, scheduled agent tasks, and CalDAV sync.
+- **Developer + Roadmap** — live host metrics, a structured delivery board, version planning, and background builder chats.
+- **Focus + RemNote** — a compact always-on-top Pomodoro window plus a RemNote bridge status and offline outbox.
 - **Extras** — gallery/image editor, themes, uploads, web search, presets, sessions, and 2FA.
 
 ## Demo
