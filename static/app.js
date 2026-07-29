@@ -3103,51 +3103,20 @@ function initializeEventListeners() {
     if (!dock) {
       dock = document.createElement('div');
       dock.id = 'modal-dock';
-      document.body.appendChild(dock);
+      const chat = document.getElementById('chat-container');
+      (chat || document.body).appendChild(dock);
     }
 
-    // Keep the dock clear of the sidebar (which can be collapsed, resized,
-    // hidden, or flipped to the right side).
+    // The legacy fallback dock follows the same rule as modalManager: it is a
+    // child of the chat surface, never a viewport-level overlay over sidebar
+    // or main navigation.
     function updateDockOffset() {
-      const sidebar = document.getElementById('sidebar');
-      const iconRail = document.getElementById('icon-rail');
-      let leftPx = 0;
-      let rightPx = 0;
-      const sidebarRight = sidebar && sidebar.classList.contains('right-side');
-      const sidebarVisible = sidebar &&
-        !sidebar.classList.contains('hidden') &&
-        sidebar.offsetWidth > 0;
-      const railVisible = iconRail && iconRail.offsetWidth > 0;
-      const sidebarW = sidebarVisible ? sidebar.offsetWidth : 0;
-      const railW = railVisible ? iconRail.offsetWidth : 0;
-      if (sidebarRight) {
-        rightPx = sidebarW + railW;
-      } else {
-        leftPx = sidebarW + railW;
-      }
-      dock.style.left = leftPx + 'px';
-      dock.style.right = rightPx + 'px';
+      const chat = document.getElementById('chat-container');
+      if (chat && dock.parentElement !== chat) chat.appendChild(dock);
+      dock.style.left = '0px';
+      dock.style.right = '0px';
     }
     updateDockOffset();
-    // Recompute when sidebar resizes, collapses, or moves sides
-    if (window.ResizeObserver) {
-      const ro = new ResizeObserver(updateDockOffset);
-      const sb = document.getElementById('sidebar');
-      const ir = document.getElementById('icon-rail');
-      if (sb) ro.observe(sb);
-      if (ir) ro.observe(ir);
-    }
-    window.addEventListener('resize', updateDockOffset);
-    // Side-flip / collapse toggles class names on body or sidebar
-    new MutationObserver(updateDockOffset).observe(document.body, {
-      attributes: true, attributeFilter: ['class'],
-    });
-    const sbEl = document.getElementById('sidebar');
-    if (sbEl) {
-      new MutationObserver(updateDockOffset).observe(sbEl, {
-        attributes: true, attributeFilter: ['class', 'style'],
-      });
-    }
 
     function modalTitle(modal) {
       const h = modal.querySelector('.modal-header h4, .modal-header h3, .modal-header h2');

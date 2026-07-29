@@ -10,6 +10,9 @@ import logging
 import os
 import shlex
 import subprocess
+import threading
+import time
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,6 +35,25 @@ _PROMOTE = "/home/deploy/odysseus-entwickler/promote.sh"
 _BETA_STOP = "/home/deploy/odysseus-entwickler/beta-stop.sh"
 _SWITCH = "/home/deploy/odysseus-entwickler/switch-version.sh"
 _RELEASES = "/home/deploy/odysseus-entwickler/releases.log"
+_HOST_METRICS_SCRIPT = r"""
+awk '/^cpu / { total=0; for (i=2; i<=NF; i++) total += $i;
+  print "cpu_total=" total; print "cpu_idle=" ($5 + $6) }' /proc/stat
+awk '/^processor[[:space:]]*:/ { cores++ } END { print "cpu_cores=" cores }' /proc/cpuinfo
+awk '{ print "load_1=" $1; print "load_5=" $2; print "load_15=" $3 }' /proc/loadavg
+awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 }
+  END { print "mem_total_kb=" total; print "mem_available_kb=" available }' /proc/meminfo
+awk '{ print "uptime_seconds=" $1 }' /proc/uptime
+df -Pk / | awk 'NR == 2 { print "disk_total_kb=" $2; print "disk_used_kb=" $3 }'
+"""
+
+# Last /proc CPU counters per source. CPU utilisation is a delta, not the
+# since-boot average; keeping only two aggregate numbers avoids exposing any
+# process or host-identifying data through the admin endpoint.
+_METRICS_CPU_SAMPLES = {}
+_METRICS_LOCK = threading.Lock()
+_METRICS_REFRESH_LOCK = threading.Lock()
+_METRICS_CACHE = {"at": 0.0, "payload": None}
+_METRICS_CACHE_SECONDS = 4.0
 
 
 # Living work queue — same file the developer skill reads on every start.
@@ -104,6 +126,127 @@ def _ssh_script(script: str, timeout: int = 8) -> subprocess.CompletedProcess:
     silently broken the same way.)
     """
     return _ssh("bash", "-lc", shlex.quote(script), timeout=timeout)
+
+
+def _parse_metric_lines(text: str) -> dict:
+    """Parse the fixed key=value output produced by the metrics probe."""
+    values = {}
+    for line in (text or "").splitlines():
+        key, sep, raw = line.partition("=")
+        if not sep or not key.replace("_", "").isalnum():
+            continue
+        try:
+            values[key] = float(raw.strip())
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _cpu_percent(source: str, total: float, idle: float):
+    """Return aggregate CPU use since the previous sample for this source."""
+    with _METRICS_LOCK:
+        previous = _METRICS_CPU_SAMPLES.get(source)
+        _METRICS_CPU_SAMPLES[source] = (total, idle)
+    if not previous:
+        return None
+    total_delta = total - previous[0]
+    idle_delta = idle - previous[1]
+    if total_delta <= 0:
+        return None
+    return round(max(0.0, min(100.0, (1.0 - idle_delta / total_delta) * 100.0)), 1)
+
+
+def _metrics_payload(values: dict, source: str) -> dict:
+    total_kb = max(0.0, values.get("mem_total_kb", 0.0))
+    available_kb = max(0.0, values.get("mem_available_kb", 0.0))
+    used_kb = max(0.0, total_kb - available_kb)
+    disk_total_kb = max(0.0, values.get("disk_total_kb", 0.0))
+    disk_used_kb = max(0.0, values.get("disk_used_kb", 0.0))
+    cpu_total = values.get("cpu_total")
+    cpu_idle = values.get("cpu_idle")
+    cpu = (
+        _cpu_percent(source, cpu_total, cpu_idle)
+        if cpu_total is not None and cpu_idle is not None else None
+    )
+    return {
+        "available": bool(total_kb or disk_total_kb or cpu_total is not None),
+        "source": source,
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
+        "cpu": {
+            "percent": cpu,
+            "cores": int(values.get("cpu_cores", 0.0)),
+            "load_1": values.get("load_1"),
+            "load_5": values.get("load_5"),
+            "load_15": values.get("load_15"),
+        },
+        "memory": {
+            "used_bytes": int(used_kb * 1024),
+            "total_bytes": int(total_kb * 1024),
+            "percent": round(used_kb / total_kb * 100.0, 1) if total_kb else None,
+        },
+        "disk": {
+            "used_bytes": int(disk_used_kb * 1024),
+            "total_bytes": int(disk_total_kb * 1024),
+            "percent": round(disk_used_kb / disk_total_kb * 100.0, 1) if disk_total_kb else None,
+        },
+        "uptime_seconds": int(max(0.0, values.get("uptime_seconds", 0.0))),
+    }
+
+
+def _local_linux_metrics() -> dict:
+    """Best-effort fallback for beta/dev where host SSH is unavailable."""
+    values = {}
+    try:
+        with open("/proc/stat", encoding="ascii") as fh:
+            cpu = fh.readline().split()[1:]
+        counters = [float(value) for value in cpu]
+        values["cpu_total"] = sum(counters)
+        values["cpu_idle"] = sum(counters[3:5])
+        values["cpu_cores"] = float(os.cpu_count() or 0)
+        load = os.getloadavg()
+        values.update(load_1=load[0], load_5=load[1], load_15=load[2])
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                name, _, raw = line.partition(":")
+                if name in {"MemTotal", "MemAvailable"}:
+                    values[f"mem_{name[3:].lower()}_kb"] = float(raw.split()[0])
+        with open("/proc/uptime", encoding="ascii") as fh:
+            values["uptime_seconds"] = float(fh.read().split()[0])
+        stat = os.statvfs("/")
+        values["disk_total_kb"] = stat.f_blocks * stat.f_frsize / 1024
+        values["disk_used_kb"] = (
+            (stat.f_blocks - stat.f_bfree) * stat.f_frsize / 1024
+        )
+    except (OSError, ValueError, IndexError) as exc:
+        logger.debug("system/metrics: local fallback unavailable: %s", exc)
+    return _metrics_payload(values, "app-container")
+
+
+def _server_metrics_snapshot(force: bool = False) -> dict:
+    """Return one cached aggregate snapshot without spawning parallel SSH probes."""
+    with _METRICS_REFRESH_LOCK:
+        now = time.monotonic()
+        cached = _METRICS_CACHE["payload"]
+        if (
+            not force
+            and cached is not None
+            and now - _METRICS_CACHE["at"] < _METRICS_CACHE_SECONDS
+        ):
+            return cached
+        try:
+            result = _ssh_script(_HOST_METRICS_SCRIPT, timeout=5)
+            if result.returncode == 0:
+                payload = _metrics_payload(
+                    _parse_metric_lines(result.stdout), "server"
+                )
+                if payload["available"]:
+                    _METRICS_CACHE.update(at=time.monotonic(), payload=payload)
+                    return payload
+        except Exception as exc:
+            logger.debug("system/metrics: host probe unavailable: %s", exc)
+        payload = _local_linux_metrics()
+        _METRICS_CACHE.update(at=time.monotonic(), payload=payload)
+        return payload
 
 
 def _read_releases() -> list:
@@ -208,6 +351,18 @@ def setup_system_routes() -> APIRouter:
         require_admin(request)
         return _roadmap_freshness(APP_VERSION)
 
+    @router.get("/metrics")
+    def get_metrics(request: Request, refresh: bool = False):
+        """Small, admin-only host health snapshot for the Developer page.
+
+        The fixed probe returns aggregate counters only: no process names,
+        command lines, network addresses or host identity. On beta/dev, where
+        host SSH is intentionally unavailable, report the app container and
+        label that scope explicitly.
+        """
+        require_admin(request)
+        return _server_metrics_snapshot(force=refresh)
+
     @router.get("/roadmap")
     def get_roadmap(request: Request):
         require_admin(request)
@@ -266,12 +421,11 @@ def setup_system_routes() -> APIRouter:
     def record_roadmap_build(body: RoadmapBuildBody, request: Request):
         """Remember which chat is building a roadmap item.
 
-        Called right after the client starts the developer chat and sends the
-        build prompt — this endpoint does not itself talk to the model or
-        create anything, it only persists the association so the board can
-        show "already building" after a reload. A repeat build for the same
-        item just adds a new row; list_roadmap_builds always returns the
-        newest one.
+        Called after chat creation but before prompt send, so the link exists
+        before an agent turn can detach into the background. This endpoint
+        does not itself talk to the model. If setup/send fails, the client
+        removes the link again. A repeat build for the same item adds a row;
+        list_roadmap_builds always returns the newest one.
         """
         require_admin(request)
         me = get_current_user(request)
@@ -290,6 +444,22 @@ def setup_system_routes() -> APIRouter:
             db.add(row)
             db.commit()
             return {"ok": True}
+        finally:
+            db.close()
+
+    @router.delete("/roadmap/builds/{session_id}")
+    def delete_roadmap_build(session_id: str, request: Request):
+        """Remove a build link when setup fails before the agent turn starts."""
+        require_admin(request)
+        me = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(RoadmapBuild).filter(RoadmapBuild.session_id == session_id)
+            if me is not None:
+                q = q.filter(RoadmapBuild.owner == me)
+            deleted = q.delete(synchronize_session=False)
+            db.commit()
+            return {"ok": True, "deleted": deleted}
         finally:
             db.close()
 

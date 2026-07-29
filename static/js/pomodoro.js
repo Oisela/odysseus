@@ -31,6 +31,8 @@ let _modal = null;
 let _open = false;
 let _interval = null;
 let _pip = null; // Document-PiP popout window (declared here — _save touches it during module init)
+let _pipCollapsed = false;
+let _focusStats = { today_s: 0, week_s: 0, week_avg_s: 0 };
 
 let _cfg = { ...DEFAULTS };
 // Running state — one of:
@@ -423,20 +425,27 @@ function _logSeconds(seconds, opts = {}) {
 
 async function _refreshStats() {
   const box = _modal?.querySelector('#pomo-stats');
-  if (!box) return;
   try {
     const res = await fetch(`${API_BASE}/api/pomodoro/stats`, { credentials: 'same-origin' });
     if (!res.ok) return;
     const s = await res.json();
-    box.querySelector('[data-stat="today"]').textContent = _fmtHours(s.today_s);
-    box.querySelector('[data-stat="week"]').textContent = _fmtHours(s.week_s);
-    box.querySelector('[data-stat="avg"]').textContent = _fmtHours(s.week_avg_s);
+    _focusStats = {
+      today_s: Number(s.today_s) || 0,
+      week_s: Number(s.week_s) || 0,
+      week_avg_s: Number(s.week_avg_s) || 0,
+    };
+    if (box) {
+      box.querySelector('[data-stat="today"]').textContent = _fmtHours(s.today_s);
+      box.querySelector('[data-stat="week"]').textContent = _fmtHours(s.week_s);
+      box.querySelector('[data-stat="avg"]').textContent = _fmtHours(s.week_avg_s);
+    }
     if (typeof s.today_drinks === 'number') {
       _drinksToday = s.today_drinks;
       _renderDrinks();
     }
+    _renderPiP();
   } catch (e) { /* stats are cosmetic — never break the timer */ }
-  _renderTodayRecords().catch(() => {});
+  if (box) _renderTodayRecords().catch(() => {});
 }
 
 // ── Focus record (individual sessions, TickTick-style) ──
@@ -846,12 +855,13 @@ async function _openPiP() {
   if (_pip && !_pip.closed) { try { _pip.focus(); } catch (_) {} return; }
   let win;
   try {
-    win = await window.documentPictureInPicture.requestWindow({ width: 250, height: 290 });
+    win = await window.documentPictureInPicture.requestWindow({ width: 320, height: 190 });
   } catch (e) {
     console.warn('PiP request failed:', e);
     return;
   }
   _pip = win;
+  _pipCollapsed = false;
   // Copy the app's stylesheets so the ring/time/button classes render
   // identically (incl. theme CSS variables). Standard Document-PiP pattern.
   for (const sheet of document.styleSheets) {
@@ -877,26 +887,81 @@ async function _openPiP() {
   } catch (_) {}
   win.document.body.style.background = 'var(--bg)';
   win.document.body.style.color = 'var(--fg)';
+  win.document.body.style.margin = '0';
+  win.document.body.style.overflow = 'hidden';
   win.document.body.innerHTML = `
-    <div class="pomo-pip-body">
-      <div class="pomo-phase" id="pip-phase"></div>
-      <div class="pomo-ring-wrap">
-        <svg class="pomo-ring" viewBox="0 0 200 200" aria-hidden="true">
-          <circle class="pomo-ring-bg" cx="100" cy="100" r="${_RING_R}"/>
-          <circle class="pomo-ring-fg" id="pip-ring-fg" cx="100" cy="100" r="${_RING_R}"
-            stroke-dasharray="${_RING_C.toFixed(2)}" stroke-dashoffset="${_RING_C.toFixed(2)}"/>
-        </svg>
-        <div class="pomo-time" id="pip-time"></div>
+    <div class="pomo-pip-body" id="pip-shell">
+      <button type="button" class="pomo-pip-collapse" id="pip-collapse"
+              title="Collapse mini timer" aria-label="Collapse mini timer">›</button>
+      <div class="pomo-pip-main">
+        <div class="pomo-pip-ring-wrap">
+          <svg class="pomo-ring" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="pomo-ring-bg" cx="100" cy="100" r="${_RING_R}"/>
+            <circle class="pomo-ring-fg" id="pip-ring-fg" cx="100" cy="100" r="${_RING_R}"
+              stroke-dasharray="${_RING_C.toFixed(2)}" stroke-dashoffset="${_RING_C.toFixed(2)}"/>
+          </svg>
+          <button type="button" class="pomo-pip-primary" id="pip-primary"
+                  aria-label="Start focus timer" data-action="start">▶</button>
+        </div>
+        <div class="pomo-pip-copy">
+          <div class="pomo-phase" id="pip-phase"></div>
+          <div class="pomo-time" id="pip-time"></div>
+        </div>
+        <div class="pomo-pip-collapsed-time" id="pip-collapsed-time"></div>
       </div>
-      <div class="pomo-controls" id="pip-controls"></div>
+      <div class="pomo-pip-stats" aria-label="Focus statistics">
+        <span><small>Today</small><b id="pip-today">0m</b></span>
+        <span><small>This week</small><b id="pip-week">0m</b></span>
+      </div>
+      <div class="pomo-controls pomo-pip-controls" id="pip-controls"></div>
     </div>`;
-  // Same delegated control pattern as the modal — actions run in this module.
+  const shell = win.document.getElementById('pip-shell');
+  const toggleCollapsed = () => {
+    _pipCollapsed = !_pipCollapsed;
+    shell.classList.toggle('is-collapsed', _pipCollapsed);
+    const toggle = win.document.getElementById('pip-collapse');
+    toggle.textContent = _pipCollapsed ? '‹' : '›';
+    toggle.title = _pipCollapsed ? 'Expand mini timer' : 'Collapse mini timer';
+    toggle.setAttribute('aria-label', toggle.title);
+    // Chromium may enforce a minimum PiP size. The visual compact mode is
+    // still useful when resizeTo is denied, so resizing is best-effort only.
+    try {
+      win.resizeTo(_pipCollapsed ? 180 : 320, _pipCollapsed ? 86 : 190);
+    } catch (_) {}
+  };
+  win.document.getElementById('pip-collapse').addEventListener('click', toggleCollapsed);
+  win.document.getElementById('pip-primary').addEventListener('click', (e) => {
+    const action = e.currentTarget.dataset.action;
+    if (action) _handleAction(action);
+  });
   win.document.getElementById('pip-controls').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (btn) _handleAction(btn.dataset.action);
   });
-  win.addEventListener('pagehide', () => { _pip = null; });
+  win.addEventListener('pagehide', () => {
+    _pip = null;
+    _pipCollapsed = false;
+  });
+  _refreshStats();
   _renderPiP();
+}
+
+function _pipPrimaryAction() {
+  if (!_run || _run.phase === 'ready') return { action: 'start', label: 'Start', icon: '▶' };
+  if (_run.phase === 'overtime') return { action: 'bank', label: 'Add overtime', icon: '+' };
+  const paused = _run.remainingMs != null;
+  return paused
+    ? { action: 'resume', label: 'Resume', icon: '▶' }
+    : { action: 'pause', label: 'Pause', icon: 'Ⅱ' };
+}
+
+function _pipSecondaryControlsHtml() {
+  const btn = (action, label) =>
+    `<button type="button" class="pomo-btn" data-action="${action}">${label}</button>`;
+  if (!_run || _run.phase === 'ready') return '';
+  if (_run.phase === 'overtime') return btn('break', 'Break');
+  const inBreak = _run.phase === 'short' || _run.phase === 'long';
+  return (inBreak ? btn('skip', 'Skip') : btn('end', 'End')) + btn('reset', 'Reset');
 }
 
 function _renderPiP() {
@@ -904,18 +969,32 @@ function _renderPiP() {
   const doc = _pip.document;
   const phaseEl = doc.getElementById('pip-phase');
   const timeEl = doc.getElementById('pip-time');
+  const collapsedTime = doc.getElementById('pip-collapsed-time');
   const ring = doc.getElementById('pip-ring-fg');
   const controls = doc.getElementById('pip-controls');
+  const primary = doc.getElementById('pip-primary');
   if (!phaseEl || !timeEl) return;
   const { label, timeText, frac, overtime } = _view();
   phaseEl.textContent = label;
   timeEl.textContent = timeText;
+  if (collapsedTime) collapsedTime.textContent = timeText;
   if (ring) {
     ring.style.strokeDashoffset = (_RING_C * (1 - frac)).toFixed(2);
     ring.classList.toggle('overtime', overtime);
   }
+  if (primary) {
+    const next = _pipPrimaryAction();
+    primary.dataset.action = next.action;
+    primary.textContent = next.icon;
+    primary.title = next.label;
+    primary.setAttribute('aria-label', next.label);
+  }
+  const today = doc.getElementById('pip-today');
+  const week = doc.getElementById('pip-week');
+  if (today) today.textContent = _fmtHours(_focusStats.today_s);
+  if (week) week.textContent = _fmtHours(_focusStats.week_s);
   if (controls) {
-    const html = _controlsHtml();
+    const html = _pipSecondaryControlsHtml();
     if (controls._lastHtml !== html) {
       controls.innerHTML = html;
       controls._lastHtml = html;

@@ -34,6 +34,7 @@ let _viewMode = (typeof localStorage !== 'undefined' && localStorage.getItem('od
 // prefs registry only exists so freshly created (still empty) lists survive.
 let _selectedNoteId = null;
 let _prefLists = [];
+const _knownTagCache = new Set();
 // Below this pane-body width the list view falls back to the legacy flat
 // cards — three columns don't fit a sidebar-docked pane.
 const NOTES_MD_MIN_WIDTH = 560;
@@ -503,6 +504,7 @@ async function _fetchNotes() {
     if (!res.ok) { _notes = []; return; }
     const data = await res.json();
     _notes = data.notes || data || [];
+    _rememberNoteTags(_notes);
   } catch (e) {
     console.error('Failed to fetch notes:', e);
     _notes = [];
@@ -1590,6 +1592,148 @@ function _noteTags(n) {
 
 function _visibleNoteTags(n) {
   return _noteTags(n).filter(t => t !== 'reminder');
+}
+
+// Tags stay in the legacy `label` column as a whitespace-separated string.
+// The picker is only a presentation layer: keeping one normalizer here makes
+// old notes, drafts, quick-add and API payloads use exactly the same format.
+function _editableNoteTags(value) {
+  return [...new Set(String(value || '')
+    .split(/\s+/)
+    .map(t => t.replace(/^#+/, '').trim())
+    .filter(t => t && t !== 'reminder'))];
+}
+
+function _knownNoteTags(selected = []) {
+  const tags = new Set(selected);
+  for (const tag of _knownTagCache) tags.add(tag);
+  for (const n of _notes) for (const tag of _visibleNoteTags(n)) tags.add(tag);
+  for (const tag of _prefLists) {
+    for (const normalized of _editableNoteTags(tag)) tags.add(normalized);
+  }
+  return [...tags].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function _rememberNoteTags(notes) {
+  for (const note of notes || []) {
+    for (const tag of _visibleNoteTags(note)) _knownTagCache.add(tag);
+  }
+}
+
+let _openNoteTagPicker = null;
+let _noteTagOutsideClickWired = false;
+
+function _ensureNoteTagOutsideClick() {
+  if (_noteTagOutsideClickWired) return;
+  _noteTagOutsideClickWired = true;
+  document.addEventListener('pointerdown', (e) => {
+    const active = _openNoteTagPicker;
+    if (active && !active.picker.contains(e.target)) active.close();
+  }, true);
+}
+
+function _wireNoteTagPicker(form) {
+  const picker = form?.querySelector('.note-tag-picker');
+  const labelInput = form?.querySelector('.note-form-label');
+  if (!picker || !labelInput) return;
+  const trigger = picker.querySelector('.note-tag-picker-trigger');
+  const menu = picker.querySelector('.note-tag-picker-menu');
+  const chips = picker.querySelector('.note-tag-selected');
+  const options = picker.querySelector('.note-tag-options');
+  const addInput = picker.querySelector('.note-tag-add-input');
+  const addBtn = picker.querySelector('.note-tag-add-btn');
+
+  const selected = () => _editableNoteTags(labelInput.value);
+  const render = () => {
+    const active = selected();
+    const activeSet = new Set(active);
+    chips.innerHTML = active.map(tag => `
+      <button type="button" class="note-tag-chip" data-remove-tag="${_attrEsc(tag)}" title="Remove #${_attrEsc(tag)}">
+        <span>#${_esc(tag)}</span><span aria-hidden="true">×</span>
+      </button>`).join('');
+    chips.hidden = active.length === 0;
+    trigger.classList.toggle('has-tags', active.length > 0);
+    trigger.querySelector('.note-tag-picker-trigger-label').textContent = active.length ? 'Add tag' : 'Tags';
+    const known = _knownNoteTags(active);
+    options.innerHTML = known.length
+      ? known.map(tag => `
+        <label class="note-tag-option">
+          <input type="checkbox" data-tag-option="${_attrEsc(tag)}"${activeSet.has(tag) ? ' checked' : ''} />
+          <span>#${_esc(tag)}</span>
+        </label>`).join('')
+      : '<div class="note-tag-options-empty">No tags yet</div>';
+  };
+  const setTags = (tags, dispatch = true) => {
+    labelInput.value = _editableNoteTags(tags.join(' ')).join(' ');
+    render();
+    if (dispatch) {
+      labelInput.dispatchEvent(new Event('input', { bubbles: true }));
+      labelInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  };
+  const addTypedTags = () => {
+    const additions = _editableNoteTags(addInput.value);
+    if (!additions.length) return;
+    setTags([...selected(), ...additions]);
+    addInput.value = '';
+    addInput.focus();
+  };
+  const setOpen = (open) => {
+    menu.hidden = !open;
+    trigger.classList.toggle('active', open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      _ensureNoteTagOutsideClick();
+      if (_openNoteTagPicker && _openNoteTagPicker.picker !== picker) {
+        _openNoteTagPicker.close();
+      }
+      _openNoteTagPicker = { picker, close: () => setOpen(false) };
+      render();
+    } else if (_openNoteTagPicker?.picker === picker) {
+      _openNoteTagPicker = null;
+    }
+  };
+
+  form._setNoteTags = (tags, dispatch = true) => setTags(tags, dispatch);
+  form._renderNoteTags = render;
+  trigger.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOpen(!menu.hidden);
+  });
+  picker.addEventListener('click', (e) => {
+    const remove = e.target.closest('[data-remove-tag]');
+    if (remove) {
+      e.preventDefault();
+      setTags(selected().filter(tag => tag !== remove.dataset.removeTag));
+    }
+  });
+  options.addEventListener('change', (e) => {
+    const checkbox = e.target.closest('input[data-tag-option]');
+    if (!checkbox) return;
+    const next = selected().filter(tag => tag !== checkbox.dataset.tagOption);
+    if (checkbox.checked) next.push(checkbox.dataset.tagOption);
+    setTags(next);
+  });
+  addBtn.addEventListener('click', addTypedTags);
+  picker.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    setOpen(false);
+    trigger.focus();
+  });
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      addTypedTags();
+    }
+  });
+  form.addEventListener('click', (e) => {
+    if (!e.target.closest('.note-tag-picker')) setOpen(false);
+  });
+  render();
 }
 
 function _isPastReminder(n) {
@@ -2800,7 +2944,9 @@ function _renderQuickAdd(body) {
   // Click input or type → expand to full form
   const expandToForm = (initialType = 'note', initialText = '') => {
     _editingId = '__new__';
-    const form = _buildForm({ note_type: initialType });
+    // Match the master-detail quick-add: new entries created while a named
+    // list/tag filter is active start with that tag already selected.
+    const form = _buildForm({ note_type: initialType, label: _activeLabel || '' });
     form.classList.add('note-form-new');
     if (initialText) {
       const titleEl = form.querySelector('.note-form-title');
@@ -3559,6 +3705,7 @@ function _isDraftEmpty(d) {
   if (!d) return true;
   if ((d.title || '').trim()) return false;
   if ((d.content || '').trim()) return false;
+  if (_editableNoteTags(d.label).length) return false;
   if (Array.isArray(d.items) && d.items.some(it => (it.text || '').trim())) return false;
   return true;
 }
@@ -3652,7 +3799,23 @@ function _buildForm(note = null) {
       <div class="note-color-picker">
         ${COLORS.map(c => `<span class="note-color-dot${_dotIsActive(c.value, color) ? ' active' : ''}" data-color="${c.value}" style="background:${_dotBg(c.value, color)}" title="${c.name || 'default'}"></span>`).join('')}
       </div>
-      <input type="text" class="note-form-label" value="${_esc(note?.label || '')}" placeholder="#tag1 #tag2" title="Tag(s) — space-separated" />
+      <input type="hidden" class="note-form-label" value="${_attrEsc(_editableNoteTags(note?.label).join(' '))}" />
+      <div class="note-tag-picker">
+        <div class="note-tag-selected" aria-label="Selected tags"></div>
+        <button type="button" class="note-tag-picker-trigger" aria-haspopup="true" aria-expanded="false" title="Choose tags">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.82 0l3.36-3.36a2 2 0 0 0 0-2.82Z"/><circle cx="7.5" cy="6.5" r=".5" fill="currentColor"/></svg>
+          <span class="note-tag-picker-trigger-label">Tags</span>
+          <span aria-hidden="true">+</span>
+        </button>
+        <div class="note-tag-picker-menu" hidden>
+          <div class="note-tag-picker-heading">Tags</div>
+          <div class="note-tag-options" role="listbox" aria-multiselectable="true"></div>
+          <div class="note-tag-add-row">
+            <input type="text" class="note-tag-add-input" placeholder="Add tag" autocomplete="off" />
+            <button type="button" class="note-tag-add-btn">Add</button>
+          </div>
+        </div>
+      </div>
       <div class="note-form-actions-group">
         ${isEdit ? `
         <button type="button" class="note-form-text-btn note-form-archive-btn note-form-collapsible" title="Archive">
@@ -3675,6 +3838,7 @@ function _buildForm(note = null) {
 
   let currentType = type;
   let currentColor = color;
+  _wireNoteTagPicker(form);
   // Stash original-form values so round-trips (Note→Todo→Note) restore the
   // user's hand-formatted text instead of a join of generated items. Same the
   // other way: if you started in todo, switch to note, switch back, items
@@ -4253,14 +4417,8 @@ function _buildForm(note = null) {
       // Dedup against the stripped form — labelInput may already hold `#tag`
       // (after Enter normalised), so includes(tag) on the raw split would
       // miss the duplicate and append a bare `tag` next to `#tag`.
-      const existing = labelInput.value.trim().split(/\s+/).filter(Boolean);
-      const stripped = existing.map(t => t.replace(/^#+/, ''));
-      if (!stripped.includes(tag)) {
-        existing.push('#' + tag);
-        labelInput.value = existing.join(' ');
-        labelInput.classList.add('flash-once');
-        setTimeout(() => labelInput.classList.remove('flash-once'), 600);
-      }
+      const existing = _editableNoteTags(labelInput.value);
+      if (!existing.includes(tag)) form._setNoteTags?.([...existing, tag]);
       const cut = el.value.length - m[0].length + m[1].length;
       el.value = el.value.slice(0, cut);
     });
@@ -4274,24 +4432,6 @@ function _buildForm(note = null) {
     const _richTa = form.querySelector('.note-form-content');
     if (_richTa) form._richEditor = notesRichEditor.attach(_richTa);
   }
-  // Pressing Enter in the tag field commits the current word as its own tag
-  // and parks the cursor after a trailing space, so the next word becomes a
-  // separate tag rather than overwriting the previous one.
-  labelInput?.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    // Strip any leading #s the user typed, dedupe, then re-prepend exactly
-    // one #. So typing "foo" or "#foo" both end up as "#foo " in the input;
-    // the save handler keeps stripping #s before storing so DB stays clean.
-    const tags = [...new Set(labelInput.value.split(/\s+/).map(t => t.replace(/^#+/, '').trim()).filter(Boolean))];
-    if (!tags.length) return;
-    labelInput.value = tags.map(t => '#' + t).join(' ') + ' ';
-    labelInput.setSelectionRange(labelInput.value.length, labelInput.value.length);
-    labelInput.classList.add('flash-once');
-    setTimeout(() => labelInput.classList.remove('flash-once'), 600);
-  });
-
   // Shift+Enter (or Cmd/Ctrl+Enter) anywhere in the form -> save
   // Escape -> cancel edit
   form.addEventListener('keydown', (e) => {
@@ -4333,7 +4473,7 @@ function _buildForm(note = null) {
     // Normalize tag input: split on whitespace, strip leading #s, dedupe,
     // re-join with single spaces. Empty → null.
     const _rawLabel = form.querySelector('.note-form-label')?.value || '';
-    const _tags = [...new Set(_rawLabel.split(/\s+/).map(t => t.replace(/^#+/, '').trim()).filter(Boolean))];
+    const _tags = _editableNoteTags(_rawLabel);
     if (form.querySelector('.note-form-due').value && !_tags.includes('reminder')) _tags.push('reminder');
     const labelVal = _tags.length ? _tags.join(' ') : null;
     const payload = {
@@ -4520,14 +4660,8 @@ function _wireGoalForm(form, container) {
       if (!m) return;
       const tag = m[2];
       // Same dedup-after-stripping fix as the plain note hashtag handler.
-      const existing = labelInput.value.trim().split(/\s+/).filter(Boolean);
-      const stripped = existing.map(t => t.replace(/^#+/, ''));
-      if (!stripped.includes(tag)) {
-        existing.push('#' + tag);
-        labelInput.value = existing.join(' ');
-        labelInput.classList.add('flash-once');
-        setTimeout(() => labelInput.classList.remove('flash-once'), 600);
-      }
+      const existing = _editableNoteTags(labelInput.value);
+      if (!existing.includes(tag)) form._setNoteTags?.([...existing, tag]);
       const cut = desc.value.length - m[0].length + m[1].length;
       desc.value = desc.value.slice(0, cut);
     });
@@ -5568,13 +5702,13 @@ function _openMobileFullscreenEdit(id, fromCard) {
     });
   }
 
-  // Tuck the tags input into the bottom actions row (Cancel / Update),
-  // pinned to the LEFT. Frees the meta row of an extra wrapping line
-  // and groups all the "exit" controls together.
+  // Tuck the visible tag picker into the bottom actions row (Cancel / Update),
+  // pinned to the LEFT. The hidden legacy label input remains in the form, so
+  // mobile and desktop still share the same draft/save path.
   const actionsGroup = form.querySelector('.note-form-actions-group');
-  const tagsInput    = form.querySelector('.note-form-label');
-  if (actionsGroup && tagsInput) {
-    actionsGroup.insertBefore(tagsInput, actionsGroup.firstChild);
+  const tagsPicker   = form.querySelector('.note-tag-picker');
+  if (actionsGroup && tagsPicker) {
+    actionsGroup.insertBefore(tagsPicker, actionsGroup.firstChild);
   }
 
   // For checklist-type notes, move the photo (attach image) button into
@@ -6020,6 +6154,7 @@ async function _initReminders() {
     if (res.ok) {
       const data = await res.json();
       _notes = data.notes || data || [];
+      _rememberNoteTags(_notes);
       _startReminderLoop();
     }
   } catch {}

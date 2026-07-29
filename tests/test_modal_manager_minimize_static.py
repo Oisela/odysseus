@@ -2,6 +2,8 @@ from pathlib import Path
 
 
 MODAL_MANAGER = Path("static/js/modalManager.js").read_text(encoding="utf-8")
+APP_JS = Path("static/app.js").read_text(encoding="utf-8")
+CSS = Path("static/style.css").read_text(encoding="utf-8")
 
 
 def test_registered_modal_adopts_an_existing_legacy_minimize_button():
@@ -36,3 +38,54 @@ def test_empty_dock_forgets_the_last_rendered_chip_ids():
         "return;", 1
     )[0]
     assert "_renderedChipIds.clear();" in empty_branch
+
+
+def test_minimized_chips_are_owned_by_the_chat_surface():
+    assert "(chat || document.body).appendChild(dock);" in MODAL_MANAGER
+    assert "#chat-container > .minimized-dock-chip" in MODAL_MANAGER
+    assert "document.body.appendChild(chip)" not in MODAL_MANAGER
+    assert "body > .minimized-dock-chip" not in MODAL_MANAGER
+    assert "position: absolute; bottom: var(--composer-clearance, 12px);" in CSS
+
+
+def test_free_dock_positions_are_clamped_and_reflow_is_throttled():
+    assert "function _clampChatPosition(" in MODAL_MANAGER
+    assert "maxLeft: Math.max(minLeft, chatRect.width - width - pad)" in MODAL_MANAGER
+    assert "bottom = Math.min(bottom, composerRect.top - 6);" in MODAL_MANAGER
+    assert "if (_dockLayoutRaf) return;" in MODAL_MANAGER
+    assert "_dockLayoutRaf = requestAnimationFrame(_syncDockLayout);" in MODAL_MANAGER
+    assert "new ResizeObserver(_scheduleDockLayout)" in MODAL_MANAGER
+    assert "new MutationObserver(_scheduleDockLayout).observe(sidebar" in MODAL_MANAGER
+
+
+def test_single_chip_move_promotes_inflow_dock_before_setting_coordinates():
+    assert "function _floatDockInsideChat(dock)" in MODAL_MANAGER
+    move_start = MODAL_MANAGER.index("if (!dragging) {")
+    move_body = MODAL_MANAGER[move_start:MODAL_MANAGER.index(
+        "// Desktop: dragging a chip into a screen snap zone", move_start
+    )]
+    assert "dock.classList.add('dock-dragging');" in move_body
+    assert "_floatDockInsideChat(dock);" in move_body
+
+
+def test_composer_boundary_is_kept_even_when_dock_is_taller_than_free_space():
+    bounds = MODAL_MANAGER[MODAL_MANAGER.index("function _chatDockBounds"):
+                           MODAL_MANAGER.index("function _clampChatPosition")]
+    assert "composerRect.top > chatRect.top" in bounds
+    assert "composerRect.top - chatRect.top > height" not in bounds
+
+
+def test_mobile_drawer_temporarily_hides_chat_dock_controls():
+    assert "const drawerOpen = window.innerWidth <= 768" in MODAL_MANAGER
+    assert "dock-mobile-drawer-hidden" in MODAL_MANAGER
+    assert "#minimized-dock.dock-mobile-drawer-hidden" in CSS
+
+
+def test_legacy_fallback_dock_is_also_chat_scoped_without_sidebar_polling():
+    legacy = APP_JS.split("(function initModalMinimize() {", 1)[1].split(
+        "function modalTitle(modal)", 1
+    )[0]
+    assert "(chat || document.body).appendChild(dock);" in legacy
+    assert "dock.style.left = '0px';" in legacy
+    assert "new ResizeObserver(updateDockOffset)" not in legacy
+    assert "#modal-dock {\n      position:absolute;" in CSS

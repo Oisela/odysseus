@@ -2688,16 +2688,43 @@
             <div id="dev-beta-msg" style="margin-top:6px;font-size:12px;"></div>
           </div>
 
+          <div class="admin-card dev-server-card" id="settings-dev-server-card">
+            <div class="dev-card-heading">
+              <div>
+                <h2>Server live</h2>
+                <div class="admin-toggle-sub">Sichere, aggregierte Auslastung ohne Prozessnamen oder andere sensible Serverdaten. Aktualisiert sich alle 5 Sekunden.</div>
+              </div>
+              <button class="admin-btn-sm" id="dev-server-refresh" type="button" title="Serverauslastung jetzt aktualisieren">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Aktualisieren
+              </button>
+            </div>
+            <div class="dev-metrics" id="dev-server-metrics" aria-live="polite">
+              <div class="dev-metric"><span>CPU</span><strong id="dev-metric-cpu">…</strong><small id="dev-metric-load">Wird geladen</small></div>
+              <div class="dev-metric"><span>RAM</span><strong id="dev-metric-memory">…</strong><small id="dev-metric-memory-detail">Wird geladen</small></div>
+              <div class="dev-metric"><span>Speicher</span><strong id="dev-metric-disk">…</strong><small id="dev-metric-disk-detail">Wird geladen</small></div>
+              <div class="dev-metric"><span>Laufzeit</span><strong id="dev-metric-uptime">…</strong><small id="dev-metric-source">Wird geladen</small></div>
+            </div>
+            <div class="dev-metrics-foot"><span class="dev-live-dot" id="dev-metrics-dot"></span><span id="dev-metrics-status">Verbinde …</span></div>
+          </div>
+
           <div class="admin-card" id="settings-dev-roadmap-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Roadmap</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Die Entwicklungspipeline: Feature definieren, Modell wählen, Build verfolgen und auf Beta abnehmen. Die ROADMAP.md bleibt die gemeinsame Quelle.</div>
             <div id="dev-roadmap-stale" class="admin-error" style="display:none;margin-bottom:8px;line-height:1.45;"></div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <div class="rm-toolbar">
               <div class="rm-view-toggle" id="dev-roadmap-view" role="group" aria-label="Roadmap view">
                 <button type="button" class="rm-view-opt" data-rmview="list">Liste</button>
                 <button type="button" class="rm-view-opt" data-rmview="board">Board</button>
               </div>
-              <button type="button" class="admin-btn-sm" id="dev-roadmap-refresh">Status aktualisieren</button>
+              <div class="rm-toolbar-actions">
+                <div class="rm-version-bulk" title="Alle geplanten Einträge außerhalb ausgelieferter Releases auf diese Version setzen">
+                  <label for="dev-roadmap-bulk-version">Geplante Version</label>
+                  <input id="dev-roadmap-bulk-version" class="styled-prompt-input" type="text" inputmode="decimal" maxlength="32" placeholder="z. B. 3.10">
+                  <button type="button" class="admin-btn-sm" id="dev-roadmap-bulk-version-apply">Auf alle geplanten</button>
+                </div>
+                <button type="button" class="admin-btn-sm" id="dev-roadmap-refresh">Status aktualisieren</button>
+              </div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
               <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Kurzer Titel für Bug, Feature oder Idee …" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
@@ -2720,8 +2747,9 @@
               <label class="rm-edit-field"><span>Fertig, wenn …</span><textarea id="dev-roadmap-acceptance" rows="3" placeholder="Ein prüfbares Akzeptanzkriterium pro Zeile"></textarea></label>
               <div class="rm-edit-grid">
                 <label class="rm-edit-field"><span>Priorität</span><select id="dev-roadmap-priority" class="settings-select"><option>Niedrig</option><option selected>Normal</option><option>Hoch</option><option>Kritisch</option></select></label>
-                <label class="rm-edit-field"><span>Abhängigkeiten</span><input id="dev-roadmap-dependencies" type="text" class="styled-prompt-input" placeholder="Optional, z. B. RemNote-Bridge"></label>
+                <label class="rm-edit-field"><span>Zielversion</span><input id="dev-roadmap-version" type="text" class="styled-prompt-input" maxlength="32" placeholder="Optional, z. B. 3.10"></label>
               </div>
+              <label class="rm-edit-field"><span>Abhängigkeiten</span><input id="dev-roadmap-dependencies" type="text" class="styled-prompt-input" placeholder="Optional, z. B. RemNote-Bridge"></label>
               <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea id="dev-roadmap-notes" rows="2" placeholder="Optional: gewünschter Workflow, UI, Risiken oder Dinge, die nicht verändert werden dürfen"></textarea></label>
             </div>
             <div id="dev-roadmap-list" style="font-size:13px;"><div style="opacity:0.6">loading…</div></div>

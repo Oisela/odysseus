@@ -3001,6 +3001,8 @@ const _RM_DETAIL_LABELS = {
   beschreibung: 'description',
   ziel: 'goal',
   akzeptanzkriterien: 'acceptance',
+  version: 'version',
+  zielversion: 'version',
   priorität: 'priority',
   prioritaet: 'priority',
   abhängigkeiten: 'dependencies',
@@ -3011,7 +3013,7 @@ const _RM_DETAIL_LABELS = {
 function _roadmapDetails(item) {
   const details = {
     id: '', description: '', goal: '', acceptance: '',
-    priority: 'Normal', dependencies: '', notes: '', screenshots: [],
+    version: '', priority: 'Normal', dependencies: '', notes: '', screenshots: [],
   };
   let field = '';
   const legacy = [];
@@ -3073,6 +3075,7 @@ function _roadmapItemBlock(mark, title, details, images = []) {
     block.push('      **Akzeptanzkriterien:**');
     for (const criterion of criteria) block.push(`        - ${criterion}`);
   }
+  addText('Version', details.version);
   addText('Priorität', details.priority && details.priority !== 'Normal' ? details.priority : '');
   addText('Abhängigkeiten', details.dependencies);
   addText('Notizen', details.notes);
@@ -3147,10 +3150,44 @@ function _roadmapViewMode() {
 
 async function _setItemStatus(item, statusKey) {
   const col = _RM_COLS.find(c => c.key === statusKey);
-  if (!col) return;
+  if (!col) return false;
   const ls = _roadmapText.split('\n');
   ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, `- [${col.mark}]`);
-  if (await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'))) _renderRoadmap();
+  const saved = await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'));
+  if (saved) _renderRoadmap();
+  return saved;
+}
+
+function _normalizeRoadmapVersion(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  const number = value.replace(/^v/i, '');
+  return /^[0-9]+(?:\.[0-9]+){0,3}(?:[-+][0-9A-Za-z.-]+)?$/.test(number)
+    ? `v${number}`
+    : '';
+}
+
+async function _setAllPlannedVersions(rawVersion) {
+  const version = _normalizeRoadmapVersion(rawVersion);
+  if (!version) throw new Error('Bitte eine gültige Version eingeben, z. B. 3.10.');
+  const parsed = _roadmapSections(_roadmapText);
+  const targets = parsed.sections
+    .filter(section => !/RELEASED/i.test(section.title))
+    .flatMap(section => section.items)
+    .filter(item => item.status === 'planned')
+    .sort((a, b) => b.line - a.line);
+  if (!targets.length) return 0;
+  const lines = parsed.lines.slice();
+  for (const item of targets) {
+    const details = _roadmapDetails(item);
+    details.version = version;
+    const block = _roadmapItemBlock(' ', item.text, details, details.screenshots);
+    lines.splice(item.line, item.endLine - item.line + 1, ...block);
+  }
+  const saved = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
+  if (!saved) throw new Error('Die Roadmap konnte nicht gespeichert werden.');
+  _renderRoadmap();
+  return targets.length;
 }
 
 function _rmCardText(item) {
@@ -3167,21 +3204,22 @@ function _rmCardText(item) {
 // Hintergrund, Modell auswählen können auf dieser Seite."
 //
 // Workflow a Build click runs, end to end:
-//  1. Ensure the Builder project exists (projects.js, same as the Go button).
-//  2. Create a chat session with the CHOSEN endpoint/model directly
+//  1. Mark the roadmap item [~] immediately at the hand-off.
+//  2. Ensure the Builder project exists (projects.js, same as the Go button).
+//  3. Create a chat session with the CHOSEN endpoint/model directly
 //     (POST /api/session — same call materializePendingSession uses), then
 //     attach it to the Builder project (POST /api/projects/{id}/sessions/{sid}).
-//  3. Switch to that chat, close Settings, force Agent+Shell
+//  4. Switch to that chat, close Settings, force Agent+Shell
 //     (window.__odysseusPrepareDeveloperMode — the exact function the Go
 //     button already calls, so behavior stays identical).
-//  4. Fill the composer with a prompt built from the card's title +
+//  5. Fill the composer with a prompt built from the card's title +
 //     description and submit it via chat.handleChatSubmit — the SAME send
 //     path a typed message takes, so streaming/tools/detach-on-navigate all
 //     work unchanged. This is what "runs in the background" means here:
 //     once sent, the turn keeps going even if you switch chats or close
 //     Settings, exactly like any other in-flight agent turn.
-//  5. Record {item_key, session_id, model} so the card shows "Building —
-//     open chat" after a reload, and flip the item's marker to "in progress".
+//  6. Record {item_key, session_id, model} so the card shows "Building —
+//     open chat" after a reload.
 //
 // Disabled on beta (no host/clone access there), mirroring the Go button.
 let _roadmapBuilds = null;   // Map item_key -> build record, or null = not loaded
@@ -3226,6 +3264,7 @@ function _buildPrompt(item, buildMode) {
     + section('Beschreibung', d.description)
     + section('Ziel / Problem', d.goal)
     + section('Akzeptanzkriterien', d.acceptance)
+    + section('Zielversion', d.version)
     + section('Priorität', d.priority)
     + section('Abhängigkeiten', d.dependencies)
     + section('Technische Notizen / Grenzen', d.notes)
@@ -3238,54 +3277,78 @@ function _buildPrompt(item, buildMode) {
 
 async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) {
   const title = _rmCardText(it);
-  const projectsMod = await import('./projects.js');
-  if (!projectsMod.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
-  const builder = await projectsMod.ensureDeveloperProject();
-
-  const fd = new FormData();
-  fd.append('name', 'Chat');
-  fd.append('endpoint_id', endpointId);
-  fd.append('model', model);
-  fd.append('skip_validation', 'true');
-  const sessRes = await fetch('/api/session', { method: 'POST', body: fd, credentials: 'same-origin' });
-  if (!sessRes.ok) throw new Error(`Session creation failed (HTTP ${sessRes.status})`);
-  const sess = await sessRes.json();
-
-  const attachRes = await fetch(`/api/projects/${builder.id}/sessions/${sess.id}`, {
-    method: 'POST', credentials: 'same-origin',
-  });
-  if (!attachRes.ok) throw new Error(`Could not attach the chat to the Builder project (HTTP ${attachRes.status})`);
-
-  const buildRecord = {
-    item_key: _itemKey(it), item_title: title, session_id: sess.id,
-    endpoint_id: endpointId, model, model_label: modelLabel,
-  };
-  const recordRes = await fetch('/api/system/roadmap/builds', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildRecord),
-  });
-  if (!recordRes.ok) {
-    throw new Error(`Could not link the build chat to the roadmap item (HTTP ${recordRes.status})`);
+  // Persist [~] before any slower project/session/model work. This is the
+  // actual hand-off point, so ROADMAP.md immediately shows that an agent has
+  // picked up the item.
+  if (!await _setItemStatus(it, 'wip')) {
+    throw new Error('Could not mark the roadmap item as in progress');
   }
-  if (!_roadmapBuilds) _roadmapBuilds = new Map();
-  _roadmapBuilds.set(buildRecord.item_key, buildRecord);
+  let buildSessionId = '';
+  try {
+    const projectsMod = await import('./projects.js');
+    if (!projectsMod.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+    const builder = await projectsMod.ensureDeveloperProject();
 
-  const sessionsMod = await import('./sessions.js');
-  await sessionsMod.loadSessions();
-  settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
-  await sessionsMod.selectSession(sess.id, { keepSidebar: true, showLoading: false });
-  if (typeof window.__odysseusPrepareDeveloperMode === 'function') window.__odysseusPrepareDeveloperMode();
+    const fd = new FormData();
+    fd.append('name', 'Chat');
+    fd.append('endpoint_id', endpointId);
+    fd.append('model', model);
+    fd.append('skip_validation', 'true');
+    const sessRes = await fetch('/api/session', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!sessRes.ok) throw new Error(`Session creation failed (HTTP ${sessRes.status})`);
+    const sess = await sessRes.json();
+    buildSessionId = sess.id;
 
-  const msgInput = document.getElementById('message');
-  if (!msgInput) throw new Error('Composer not found — cannot send the build prompt');
-  msgInput.value = _buildPrompt(it, buildMode);
-  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-  const chatMod = await import('./chat.js');
-  await chatMod.handleChatSubmit({ preventDefault() {} });
+    const attachRes = await fetch(`/api/projects/${builder.id}/sessions/${sess.id}`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    if (!attachRes.ok) throw new Error(`Could not attach the chat to the Builder project (HTTP ${attachRes.status})`);
 
-  await _setItemStatus(it, 'wip');
-  if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
+    const buildRecord = {
+      item_key: _itemKey(it), item_title: title, session_id: sess.id,
+      endpoint_id: endpointId, model, model_label: modelLabel,
+    };
+    const recordRes = await fetch('/api/system/roadmap/builds', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildRecord),
+    });
+    if (!recordRes.ok) {
+      throw new Error(`Could not link the build chat to the roadmap item (HTTP ${recordRes.status})`);
+    }
+    if (!_roadmapBuilds) _roadmapBuilds = new Map();
+    _roadmapBuilds.set(buildRecord.item_key, buildRecord);
+
+    const sessionsMod = await import('./sessions.js');
+    await sessionsMod.loadSessions();
+    settingsModule.close(); // window.Modals.close(...) never existed - the modal never actually closed (found 2026-07-27)
+    await sessionsMod.selectSession(sess.id, { keepSidebar: true, showLoading: false });
+    if (typeof window.__odysseusPrepareDeveloperMode === 'function') window.__odysseusPrepareDeveloperMode();
+
+    const msgInput = document.getElementById('message');
+    if (!msgInput) throw new Error('Composer not found — cannot send the build prompt');
+    msgInput.value = _buildPrompt(it, buildMode);
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    const chatMod = await import('./chat.js');
+    await chatMod.handleChatSubmit({ preventDefault() {} });
+
+    if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
+  } catch (error) {
+    // The hand-off never became a running agent turn. Put the item back so
+    // the board does not claim work is active after a setup/send failure.
+    if (buildSessionId) {
+      await fetch(`/api/system/roadmap/builds/${encodeURIComponent(buildSessionId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      }).catch(() => {});
+      const itemKey = _itemKey(it);
+      if (_roadmapBuilds?.get(itemKey)?.session_id === buildSessionId) {
+        _roadmapBuilds.delete(itemKey);
+      }
+    }
+    await _setItemStatus(it, 'planned');
+    throw error;
+  }
 }
 
 function _cardBuildFormHtml() {
@@ -3323,8 +3386,9 @@ function _cardEditFormHtml(it) {
         <label class="rm-edit-field"><span>Priorität</span><select class="settings-select rm-edit-priority">
           ${['Niedrig', 'Normal', 'Hoch', 'Kritisch'].map(v => `<option${d.priority === v ? ' selected' : ''}>${v}</option>`).join('')}
         </select></label>
-        <label class="rm-edit-field"><span>Abhängigkeiten</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="Keine" /></label>
+        <label class="rm-edit-field"><span>Zielversion</span><input type="text" class="styled-prompt-input rm-edit-version" maxlength="32" value="${esc(d.version)}" placeholder="z. B. 3.10" /></label>
       </div>
+      <label class="rm-edit-field"><span>Abhängigkeiten</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="Keine" /></label>
       <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
       <div class="rm-actions">
         <button type="button" class="memory-toolbar-btn rm-edit-cancel">Abbrechen</button>
@@ -3339,6 +3403,7 @@ function _detailsFromForm(root, prefix = '.rm-edit-') {
     description: value('desc'),
     goal: value('goal'),
     acceptance: value('acceptance'),
+    version: _normalizeRoadmapVersion(value('version')),
     priority: value('priority') || 'Normal',
     dependencies: value('dependencies'),
     notes: value('notes'),
@@ -3351,16 +3416,23 @@ function _renderRoadmapBoard(list, sections) {
   const board = document.createElement('div');
   board.className = 'rm-board';
   for (const col of _RM_COLS) {
-    const items = [];
+    let items = [];
     for (const sec of live) {
       for (const it of sec.items) {
         if ((it.status || 'planned') === col.key) items.push({ it, sec });
       }
     }
+    const totalItems = items.length;
+    // Completed work is history, not an endlessly growing work queue. Keep
+    // the count truthful while showing only the ten most recently listed
+    // completed items, newest first.
+    if (col.key === 'done') {
+      items = items.slice(-10).reverse();
+    }
     const colEl = document.createElement('div');
     colEl.className = 'rm-col';
     colEl.dataset.col = col.key;
-    colEl.innerHTML = `<div class="rm-col-head">${col.label}<span class="folder-count">${items.length}</span></div>`;
+    colEl.innerHTML = `<div class="rm-col-head">${col.label}<span class="folder-count">${totalItems}</span></div>`;
     const body = document.createElement('div');
     body.className = 'rm-col-body';
     if (!items.length) {
@@ -3398,6 +3470,13 @@ function _renderRoadmapBoard(list, sections) {
         secChip.className = 'rm-chip';
         secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
         meta.appendChild(secChip);
+        if (details.version) {
+          const versionChip = document.createElement('span');
+          versionChip.className = 'rm-chip rm-version-chip';
+          versionChip.textContent = details.version;
+          versionChip.title = 'Geplante Zielversion';
+          meta.appendChild(versionChip);
+        }
         if (details.priority && details.priority !== 'Normal') {
           const priorityChip = document.createElement('span');
           priorityChip.className = `rm-chip rm-priority rm-priority-${details.priority.toLowerCase()}`;
@@ -3458,7 +3537,14 @@ function _renderRoadmapBoard(list, sections) {
           e.stopPropagation();
           const newTitle = card.querySelector('.rm-edit-title').value;
           if (!newTitle.trim()) return;
-          await _saveItemEdit(it, newTitle, _detailsFromForm(card));
+          const rawVersion = card.querySelector('.rm-edit-version')?.value?.trim() || '';
+          const detailsFromForm = _detailsFromForm(card);
+          if (rawVersion && !detailsFromForm.version) {
+            card.querySelector('.rm-edit-version')?.focus();
+            if (uiModule?.showError) uiModule.showError('Ungültige Version — Beispiel: 3.10');
+            return;
+          }
+          await _saveItemEdit(it, newTitle, detailsFromForm);
         });
         card.querySelectorAll('input, textarea, select').forEach(control =>
           control.addEventListener('click', (e) => e.stopPropagation()));
@@ -3530,6 +3616,12 @@ function _renderRoadmapBoard(list, sections) {
       });
       card.addEventListener('dragend', () => card.classList.remove('rm-dragging'));
       body.appendChild(card);
+    }
+    if (col.key === 'done' && totalItems > items.length) {
+      const limited = document.createElement('div');
+      limited.className = 'rm-col-limit';
+      limited.textContent = `Letzte ${items.length} von ${totalItems}`;
+      body.appendChild(limited);
     }
     colEl.appendChild(body);
     colEl.addEventListener('dragover', (e) => { e.preventDefault(); colEl.classList.add('rm-col-over'); });
@@ -3704,6 +3796,102 @@ async function _loadDevStatus() {
 // Nag when the roadmap has no section for the version being built — the
 // developer reads that file on every start, so a gap means it plans from a
 // stale picture (v3.7 documented while the code was at 3.9.5, 2026-07-27).
+let _serverMetricsLoading = false;
+let _serverMetricsTimer = null;
+
+function _formatMetricBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (!value) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const power = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  const sized = value / (1024 ** power);
+  return `${sized >= 10 || power < 2 ? sized.toFixed(0) : sized.toFixed(1)} ${units[power]}`;
+}
+
+function _formatUptime(seconds) {
+  let remaining = Math.max(0, Math.floor(Number(seconds) || 0));
+  const days = Math.floor(remaining / 86400);
+  remaining %= 86400;
+  const hours = Math.floor(remaining / 3600);
+  const minutes = Math.floor((remaining % 3600) / 60);
+  if (days) return `${days} T ${hours} Std`;
+  if (hours) return `${hours} Std ${minutes} Min`;
+  return `${minutes} Min`;
+}
+
+function _setMetricValue(id, value, percent) {
+  const node = el(id);
+  if (!node) return;
+  node.textContent = value;
+  const card = node.closest('.dev-metric');
+  if (card && Number.isFinite(percent)) {
+    card.style.setProperty('--metric-level', `${Math.max(0, Math.min(100, percent))}%`);
+  }
+}
+
+async function _loadServerMetrics(force = false) {
+  if (_serverMetricsLoading || !el('dev-server-metrics')) return;
+  _serverMetricsLoading = true;
+  const refresh = el('dev-server-refresh');
+  const status = el('dev-metrics-status');
+  const dot = el('dev-metrics-dot');
+  if (refresh) refresh.disabled = true;
+  try {
+    const response = await fetch(`/api/system/metrics${force ? '?refresh=1' : ''}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.available) throw new Error('Keine Messwerte verfügbar');
+    const cpu = data.cpu || {};
+    const memory = data.memory || {};
+    const disk = data.disk || {};
+    _setMetricValue(
+      'dev-metric-cpu',
+      Number.isFinite(cpu.percent) ? `${cpu.percent.toFixed(1)} %` : 'misst …',
+      cpu.percent,
+    );
+    el('dev-metric-load').textContent = Number.isFinite(cpu.load_1)
+      ? `Load ${cpu.load_1.toFixed(2)} · ${cpu.cores || '?'} Kerne`
+      : `${cpu.cores || '?'} Kerne`;
+    _setMetricValue(
+      'dev-metric-memory',
+      Number.isFinite(memory.percent) ? `${memory.percent.toFixed(1)} %` : '—',
+      memory.percent,
+    );
+    el('dev-metric-memory-detail').textContent =
+      `${_formatMetricBytes(memory.used_bytes)} / ${_formatMetricBytes(memory.total_bytes)}`;
+    _setMetricValue(
+      'dev-metric-disk',
+      Number.isFinite(disk.percent) ? `${disk.percent.toFixed(1)} %` : '—',
+      disk.percent,
+    );
+    el('dev-metric-disk-detail').textContent =
+      `${_formatMetricBytes(disk.used_bytes)} / ${_formatMetricBytes(disk.total_bytes)}`;
+    _setMetricValue('dev-metric-uptime', _formatUptime(data.uptime_seconds));
+    el('dev-metric-source').textContent =
+      data.source === 'server' ? 'Odysseus-Server' : 'App-Container';
+    const sampled = data.sampled_at ? new Date(data.sampled_at) : new Date();
+    status.textContent = `Live · ${sampled.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    dot?.classList.add('is-live');
+  } catch (error) {
+    if (status) status.textContent = `Nicht erreichbar · ${error.message}`;
+    dot?.classList.remove('is-live');
+  } finally {
+    _serverMetricsLoading = false;
+    if (refresh) refresh.disabled = false;
+  }
+}
+
+function _startServerMetricsPolling() {
+  if (_serverMetricsTimer) return;
+  _serverMetricsTimer = setInterval(() => {
+    const modal = el('developer-modal');
+    if (modal && modal.style.display !== 'none') _loadServerMetrics();
+  }, 5000);
+}
+
 function _renderRoadmapFreshness(rm) {
   const box = el('dev-roadmap-stale');
   if (!box) return;
@@ -3920,11 +4108,22 @@ function initDeveloper() {
     // New entries always land in Eingang, tagged by type — the developer
     // sorts them into a version when picking them up.
     const kind = (typeSel && typeSel.value) || 'Idee';
+    const rawVersion = el('dev-roadmap-version')?.value?.trim() || '';
+    const normalizedVersion = _normalizeRoadmapVersion(rawVersion);
+    if (rawVersion && !normalizedVersion) {
+      if (msg) {
+        msg.textContent = 'Ungültige Version — Beispiel: 3.10';
+        msg.className = 'admin-error';
+      }
+      el('dev-roadmap-version')?.focus();
+      return;
+    }
     const details = {
       id: _newRoadmapId(),
       description: el('dev-roadmap-description')?.value?.trim() || '',
       goal: el('dev-roadmap-goal')?.value?.trim() || '',
       acceptance: el('dev-roadmap-acceptance')?.value?.trim() || '',
+      version: normalizedVersion,
       priority: el('dev-roadmap-priority')?.value || 'Normal',
       dependencies: el('dev-roadmap-dependencies')?.value?.trim() || '',
       notes: el('dev-roadmap-notes')?.value?.trim() || '',
@@ -3950,7 +4149,7 @@ function initDeveloper() {
       input.value = '';
       for (const id of [
         'dev-roadmap-description', 'dev-roadmap-goal', 'dev-roadmap-acceptance',
-        'dev-roadmap-dependencies', 'dev-roadmap-notes',
+        'dev-roadmap-version', 'dev-roadmap-dependencies', 'dev-roadmap-notes',
       ]) {
         const control = el(id);
         if (control) control.value = '';
@@ -3985,6 +4184,35 @@ function initDeveloper() {
     if (_roadmapView === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
   });
+  const bulkVersionInput = el('dev-roadmap-bulk-version');
+  const bulkVersionBtn = el('dev-roadmap-bulk-version-apply');
+  const applyBulkVersion = async () => {
+    if (!bulkVersionBtn) return;
+    bulkVersionBtn.disabled = true;
+    try {
+      const count = await _setAllPlannedVersions(bulkVersionInput?.value);
+      if (msg) {
+        msg.textContent = count
+          ? `${count} geplante Einträge wurden auf ${_normalizeRoadmapVersion(bulkVersionInput?.value)} gesetzt.`
+          : 'Keine geplanten Einträge außerhalb ausgelieferter Releases gefunden.';
+        msg.className = 'admin-success';
+      }
+    } catch (error) {
+      if (msg) {
+        msg.textContent = error.message;
+        msg.className = 'admin-error';
+      }
+    } finally {
+      bulkVersionBtn.disabled = false;
+    }
+  };
+  bulkVersionBtn?.addEventListener('click', applyBulkVersion);
+  bulkVersionInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyBulkVersion();
+    }
+  });
   el('dev-roadmap-refresh')?.addEventListener('click', async () => {
     _roadmapBuilds = null;
     await _loadRoadmap();
@@ -3993,9 +4221,13 @@ function initDeveloper() {
   el('dev-status-refresh')?.addEventListener('click', () => {
     _loadDevStatus();
     _loadSystemStatus();
+    _loadServerMetrics();
   });
+  el('dev-server-refresh')?.addEventListener('click', () => _loadServerMetrics(true));
   _initBetaButtons();
   _loadDevStatus();
+  _loadServerMetrics();
+  _startServerMetricsPolling();
   _loadRoadmap();
   _initBuilderLink();
 }
@@ -4354,6 +4586,8 @@ export function initDeveloperPage() {
     return;
   }
   _loadDevStatus();
+  _loadServerMetrics();
+  _startServerMetricsPolling();
   _loadRoadmap();
 }
 
