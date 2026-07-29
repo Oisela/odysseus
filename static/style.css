@@ -41001,36 +41001,67 @@ body.theme-frosted .modal {
   margin: 0;
 }
 /* Document-PiP popout — compact, always-on-top focus widget inspired by
-   TickTick. Chromium owns the outer PiP title bar; the inner collapse mode
-   remains useful even when the browser refuses resizeTo(). */
+   TickTick. Chromium owns the outer title bar and may enforce a larger
+   minimum window, so the widget centers itself instead of leaving a dead
+   block of space below the timer. */
 .pomo-pip-body {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  min-height: 100vh;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
   box-sizing: border-box;
-  padding: 14px 16px 11px;
+  padding: 12px;
   overflow: hidden;
-  background: var(--bg);
+  color: var(--fg);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 12% 15%,
+      color-mix(in srgb, var(--accent, var(--red)) 13%, transparent),
+      transparent 42%),
+    var(--bg);
+}
+.pomo-pip-body::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 2px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent, var(--red));
+  opacity: 0.8;
 }
 .pomo-pip-main {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
   min-width: 0;
+  margin: 0 auto;
+  padding: 12px 42px 12px 12px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 18%, transparent);
 }
 .pomo-pip-ring-wrap {
   position: relative;
-  width: 64px;
-  height: 64px;
-  flex: 0 0 64px;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
 }
-.pomo-pip-ring-wrap .pomo-ring { width: 64px; height: 64px; }
-.pomo-pip-ring-wrap .pomo-ring circle { stroke-width: 8; }
+.pomo-pip-ring-wrap .pomo-ring { width: 58px; height: 58px; }
+.pomo-pip-ring-wrap .pomo-ring circle { stroke-width: 9; }
 .pomo-pip-primary {
   position: absolute;
-  inset: 13px;
+  inset: 11px;
   display: grid;
   place-items: center;
   min-width: 0;
@@ -41038,106 +41069,154 @@ body.theme-frosted .modal {
   padding: 0 0 0 2px;
   border: 0;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, var(--panel));
   color: var(--accent, var(--red));
-  font: 600 21px/1 system-ui, sans-serif;
+  font: 700 18px/1 system-ui, sans-serif;
   cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
 }
 .pomo-pip-primary:hover {
-  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  transform: scale(1.06);
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, var(--panel));
 }
 .pomo-pip-copy {
+  flex: 1;
   min-width: 0;
   text-align: left;
 }
 .pomo-pip-copy .pomo-phase {
-  max-width: 210px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 65%, var(--accent, var(--red)));
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 .pomo-pip-copy .pomo-time {
-  margin: 1px 0 0;
-  font-size: 31px;
-  line-height: 1.05;
+  margin: 2px 0 0;
+  color: var(--fg);
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
 }
 .pomo-pip-collapse {
   position: absolute;
-  top: 7px;
-  right: 7px;
+  top: 50%;
+  right: 10px;
   z-index: 2;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   min-width: 0;
   min-height: 0;
   padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
   color: var(--fg);
-  opacity: 0.5;
-  font-size: 22px;
-  line-height: 1;
+  opacity: 0.55;
+  transform: translateY(-50%);
   cursor: pointer;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.pomo-pip-collapse svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pomo-pip-collapse.is-expand svg {
+  transform: rotate(180deg);
 }
 .pomo-pip-collapse:hover {
   opacity: 1;
-  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
 }
 .pomo-pip-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  gap: 6px;
+  width: 100%;
+  max-width: 360px;
+  margin: 0 auto;
 }
 .pomo-pip-stats span {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 68%, transparent);
 }
-.pomo-pip-stats small { opacity: 0.55; font-size: 10px; }
+.pomo-pip-stats small {
+  overflow: hidden;
+  opacity: 0.56;
+  font: 600 9px/1.2 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pomo-pip-stats b {
-  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 78%, var(--accent, var(--red)));
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .pomo-pip-controls {
+  width: 100%;
+  max-width: 360px;
   gap: 5px;
-  margin: 0;
+  margin: 0 auto;
 }
 .pomo-pip-controls .pomo-btn {
-  min-height: 25px;
-  padding: 3px 11px;
-  font-size: 11px;
+  min-height: 24px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  font-size: 10px;
 }
 .pomo-pip-collapsed-time { display: none; }
 .pomo-pip-body.is-collapsed {
   justify-content: center;
-  padding: 7px 30px 7px 8px;
+  gap: 0;
+  padding: 7px;
 }
-.pomo-pip-body.is-collapsed .pomo-pip-main { gap: 8px; }
+.pomo-pip-body.is-collapsed .pomo-pip-main {
+  gap: 8px;
+  padding: 7px 34px 7px 8px;
+  border-radius: 13px;
+}
 .pomo-pip-body.is-collapsed .pomo-pip-ring-wrap {
-  width: 42px;
-  height: 42px;
-  flex-basis: 42px;
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
 }
 .pomo-pip-body.is-collapsed .pomo-pip-ring-wrap .pomo-ring {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
 }
-.pomo-pip-body.is-collapsed .pomo-pip-primary { inset: 9px; font-size: 15px; }
+.pomo-pip-body.is-collapsed .pomo-pip-primary { inset: 8px; font-size: 13px; }
 .pomo-pip-body.is-collapsed .pomo-pip-copy,
 .pomo-pip-body.is-collapsed .pomo-pip-stats,
 .pomo-pip-body.is-collapsed .pomo-pip-controls { display: none; }
 .pomo-pip-body.is-collapsed .pomo-pip-collapsed-time {
   display: block;
-  font-size: 20px;
-  font-weight: 600;
+  color: var(--fg);
+  font-size: 19px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

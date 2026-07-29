@@ -855,7 +855,7 @@ async function _openPiP() {
   if (_pip && !_pip.closed) { try { _pip.focus(); } catch (_) {} return; }
   let win;
   try {
-    win = await window.documentPictureInPicture.requestWindow({ width: 320, height: 190 });
+    win = await window.documentPictureInPicture.requestWindow({ width: 300, height: 168 });
   } catch (e) {
     console.warn('PiP request failed:', e);
     return;
@@ -892,7 +892,11 @@ async function _openPiP() {
   win.document.body.innerHTML = `
     <div class="pomo-pip-body" id="pip-shell">
       <button type="button" class="pomo-pip-collapse" id="pip-collapse"
-              title="Collapse mini timer" aria-label="Collapse mini timer">›</button>
+              title="Collapse mini timer" aria-label="Collapse mini timer">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M7 3H3v4M13 17h4v-4M3 3l5 5M17 17l-5-5"/>
+        </svg>
+      </button>
       <div class="pomo-pip-main">
         <div class="pomo-pip-ring-wrap">
           <svg class="pomo-ring" viewBox="0 0 200 200" aria-hidden="true">
@@ -920,13 +924,13 @@ async function _openPiP() {
     _pipCollapsed = !_pipCollapsed;
     shell.classList.toggle('is-collapsed', _pipCollapsed);
     const toggle = win.document.getElementById('pip-collapse');
-    toggle.textContent = _pipCollapsed ? '‹' : '›';
+    toggle.classList.toggle('is-expand', _pipCollapsed);
     toggle.title = _pipCollapsed ? 'Expand mini timer' : 'Collapse mini timer';
     toggle.setAttribute('aria-label', toggle.title);
     // Chromium may enforce a minimum PiP size. The visual compact mode is
     // still useful when resizeTo is denied, so resizing is best-effort only.
     try {
-      win.resizeTo(_pipCollapsed ? 180 : 320, _pipCollapsed ? 86 : 190);
+      win.resizeTo(_pipCollapsed ? 174 : 300, _pipCollapsed ? 82 : 168);
     } catch (_) {}
   };
   win.document.getElementById('pip-collapse').addEventListener('click', toggleCollapsed);

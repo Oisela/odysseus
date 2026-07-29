@@ -9,11 +9,12 @@ STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
 
 
 def test_pomodoro_pip_is_compact_and_can_collapse():
-    assert "requestWindow({ width: 320, height: 190 })" in POMODORO_JS
+    assert "requestWindow({ width: 300, height: 168 })" in POMODORO_JS
     assert 'id="pip-collapse"' in POMODORO_JS
     assert "shell.classList.toggle('is-collapsed', _pipCollapsed)" in POMODORO_JS
-    assert "win.resizeTo(_pipCollapsed ? 180 : 320" in POMODORO_JS
+    assert "win.resizeTo(_pipCollapsed ? 174 : 300" in POMODORO_JS
     assert ".pomo-pip-body.is-collapsed" in STYLE_CSS
+    assert "justify-content: center;" in STYLE_CSS
 
 
 def test_pomodoro_pip_keeps_controls_progress_and_focus_stats():
@@ -32,4 +33,3 @@ def test_pip_stats_refresh_even_when_main_modal_stats_are_unavailable():
     )[0]
     assert "if (!box) return" not in refresh
     assert "_renderPiP();" in refresh
-
