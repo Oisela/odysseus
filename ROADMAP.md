@@ -49,13 +49,41 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
 - [x] Pomodoro-UI-Redesign
 - [x] Upstream-Merge-Check als Runden-Routine
 
-## v3.9.0 — OFFENES PAKET
+## v3.9.0 — RELEASED 2026-07-28 (Prod @ 3427f75)
+
+### Ausgeliefert
+- [x] **Get better:** Nachrichtenaktion neben Rewrite, Explain,
+      Generate from here und Fork. Startet im Hintergrund einen Fork mit
+      vordefiniertem Verbesserungsauftrag und analysiert Halluzinationen,
+      unnötige Nachfragen und Tool-Aufrufe, um konkrete Skill- und
+      Entwicklerverbesserungen vorzuschlagen.
+- [x] **Developer als Hauptseite:** steht für Admins direkt in der Sidebar
+      wie Shopping und RemNote. Roadmap und Deployment-Steuerung verwenden
+      ein eigenes großes, dockbares Fenster; Settings → Developer leitet
+      dorthin weiter. Der bestehende Panel-Code wird verschoben statt
+      dupliziert.
+- [x] **Roadmap-Build-Pipeline:** Listen-/Board-Ansicht, strukturierte
+      Feature-Definitionen, Modellwahl, verknüpfte Builder-Chats,
+      Build-Status und Beta-Abnahme.
+- [x] **RemNote-Hauptseite und Offline-Puffer:** Bridge-Status, gepufferte
+      Karten, erneutes Senden, Bearbeiten und Debug-Informationen direkt
+      in Odysseus.
+- [x] **Notes-WYSIWYG:** Markdown-Roundtrip, Listen und Checklisten,
+      Überschriften, Trennlinien, Live-LaTeX-Inseln und filterbewusstes
+      Quick-Add.
+- [x] **Chat-/UI-Politur:** Quote-and-Ask übernimmt wieder die originale
+      LaTeX-Quelle, New Chat löst das aktive Projekt korrekt und minimierte
+      Fensterchips sind sortierbar und an benannte Positionen andockbar.
+- [x] **Release-Prüfung:** Beta #35/#36 auf Desktop und Mobile geprüft;
+      17 fokussierte Tests sowie Syntaxchecks grün. Gesamtlauf:
+      4610 bestanden, 3 übersprungen; 9 bekannte unabhängige Alt-Fehler
+      unverändert.
 
 ### Chat-Chaining & Token-Effizienz
 - [ ] **Chat-Chaining / kompakte Delegation:** Chats bzw. spezialisierte Worker können Aufgaben übernehmen; an den Hauptchat gehen nur Ergebnis, Belege und ein kompaktes Hand-off statt des vollständigen Verlaufs zurück.
 - [ ] **Token-Budget & Kontext-Effizienz:** Budgets pro Aufgabe, komprimierte Übergaben, Code-/Projekt-Map, gezielte Ausgaben, Caching häufiger Architektur-/Git-/Testinformationen und günstige Worker für Extraktion, Suche und Review. **Erste Ausbaustufe gebaut:** Delegate-Worker begrenzt Task- und Antwortbudget, kürzt große Hand-offs transparent und zeigt beide Budgets in Settings → Delegate Worker; weiter offen: projektweite Maps/Caches und Worker-Routing.
 
-### Offene Bugs & Betriebsaufgaben
+### Weiter offen nach Release
 - [ ] **RemNote-Puffer-Flush als Scheduled Task:** den vorhandenen Task über die UI anlegen (kein Code; Prompt im Setup-Repo).
 - [ ] **Agent-Modus-Bug:** Neuer Chat mit aktivem Agent-Modus meldet gelegentlich „kein Agent-Modus"; Reproduktion mit Screenshot, Wortlaut und Ablauf sammeln.
 - [ ] **Doppelte Chat-Module:** `chat.js` und `chatRenderer.js` werden einmal über Root-Script-Tags mit Query und zusätzlich per Import geladen; Verhalten prüfen und doppelte Modulinstanzen entfernen.
@@ -64,7 +92,8 @@ Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in
 ### Neue Features
 - [ ] **Server-Live-Ansicht:** nicht nur für Admins eine sichere Live-Ansicht des Hosts (CPU, RAM usw.).
 - [ ] **Modell-/API-Preisvergleich:** Kosten und Eignung der integrierten Modelle/Anbieter (z. B. Gemini, Claude, ChatGPT) transparent vergleichen, besonders für Physik/Mathe.
-- [ ] **RemNote-Offlinespeicher:** einen klaren Ort für Rems, wenn RemNote nicht verbunden ist; später gezielt an RemNote übertragen, mit Zuordnung zum gewünschten Rem/Pfad.
+- [x] **RemNote-Offlinespeicher:** als RemNote-Hauptseite mit Bridge-Status,
+      Offline-Puffer und gezieltem erneutem Senden umgesetzt.
 
 ## Später / Ideen-Speicher
 - [ ] **Selbst-Loop-Retry:** Odysseus-Entwickler soll eine Runde bevorzugt selbst bauen lassen; zuvor verworfen, weil der Selbst-Loop die Arbeit wirklich selbst leisten soll.
