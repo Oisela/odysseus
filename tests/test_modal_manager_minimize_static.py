@@ -106,6 +106,35 @@ def test_composer_boundary_is_kept_even_when_dock_is_taller_than_free_space():
     assert "composerRect.top - chatRect.top > height" not in bounds
 
 
+def test_layout_reclamp_never_overwrites_the_remembered_position():
+    """A clamp reacts to space available now, not to a new user intent.
+
+    Writing it back made every layout change permanent: the composer grows
+    while typing, which lowers maxTop and lifts the group; when the composer
+    shrank again the group stayed up and crept further on each pass.
+    """
+    sync = MODAL_MANAGER[MODAL_MANAGER.index("function _syncDockLayout"):
+                         MODAL_MANAGER.index("function _scheduleDockLayout")]
+    apply_position = MODAL_MANAGER[
+        MODAL_MANAGER.index("function _applyDockPos"):
+        MODAL_MANAGER.index("function _floatDockInsideChat")
+    ]
+    assert "_placeChatChild(" in sync
+    assert "_dockPosition = _placeChatChild(" not in sync
+    assert "_chipPositions.set(" not in sync
+    assert "_placeChatChild(" in apply_position
+    assert "_dockPosition = _placeChatChild(" not in apply_position
+
+
+def test_free_chip_is_clamped_against_its_real_width():
+    """A placeholder size let a wide chip overhang the chat edge."""
+    assert "_placeChatChild(chip, pos.left, pos.top, 40, 40)" not in MODAL_MANAGER
+    assert (
+        "_placeChatChild(chip, pos.left, pos.top, chip.offsetWidth, chip.offsetHeight)"
+        in MODAL_MANAGER
+    )
+
+
 def test_mobile_drawer_temporarily_hides_chat_dock_controls():
     assert "const drawerOpen = window.innerWidth <= 768" in MODAL_MANAGER
     assert "dock-mobile-drawer-hidden" in MODAL_MANAGER

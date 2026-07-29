@@ -228,6 +228,11 @@ function _viewportToChat(left, top) {
   return { left: left - bounds.chatRect.left, top: top - bounds.chatRect.top };
 }
 
+// Renders at the clamped position and reports it. Callers that react to a
+// LAYOUT change must discard the return value: the clamp is a temporary
+// correction for the space available right now, not a new user intent. Only
+// a real gesture (drag release, re-dock) may overwrite the remembered
+// position — see _placeChatChild callers in _syncDockLayout/_applyDockPos.
 function _placeChatChild(el, left, top, width = el.offsetWidth, height = el.offsetHeight) {
   const bounds = _chatDockBounds(width, height);
   if (!bounds) return { left, top };
@@ -262,8 +267,13 @@ function _syncDockLayout() {
   looseChips.forEach(chip => {
     chip.classList.toggle('dock-mobile-drawer-hidden', !!drawerOpen);
   });
+  // Reclamp only — the remembered position stays untouched. Writing the
+  // clamped value back made every layout change permanent: the composer grows
+  // while typing, which lowers maxTop and lifts the group; when it shrank
+  // again the group stayed up, creeping further each time ("das verschiebt
+  // sich nach oben", Alessio 2026-07-29).
   if (_dockPosition) {
-    _dockPosition = _placeChatChild(
+    _placeChatChild(
       dock, _dockPosition.left, _dockPosition.top,
       dock.offsetWidth, dock.offsetHeight
     );
@@ -271,10 +281,7 @@ function _syncDockLayout() {
   for (const [id, stored] of _chipPositions) {
     const chip = chat.querySelector(`:scope > .minimized-dock-chip[data-modal-id="${id}"]`);
     if (!chip) continue;
-    _chipPositions.set(
-      id,
-      _placeChatChild(chip, stored.left, stored.top, chip.offsetWidth, chip.offsetHeight)
-    );
+    _placeChatChild(chip, stored.left, stored.top, chip.offsetWidth, chip.offsetHeight);
   }
 }
 
@@ -376,7 +383,8 @@ function _applyDockPos(dock) {
     // that transform would shift the whole group half its width under the
     // sidebar even after the coordinate itself was correctly clamped.
     dock.style.transform = 'none';
-    _dockPosition = _placeChatChild(
+    // Reclamp for display only; _dockPosition keeps what the user chose.
+    _placeChatChild(
       dock, _dockPosition.left, _dockPosition.top,
       dock.offsetWidth, dock.offsetHeight
     );
@@ -570,8 +578,12 @@ function _renderDock() {
     if (pos && window.innerWidth <= 768) {
       chip.style.setProperty('position', 'absolute', 'important');
       chip.style.setProperty('z-index', '10020', 'important');
-      const placed = _placeChatChild(chip, pos.left, pos.top, 40, 40);
-      _chipPositions.set(id, placed);
+      // Attach before measuring: offsetWidth/Height are 0 off-DOM, and the
+      // 40x40 placeholder this used to pass let a wide chip clamp against a
+      // far-too-permissive maxLeft and overhang the chat edge.
+      const chat = document.getElementById('chat-container');
+      if (chat) chat.appendChild(chip);
+      _placeChatChild(chip, pos.left, pos.top, chip.offsetWidth, chip.offsetHeight);
     } else {
       dock.appendChild(chip);
     }
