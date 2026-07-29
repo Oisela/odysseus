@@ -22,6 +22,7 @@ from src.constants import (
     TECTONIC_BIN,
     LATEX_COMPILE_TIMEOUT_S,
 )
+from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,14 @@ from routes.document_helpers import (
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
+    def _reserve_document_uploads(user: Optional[str], content: str) -> None:
+        missing_id = reserve_upload_references(upload_handler, user, content)
+        if missing_id:
+            raise HTTPException(
+                409,
+                f"Referenced upload is no longer available: {missing_id}",
+            )
+
     def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
         if upload_handler is None:
             return None
@@ -134,6 +143,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
+            _reserve_document_uploads(user, req.content)
             _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
 
             # Reply drafts are keyed to the source email. If a UI/tool path tries
@@ -646,6 +656,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if doc.current_content == incoming_content and not req.force_version:
                 return _doc_to_dict(doc)
 
+            _reserve_document_uploads(user, incoming_content)
             _assert_pdf_marker_upload_owned(request, incoming_content, user, upload_handler)
 
             # Check if we can coalesce with the latest version

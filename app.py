@@ -658,7 +658,12 @@ app.include_router(setup_emoji_routes())
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
+app.include_router(setup_session_routes(
+    session_manager,
+    session_config,
+    webhook_manager=webhook_manager,
+    upload_handler=upload_handler,
+))
 
 # Projects (chats grouped around a topic with workspace + instructions)
 from routes.project_routes import setup_project_routes
@@ -691,7 +696,7 @@ app.include_router(setup_research_routes(research_handler, session_manager=sessi
 
 # History
 from routes.history.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager))
+app.include_router(setup_history_routes(session_manager, upload_handler=upload_handler))
 
 # Search
 from routes.search_routes import setup_search_routes
@@ -770,7 +775,7 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-calendar_router = setup_calendar_routes()
+calendar_router = setup_calendar_routes(upload_handler=upload_handler)
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
@@ -833,7 +838,7 @@ logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler))
+app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
 from routes.shopping_routes import setup_shopping_routes
 app.include_router(setup_shopping_routes())
 
