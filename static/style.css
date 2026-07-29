@@ -41628,6 +41628,10 @@ body.theme-frosted .modal {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+  /* The modal content deliberately has padding:0 so the roadmap can use the
+     full window width. Restore the normal title-bar inset explicitly; without
+     it the title and window controls touch the top/side border. */
+  padding: 10px 14px 0;
 }
 .developer-modal-content .modal-header h4 {
   display: inline-flex;

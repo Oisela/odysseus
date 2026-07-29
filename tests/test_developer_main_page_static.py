@@ -46,3 +46,9 @@ def test_admin_exposes_focused_developer_refresh():
     admin = _read("static/js/admin.js")
     assert "export function initDeveloperPage()" in admin
     assert "initDeveloperPage," in admin
+
+
+def test_developer_header_keeps_the_standard_window_inset():
+    css = _read("static/style.css")
+    rule = css.split(".developer-modal-content .modal-header {", 1)[1].split("}", 1)[0]
+    assert "padding: 10px 14px 0;" in rule
