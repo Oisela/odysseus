@@ -82,9 +82,9 @@ function _emitModalOpened(id, modal) {
   } catch (_) {}
 }
 
-function _captureRestoreHeight(modal, state) {
+function _captureRestoreHeight(modal, state, content = null, rect = null) {
   if (!modal || !state) return;
-  const content = modal.querySelector('.modal-content');
+  content ||= modal.querySelector('.modal-content');
   if (!content) return;
   if (modal.id === 'email-lib-modal'
       && (modal.classList.contains('modal-left-docked')
@@ -93,7 +93,7 @@ function _captureRestoreHeight(modal, state) {
     delete state.restoreMinHeight;
     return;
   }
-  const rect = content.getBoundingClientRect();
+  rect ||= content.getBoundingClientRect();
   if (!rect || rect.height < 120) return;
   const maxHeight = Math.max(180, window.innerHeight - 24);
   const minHeight = modal.id === 'email-lib-modal' && window.innerWidth > 768
@@ -407,6 +407,7 @@ function _renderDock() {
   }
   if (!renderIds.length) {
     dock.innerHTML = '';
+    _renderedChipIds.clear();
     // Scrub ALL drag/animation inline styles, then re-apply display:none so
     // the empty dock stays hidden until new chips arrive.
     dock.style.cssText = '';
@@ -1323,6 +1324,11 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
   // observe both and bump the z-index on the visible→hidden→visible
   // transition. Idempotent on re-register.
   const _modalEl = document.getElementById(id);
+  // A dynamic modal may already have received the legacy `_` button before
+  // its module had a chance to register here. Adopt that existing button so
+  // every registered modal uses this manager's state and dock, rather than
+  // the two systems racing and leaving the sidebar in a stale state.
+  if (_modalEl) injectMinimizeButton(_modalEl, id);
   if (_modalEl && !_modalEl._mmAutoStackObs) {
     const _isVisible = () => !_modalEl.classList.contains('hidden')
         && getComputedStyle(_modalEl).display !== 'none';
@@ -1395,7 +1401,12 @@ export function minimize(id) {
   // and let the chip drive restore/close via the registered functions.
   const modal = document.getElementById(id);
   if (modal) {
-    _captureRestoreHeight(modal, s);
+    // Read layout once. A bounding-rect read forces the browser to flush
+    // pending layout, so doing it separately for height and float geometry
+    // made the minimize click unnecessarily expensive.
+    const content = modal.querySelector('.modal-content');
+    const rect = content?.getBoundingClientRect();
+    _captureRestoreHeight(modal, s, content, rect);
     // If this window is edge-docked (right/left), SUSPEND the dock: release
     // the body push so the chat returns to full width while the window is
     // minimized, but keep the dock so restoring the chip snaps it back in.
@@ -1408,8 +1419,6 @@ export function minimize(id) {
       // FLOATING window: remember where it sits so restore puts it back
       // exactly there — minimize→restore must never re-center or re-dock a
       // window the user placed by hand (Alessio, 2026-07-22).
-      const content = modal.querySelector('.modal-content');
-      const rect = content?.getBoundingClientRect();
       if (content && rect && rect.width > 40 && rect.height > 40) {
         s.floatGeometry = {
           left: rect.left, top: rect.top,
@@ -1424,7 +1433,6 @@ export function minimize(id) {
     }
     modal.classList.add('hidden');
     modal.classList.add('modal-minimized');
-    const content = modal.querySelector('.modal-content');
     if (content) {
       content.classList.remove('sheet-ready', 'modal-closing');
       content.style.transform = '';
@@ -1554,11 +1562,14 @@ export function injectMinimizeButton(modal, modalId) {
   if (!header) return;
   if (header.querySelector('.modal-minimize-btn, .minimize-btn, [data-minimize]')) {
     // An existing minimize button is present — wire it to the manager instead
-    const existing = header.querySelector('.minimize-btn, [data-minimize]');
+    const existing = header.querySelector('.modal-minimize-btn, .minimize-btn, [data-minimize]');
     if (existing && !existing.dataset._modalsBound) {
       existing.dataset._modalsBound = '1';
       existing.addEventListener('click', (e) => {
-        e.stopPropagation();
+        // The legacy modal code may already have attached a listener to this
+        // same button. Stop it here so one click cannot minimize through both
+        // systems and create two conflicting dock states.
+        e.stopImmediatePropagation();
         minimize(modalId);
       }, true);
     }
@@ -1568,6 +1579,7 @@ export function injectMinimizeButton(modal, modalId) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'modal-minimize-btn';
+  btn.dataset._modalsBound = '1';
   btn.title = 'Minimize';
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg>';
   // Anchor the _/X pair to the right edge regardless of the header's
@@ -1587,7 +1599,7 @@ export function injectMinimizeButton(modal, modalId) {
     closeBtn.style.flexShrink = '0';
   }
   btn.addEventListener('click', (e) => {
-    e.stopPropagation();
+    e.stopImmediatePropagation();
     minimize(modalId);
   });
   if (closeBtn && closeBtn.parentNode) closeBtn.parentNode.insertBefore(btn, closeBtn);
@@ -1658,12 +1670,34 @@ function _scanAndWire() {
     injectMinimizeButton(modal, id);
   }
 }
-const _scanTimer = setInterval(_scanAndWire, 1000);
-// First scan after DOM ready
+
+// Wire newly-created tool modals only when the DOM actually changes. The old
+// one-second polling loop scanned every known modal forever, even while the
+// user was just typing or scrolling, and contributed to the app-wide lag.
+const _autoWireSelector = Object.keys(_AUTO_WIRE).map((id) => `#${id}`).join(',');
+const _autoWireObserver = new MutationObserver((records) => {
+  for (const record of records) {
+    for (const node of record.addedNodes) {
+      if (node.nodeType !== 1) continue;
+      if (_AUTO_WIRE[node.id]) injectMinimizeButton(node, node.id);
+      node.querySelectorAll?.(_autoWireSelector).forEach((candidate) => {
+        injectMinimizeButton(candidate, candidate.id);
+      });
+    }
+  }
+});
+
+function _startAutoWire() {
+  _scanAndWire();
+  const root = document.body || document.documentElement;
+  if (root) _autoWireObserver.observe(root, { childList: true, subtree: true });
+}
+
+// First scan after DOM ready.
 if (document.readyState !== 'loading') {
-  setTimeout(_scanAndWire, 100);
+  _startAutoWire();
 } else {
-  document.addEventListener('DOMContentLoaded', () => setTimeout(_scanAndWire, 100));
+  document.addEventListener('DOMContentLoaded', _startAutoWire, { once: true });
 }
 
 // Tools that survive a swipe-down as a dock chip. Anything else falls
