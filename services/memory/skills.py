@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
 import time
 from typing import Dict, Iterable, List, Optional
 
@@ -35,13 +37,134 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _tokenize(text: str) -> set:
-    return {w.strip('.,!?";:()[]') for w in (text or "").lower().split() if len(w) > 1}
+    """Split into word tokens on any non-word character.
+
+    Whitespace-only splitting glued separators into the token: a description
+    reading "Karten/Flashcards" produced the single token
+    "karten/flashcards", which no query for "Flashcard" could ever match.
+    `\\w` is Unicode-aware, so umlauts stay inside their words.
+    """
+    return {w for w in re.split(r"\W+", (text or "").lower(), flags=re.UNICODE) if len(w) > 1}
 
 
 def _jaccard(a: set, b: set) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+# Function words carry no topic signal and would otherwise be "covered" by any
+# skill, inflating every score equally. German included because that is what
+# Alessio writes in.
+_STOPWORDS = frozenset("""
+der die das den dem des ein eine einen einem einer und oder aber wenn dann
+ich du er sie es wir ihr mir mich dir dich ihm ihn uns euch
+ist sind war waren bin bist sein haben hat habe hatte hatten wird werden
+kann kannst können muss musst müssen soll sollst sollen will willst wollen
+mit von zu für auf in im am an bei aus nach über unter vor durch um
+nicht kein keine nur auch noch schon mal bitte danke was wie wo wer warum
+mir's gibt gib mach machen tun
+mein meine meinem meinen meiner meins dein deine deinem deinen deiner
+unser unsere unserem unseren ihre ihrem ihren ihrer
+welche welcher welches etwas nichts alles hier dort da dann jetzt gerade grad
+so sehr mehr weniger kurz eigentlich vielleicht wieder immer
+steht stehen steh geht gehen geh kommt kommen liegt liegen
+heisst heißt brauche brauchen sagt sagen bekomme bekommen
+the a an and or but if then this that these those
+i you he she it we they me him her us them my your his its our their
+is are was were be been being have has had do does did
+can could may might must shall should will would
+with from to for on in at by of as into about over under
+not no only also still already please thanks what how where who why
+""".split())
+
+# One place to tune how demanding skill retrieval is. Numerically identical to
+# the previous default — the scoring scale changed, which is already enough
+# movement for one round.
+SKILL_RELEVANCE_THRESHOLD = 0.3
+
+# How many of the most specific query terms define the denominator. Without a
+# cap a long, chatty question dilutes itself: 30 words of which a skill covers
+# the 4 that matter would score 0.13 and be dropped. Alessio writes in
+# sentences, not keywords.
+_QUERY_TERM_CAP = 8
+
+# Poor man's stemming. German inflects and compounds heavily, so "Notiz" in a
+# question and "Notizen" in a description are different tokens and never
+# matched. Requiring a shared prefix of this length keeps short words exact
+# ("git" must not match "github") while letting real inflections through.
+_STEM_MIN = 5
+
+
+def _idf_map(token_sets: List[set]) -> dict:
+    """Inverse document frequency across the candidate skills."""
+    n = max(1, len(token_sets))
+    df: Dict[str, int] = {}
+    for tokens in token_sets:
+        for tok in tokens:
+            df[tok] = df.get(tok, 0) + 1
+    return {tok: math.log(1.0 + n / (1.0 + count)) for tok, count in df.items()}
+
+
+def _query_term_weights(query_tokens: set, idf: dict) -> Dict[str, float]:
+    """Query terms that exist in the skill vocabulary at all, with weights.
+
+    A word no skill uses cannot discriminate between skills — it is subject
+    matter, not routing vocabulary — and IDF would weight it highest, being
+    rarest. One domain noun then sank the whole score: "was steht in meinem
+    RemNote zu Thermodynamik" landed at 0.24 because "Thermodynamik" outweighed
+    the very word identifying the skill. Such terms are dropped from both sides
+    of the ratio.
+
+    Computed once per call rather than per skill; stem matches inherit the
+    weight of the vocabulary word they matched.
+    """
+    vocab_stems = [t for t in idf if len(t) >= _STEM_MIN]
+    weights: Dict[str, float] = {}
+    for term in query_tokens:
+        if term in _STOPWORDS:
+            continue
+        if term in idf:
+            weights[term] = idf[term]
+        elif len(term) >= _STEM_MIN:
+            hits = [v for v in vocab_stems if v.startswith(term) or term.startswith(v)]
+            if hits:
+                weights[term] = max(idf[v] for v in hits)
+    return weights
+
+
+def _coverage(term_weights: Dict[str, float], skill_tokens: set) -> float:
+    """How much of the QUERY this skill accounts for, weighted by specificity.
+
+    Replaces Jaccard, which divides by the union and so was mathematically
+    unable to fire: a SKILL.md is 200-400 tokens, a question is 5-15, so even a
+    perfect topical match peaked near 0.04 against a 0.3 threshold. Skills only
+    ever surfaced through the two special paths below (an exact tag token, or
+    the whole query appearing verbatim in the description) — which is precisely
+    Alessio's "Skills werden erst bei explizitem Erwähnen gefunden".
+
+    Dividing by the query instead means a long skill no longer dilutes itself,
+    and IDF keeps a shared generic word from counting as much as a distinctive
+    one.
+    """
+    if not term_weights:
+        return 0.0
+    ranked = sorted(term_weights, key=term_weights.get, reverse=True)[:_QUERY_TERM_CAP]
+    total = sum(term_weights[t] for t in ranked)
+    if total <= 0:
+        return 0.0
+    stems = [t for t in skill_tokens if len(t) >= _STEM_MIN]
+    hit = sum(term_weights[t] for t in ranked if _term_covered(t, skill_tokens, stems))
+    return hit / total
+
+
+def _term_covered(term: str, skill_tokens: set, stems: List[str]) -> bool:
+    """Exact match, or a shared prefix long enough to be the same word."""
+    if term in skill_tokens:
+        return True
+    if len(term) < _STEM_MIN:
+        return False
+    return any(s.startswith(term) or term.startswith(s) for s in stems)
 
 
 def _to_float(x, default: float = 0.0) -> float:
@@ -654,7 +777,7 @@ class SkillsManager:
         self,
         query: str,
         skills: Optional[List[Dict]] = None,
-        threshold: float = 0.3,
+        threshold: float = SKILL_RELEVANCE_THRESHOLD,
         max_items: int = 5,
         min_confidence: float = 0.0,
     ) -> List[Dict]:
@@ -697,16 +820,23 @@ class SkillsManager:
             return []
 
         query_tokens = _tokenize(query)
-        scored = []
-        for sk in skills:
-            text = " ".join([
+        # IDF is computed over the candidate set on each call: it is a handful
+        # of skills, and a stale index would be worse than the microsecond.
+        skill_tokens = [
+            _tokenize(" ".join([
                 sk.get("name", ""),
                 sk.get("description", ""),
                 sk.get("when_to_use", ""),
                 " ".join(sk.get("tags", []) or []),
                 " ".join(sk.get("procedure", []) or []),
-            ])
-            score = _jaccard(query_tokens, _tokenize(text))
+            ]))
+            for sk in skills
+        ]
+        idf = _idf_map(skill_tokens)
+        term_weights = _query_term_weights(query_tokens, idf)
+        scored = []
+        for sk, tokens in zip(skills, skill_tokens):
+            score = _coverage(term_weights, tokens)
             for tag in sk.get("tags", []) or []:
                 # Match tags as whole tokens, not substrings: `tag in query`
                 # boosted e.g. a "ai" tag for any query containing "email".
