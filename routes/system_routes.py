@@ -66,6 +66,41 @@ git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null \
   | grep -m1 APP_VERSION | cut -d'"' -f2 | head -1 | sed 's/^/dev_version=/'
 """
 
+# Everything POST /switch must know before it fires. The switch runs detached,
+# so once it is launched nothing can report back synchronously — every check
+# that can be made has to be made HERE, while there is still an HTTP response to
+# put the answer in. Emitted as key=value, one round trip, ~0.3 s.
+#
+# `wc -l` rather than `grep -c .`: grep exits 1 on zero matches, which trips the
+# guard clause and appends a second line to the value.
+_SWITCH_PREFLIGHT_SCRIPT = f"""
+echo "head=$(git -C {_PROD_DIR} rev-parse --short HEAD 2>/dev/null)"
+echo "disk_avail_kb=$(df --output=avail / | tail -1 | tr -d ' ')"
+echo "build_active=$(systemctl list-units --state=active --no-legend \
+  'odysseus-promote-*' 'odysseus-switch-*' 'odysseus-beta-start-*' 2>/dev/null \
+  | wc -l | tr -d ' ')"
+"""
+
+# A docker build needs room; below this the build bricks more than itself.
+# switch-version.sh enforces the same number, but only AFTER the UI has already
+# said "switch started" — by then the user is watching a rebuild that will not
+# happen. Checking here turns a silent failure into a sentence.
+_SWITCH_MIN_FREE_KB = 5 * 1024 * 1024
+
+# When the host is unreachable the UI cannot switch at all — so the message has
+# to carry the way out rather than just naming the failure. This is the exact
+# command from the odysseus-entwickler skill's emergency section.
+_CLI_FALLBACK = (
+    "Cannot reach the deploy host over SSH, so the switch cannot be started. "
+    "Run it from a terminal instead: "
+    "ssh root@odysseus-server \"systemd-run --collect bash "
+    f"{_SWITCH} {{commit}}\""
+)
+
+# Breadcrumbs written by switch-version.sh. The switch is detached, so this file
+# is the only record of what actually happened after the UI lost contact.
+_SWITCH_LOG = "/home/deploy/odysseus-entwickler/switch-last.log"
+
 # Last /proc CPU counters per source. CPU utilisation is a delta, not the
 # since-boot average; keeping only two aggregate numbers avoids exposing any
 # process or host-identifying data through the admin endpoint.
@@ -638,6 +673,30 @@ def setup_system_routes() -> APIRouter:
             rel["current"] = rel["commit"] == current
         return {"releases": releases, "current_commit": current}
 
+    @router.get("/switch-log")
+    def switch_log(request: Request):
+        """Last outcomes recorded by switch-version.sh.
+
+        A switch detaches itself (the rebuild kills this process), so the UI
+        loses the thread the moment it starts. After the window is reopened this
+        is how it learns whether the target came up, whether the auto-revert
+        caught it, or whether the script died before doing anything.
+        """
+        require_admin(request)
+        entries = []
+        try:
+            r = _ssh("tail", "-n", "20", _SWITCH_LOG)
+            if r.returncode == 0:
+                for line in r.stdout.splitlines():
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        entries.append({
+                            "at": parts[0], "event": parts[1], "commit": parts[2],
+                        })
+        except Exception:
+            logger.exception("system/switch-log: read failed")
+        return {"entries": entries}
+
     @router.post("/switch")
     def switch_version(body: SwitchBody, request: Request):
         """Switch prod to a RELEASED version (down- or re-upgrade).
@@ -648,11 +707,57 @@ def setup_system_routes() -> APIRouter:
         very process, exactly like promote.
         """
         require_admin(request)
+
+        # Preflight FIRST: the switch is detached, so this response is the only
+        # chance to tell the user why nothing is going to happen.
+        try:
+            probe = _ssh_script(_SWITCH_PREFLIGHT_SCRIPT, timeout=12)
+            reachable = probe.returncode == 0
+        except Exception:
+            logger.exception("system/switch: preflight probe failed")
+            reachable = False
+        if not reachable:
+            raise HTTPException(503, _CLI_FALLBACK.format(commit=body.commit))
+        pre = _parse_kv_lines(probe.stdout)
+
         # force: the ledger is the security guard here, never serve it cached.
         releases = _read_releases(force=True)
+        if not releases:
+            raise HTTPException(
+                503,
+                "Release ledger is empty or unreadable — nothing to switch to. "
+                f"Check {_RELEASES} on the host.",
+            )
         target = next((rel for rel in releases if rel["commit"] == body.commit), None)
         if not target:
             raise HTTPException(400, "Commit is not a released version — refusing to switch.")
+
+        head = pre.get("head") or ""
+        if head and (head == target["commit"] or target["commit"].startswith(head)
+                     or head.startswith(target["commit"])):
+            raise HTTPException(
+                409, f"Production already runs v{target['version']} ({head})."
+            )
+
+        try:
+            avail_kb = int(float(pre.get("disk_avail_kb", 0)))
+        except (TypeError, ValueError):
+            avail_kb = 0
+        if avail_kb and avail_kb < _SWITCH_MIN_FREE_KB:
+            raise HTTPException(
+                507,
+                f"Only {avail_kb // 1024 // 1024} GB free on the host — a rebuild "
+                "needs 5 GB. Run 'docker image prune -f' first.",
+            )
+
+        if (pre.get("build_active") or "0") != "0":
+            raise HTTPException(
+                409,
+                "A deployment is already running on the host (promote, switch or "
+                "beta start). Wait for it to finish — two builds at once corrupt "
+                "the checkout.",
+            )
+
         unit = "odysseus-switch-$(date +%s)"
         cmd = (
             f"sudo systemd-run --unit={unit} --collect "

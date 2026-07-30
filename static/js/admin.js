@@ -2871,8 +2871,17 @@ const _SYS_SWITCHER_MIN_VERSION = '3.3.1';
 /* Version switcher — jump prod to any RELEASED version (down- or re-upgrade).
    The list comes from the host's release ledger; the server refuses commits
    that are not in it. Works with zero AI involvement by design. */
-async function _initVersionSwitcher() {
-  const sel = el('sys-versionSel'), btn = el('sys-switchBtn'), msg = el('sys-statusMsg');
+// Mounted twice (Settings → System and the Developer page), and
+// initDeveloperPage() re-runs on every visit to that page. The release list is
+// re-fetched each time — that part SHOULD be fresh — but the listeners are
+// attached exactly once per mount. Without the guard a user who opened the
+// Developer page three times would fire three confirms and three POSTs from one
+// click on the switch button. Element-property guard is the house idiom
+// (cf. `textarea._slashAcWired` in slashAutocomplete.js).
+const _switcherReleases = {};
+
+async function _initVersionSwitcher(prefix = 'sys-') {
+  const sel = el(prefix + 'versionSel'), btn = el(prefix + 'switchBtn'), msg = el(prefix + 'statusMsg');
   if (!sel || !btn) return;
   let releases = [];
   let currentCommit = '';
@@ -2898,14 +2907,20 @@ async function _initVersionSwitcher() {
     const label = `v${r.version} (${r.commit})${r.current ? ' — current' : ''}`;
     sel.appendChild(new Option(label, r.commit));
   });
+  // Listeners read through the map, never through this call's closure — on a
+  // re-open the closure would hold the PREVIOUS fetch's list and a freshly
+  // released version would be rejected as "not a release".
+  _switcherReleases[prefix] = releases;
   const sync = () => {
-    const chosen = releases.find((r) => r.commit === sel.value);
+    const chosen = (_switcherReleases[prefix] || []).find((r) => r.commit === sel.value);
     btn.disabled = !chosen || chosen.current;
   };
-  sel.addEventListener('change', sync);
   sync();
+  if (btn._switcherWired) return;
+  btn._switcherWired = true;
+  sel.addEventListener('change', sync);
   btn.addEventListener('click', async () => {
-    const chosen = releases.find((r) => r.commit === sel.value);
+    const chosen = (_switcherReleases[prefix] || []).find((r) => r.commit === sel.value);
     if (!chosen) return;
     let confirmMsg = `Switch production to v${chosen.version} (${chosen.commit})?\n\nData is kept; dev stays untouched. IMPORTANT: close and reopen the app window once it is back.`;
     if (_sysCmpSemver(chosen.version, _SYS_SWITCHER_MIN_VERSION) < 0) {
@@ -2913,7 +2928,7 @@ async function _initVersionSwitcher() {
     }
     if (!confirm(confirmMsg)) return;
     btn.disabled = true;
-    msg.textContent = '';
+    if (msg) msg.textContent = '';
     try {
       const res = await fetch(`/api/system/switch`, {
         method: 'POST', credentials: 'same-origin',
@@ -2922,16 +2937,13 @@ async function _initVersionSwitcher() {
       });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'switch_started') {
-        msg.textContent = `Switching to v${d.version} — prod rebuilds and restarts shortly. Close and REOPEN the app window once it is back.`;
-        msg.className = 'admin-success';
+        if (msg) { msg.textContent = `Switching to v${d.version} — prod rebuilds and restarts shortly. Close and REOPEN the app window once it is back.`; msg.className = 'admin-success'; }
       } else {
-        msg.textContent = (d && (d.detail || d.message)) || `Switch failed (status ${res.status})`;
-        msg.className = 'admin-error';
+        if (msg) { msg.textContent = (d && (d.detail || d.message)) || `Switch failed (status ${res.status})`; msg.className = 'admin-error'; }
         btn.disabled = false;
       }
     } catch (e) {
-      msg.textContent = 'Switch failed: ' + e.message;
-      msg.className = 'admin-error';
+      if (msg) { msg.textContent = 'Switch failed: ' + e.message; msg.className = 'admin-error'; }
       btn.disabled = false;
     }
   });
@@ -4614,6 +4626,7 @@ export function initDeveloperPage() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initVersionSwitcher('dev-');
 }
 
 export function open(tab) {
