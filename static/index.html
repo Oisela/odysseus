@@ -2702,27 +2702,28 @@
             <div class="dev-card-heading">
               <div>
                 <h2>Server live</h2>
-                <div class="admin-toggle-sub">Sichere, aggregierte Auslastung ohne Prozessnamen oder andere sensible Serverdaten. Aktualisiert sich alle 5 Sekunden.</div>
+                <div class="admin-toggle-sub">Secure, aggregated load without process names or other sensitive server data. Updates every 5 seconds.</div>
               </div>
-              <button class="admin-btn-sm" id="dev-server-refresh" type="button" title="Serverauslastung jetzt aktualisieren">
+              <button class="admin-btn-sm" id="dev-server-refresh" type="button" title="Refresh server load now">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                Aktualisieren
+                Refresh
               </button>
             </div>
             <div class="dev-metrics" id="dev-server-metrics" aria-live="polite">
-              <div class="dev-metric"><span>CPU</span><strong id="dev-metric-cpu">…</strong><small id="dev-metric-load">Wird geladen</small></div>
-              <div class="dev-metric"><span>RAM</span><strong id="dev-metric-memory">…</strong><small id="dev-metric-memory-detail">Wird geladen</small></div>
-              <div class="dev-metric"><span>Speicher</span><strong id="dev-metric-disk">…</strong><small id="dev-metric-disk-detail">Wird geladen</small></div>
-              <div class="dev-metric"><span>Laufzeit</span><strong id="dev-metric-uptime">…</strong><small id="dev-metric-source">Wird geladen</small></div>
+              <div class="dev-metric"><span>CPU</span><strong id="dev-metric-cpu">…</strong><small id="dev-metric-load">Loading…</small></div>
+              <div class="dev-metric"><span>RAM</span><strong id="dev-metric-memory">…</strong><small id="dev-metric-memory-detail">Loading…</small></div>
+              <div class="dev-metric"><span>Disk</span><strong id="dev-metric-disk">…</strong><small id="dev-metric-disk-detail">Loading…</small></div>
+              <div class="dev-metric"><span>Uptime</span><strong id="dev-metric-uptime">…</strong><small id="dev-metric-source">Loading…</small></div>
             </div>
-            <div class="dev-metrics-foot"><span class="dev-live-dot" id="dev-metrics-dot"></span><span id="dev-metrics-status">Verbinde …</span></div>
+            <div class="dev-metrics-foot"><span class="dev-live-dot" id="dev-metrics-dot"></span><span id="dev-metrics-status">Connecting…</span></div>
           </div>
 
           <div class="admin-card" id="settings-dev-roadmap-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Roadmap</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Die Entwicklungspipeline: Feature definieren, Modell wählen, Build verfolgen und auf Beta abnehmen. Die ROADMAP.md bleibt die gemeinsame Quelle.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">The development pipeline: define the feature, pick a model, track the build, and accept it on beta. ROADMAP.md stays the shared source.</div>
             <div id="dev-roadmap-stale" class="admin-error" style="display:none;margin-bottom:8px;line-height:1.45;"></div>
             <div class="rm-toolbar">
+              <button type="button" class="admin-btn-add" id="dev-roadmap-new-btn" title="Create a roadmap item">+ New item</button>
               <button type="button" class="admin-btn-sm" id="dev-roadmap-done-btn" title="Completed items">Done</button>
               <div class="rm-toolbar-actions">
                 <div class="rm-version-bulk" title="Set every planned item outside shipped releases to this version">
@@ -2733,31 +2734,47 @@
                 <button type="button" class="admin-btn-sm" id="dev-roadmap-refresh">Refresh status</button>
               </div>
             </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-              <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Kurzer Titel für Bug, Feature oder Idee …" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
+            <div id="roadmap-new-modal" class="modal" style="display:none;">
+              <div class="modal-content" role="dialog" aria-label="New roadmap item">
+                <div class="modal-header">
+                  <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New roadmap item</h4>
+                  <button class="close-btn" type="button" id="dev-roadmap-new-close" aria-label="Close">&#10006;</button>
+                </div>
+                <div class="modal-body">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+              <input type="text" id="dev-roadmap-new" class="styled-prompt-input" placeholder="Short title for a bug, feature, or idea …" style="flex:1;min-width:180px;margin:0;height:34px;box-sizing:border-box;">
               <select id="dev-roadmap-type" style="height:34px;">
                 <option value="Bug">Bug</option>
                 <option value="Feature">Feature</option>
-                <option value="Idee">Idee</option>
+                <option value="Idee">Idea</option>
                 <option value="Polish">Polish</option>
+              </select>
+              <select id="dev-roadmap-column" style="height:34px;" title="Which column it starts in">
+                <option value="consideration" selected>Under consideration</option>
+                <option value="planned">Planned</option>
               </select>
               <button class="admin-btn-add" id="dev-roadmap-img" title="Attach a screenshot (or paste one into the text field)" style="display:inline-flex;align-items:center;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               </button>
-              <button class="admin-btn-sm" id="dev-roadmap-details">Genauer definieren</button>
-              <button class="admin-btn-add" id="dev-roadmap-add">Hinzufügen</button>
+              <button class="admin-btn-sm" id="dev-roadmap-details">Add details</button>
+              <button class="admin-btn-add" id="dev-roadmap-add">Add</button>
             </div>
-            <div id="dev-roadmap-new-details" class="rm-new-details hidden">
-              <div class="rm-detail-intro">Je genauer diese Felder sind, desto selbstständiger kann der Builder arbeiten. Alles wird lesbar in der ROADMAP.md gespeichert und in den Build-Prompt übernommen.</div>
-              <label class="rm-edit-field"><span>Beschreibung</span><textarea id="dev-roadmap-description" rows="3" placeholder="Was soll sich für dich konkret ändern?"></textarea></label>
-              <label class="rm-edit-field"><span>Ziel / Problem</span><textarea id="dev-roadmap-goal" rows="2" placeholder="Warum ist das wichtig? Welches Problem löst es?"></textarea></label>
-              <label class="rm-edit-field"><span>Fertig, wenn …</span><textarea id="dev-roadmap-acceptance" rows="3" placeholder="Ein prüfbares Akzeptanzkriterium pro Zeile"></textarea></label>
+                  <div id="dev-roadmap-new-details" class="rm-new-details hidden">
+              <div class="rm-detail-intro">The more precise these fields are, the more independently the builder can work. Everything is stored readably in ROADMAP.md and carried into the build prompt.</div>
+              <label class="rm-edit-field"><span>Description</span><textarea id="dev-roadmap-description" rows="3" placeholder="What should concretely change for you?"></textarea></label>
+              <label class="rm-edit-field"><span>Goal / Problem</span><textarea id="dev-roadmap-goal" rows="2" placeholder="Why does this matter? What problem does it solve?"></textarea></label>
+              <label class="rm-edit-field"><span>Done when …</span><textarea id="dev-roadmap-acceptance" rows="3" placeholder="One checkable acceptance criterion per line"></textarea></label>
               <div class="rm-edit-grid">
-                <label class="rm-edit-field"><span>Priorität</span><select id="dev-roadmap-priority" class="settings-select"><option>Niedrig</option><option selected>Normal</option><option>Hoch</option><option>Kritisch</option></select></label>
-                <label class="rm-edit-field"><span>Zielversion</span><input id="dev-roadmap-version" type="text" class="styled-prompt-input" maxlength="32" placeholder="Optional, z. B. 3.10"></label>
+                <label class="rm-edit-field"><span>Priority</span><select id="dev-roadmap-priority" class="settings-select"><option value="Niedrig">Low</option><option value="Normal" selected>Normal</option><option value="Hoch">High</option><option value="Kritisch">Critical</option></select></label>
+                <label class="rm-edit-field"><span>Target version</span><input id="dev-roadmap-version" type="text" class="styled-prompt-input" maxlength="32" placeholder="Optional, e.g. 3.10"></label>
               </div>
-              <label class="rm-edit-field"><span>Abhängigkeiten</span><input id="dev-roadmap-dependencies" type="text" class="styled-prompt-input" placeholder="Optional, z. B. RemNote-Bridge"></label>
-              <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea id="dev-roadmap-notes" rows="2" placeholder="Optional: gewünschter Workflow, UI, Risiken oder Dinge, die nicht verändert werden dürfen"></textarea></label>
+              <label class="rm-edit-field"><span>Dependencies</span><input id="dev-roadmap-dependencies" type="text" class="styled-prompt-input" placeholder="Optional, e.g. RemNote-Bridge"></label>
+              <label class="rm-edit-field"><span>Technical notes / limits</span><textarea id="dev-roadmap-notes" rows="2" placeholder="Optional: desired workflow, UI, risks, or things that must not be changed"></textarea></label>
+            </div>
+                </div>
+              </div>
+            </div>
+s="2" placeholder="Optional: desired workflow, UI, risks, or things that must not be changed"></textarea></label>
             </div>
             <div id="dev-roadmap-list" style="font-size:13px;"><div style="opacity:0.6">loading…</div></div>
             <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">

@@ -3210,7 +3210,7 @@ function _normalizeRoadmapVersion(raw) {
 
 async function _setAllPlannedVersions(rawVersion) {
   const version = _normalizeRoadmapVersion(rawVersion);
-  if (!version) throw new Error('Bitte eine gültige Version eingeben, z. B. 3.10.');
+  if (!version) throw new Error('Please enter a valid version, e.g. 3.10.');
   const parsed = _roadmapSections(_roadmapText);
   const targets = parsed.sections
     .filter(section => !/RELEASED/i.test(section.title))
@@ -3226,7 +3226,7 @@ async function _setAllPlannedVersions(rawVersion) {
     lines.splice(item.line, item.endLine - item.line + 1, ...block);
   }
   const saved = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
-  if (!saved) throw new Error('Die Roadmap konnte nicht gespeichert werden.');
+  if (!saved) throw new Error('The roadmap could not be saved.');
   _renderRoadmap();
   return targets.length;
 }
@@ -3408,7 +3408,7 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
     const chatMod = await import('./chat.js');
     await chatMod.handleChatSubmit({ preventDefault() {} });
 
-    if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
+    if (uiModule?.showToast) uiModule.showToast(`Build started (${modelLabel}) — running in the background.`);
   } catch (error) {
     // The hand-off never became a running agent turn. Put the item back so
     // the board does not claim work is active after a setup/send failure.
@@ -3430,22 +3430,22 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
 function _cardBuildFormHtml() {
   return `
     <div class="rm-buildform">
-      ${_channelIsBeta ? '<div class="rm-hint">Vorschau: Auf Beta kannst du Modell und Ablauf prüfen; der echte Start bleibt gesperrt, weil nur Prod auf das Server-Repo zugreifen darf.</div>' : ''}
+      ${_channelIsBeta ? '<div class="rm-hint">Preview: on beta you can check the model and workflow; the real start stays locked, because only Prod can reach the server repo.</div>' : ''}
       <label class="rm-field"><span>Endpoint</span>
         <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-ep"></select></label>
       <label class="rm-field"><span>Model</span>
         <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-model"></select></label>
-      <label class="rm-field"><span>Ablauf</span>
+      <label class="rm-field"><span>Workflow</span>
         <select class="settings-select rm-build-mode">
-          <option value="build">Autonom bis Beta bauen</option>
-          <option value="plan">Erst Plan und Rückfragen</option>
+          <option value="build">Build autonomously up to beta</option>
+          <option value="plan">Plan and ask first</option>
         </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-build-cancel">Abbrechen</button>
-        <button type="button" class="memory-toolbar-btn rm-build-start"${_channelIsBeta ? ' disabled title="Nur auf Prod verfügbar"' : ''}>${_channelIsBeta ? 'Start nur auf Prod' : 'Build starten'}</button>
+        <button type="button" class="memory-toolbar-btn rm-build-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-build-start"${_channelIsBeta ? ' disabled title="Only available on Prod"' : ''}>${_channelIsBeta ? 'Start on Prod only' : 'Start build'}</button>
       </div>
     </div>`;
 }
@@ -3454,21 +3454,21 @@ function _cardEditFormHtml(it) {
   const d = _roadmapDetails(it);
   return `
     <div class="rm-editform">
-      <label class="rm-edit-field"><span>Titel</span><input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" /></label>
-      <label class="rm-edit-field"><span>Beschreibung</span><textarea class="rm-edit-desc" rows="3" placeholder="Was soll passieren?">${esc(d.description)}</textarea></label>
-      <label class="rm-edit-field"><span>Ziel / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Warum brauchen wir das?">${esc(d.goal)}</textarea></label>
-      <label class="rm-edit-field"><span>Fertig, wenn …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="Ein prüfbares Kriterium pro Zeile">${esc(d.acceptance)}</textarea></label>
+      <label class="rm-edit-field"><span>Title</span><input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" /></label>
+      <label class="rm-edit-field"><span>Description</span><textarea class="rm-edit-desc" rows="3" placeholder="What should happen?">${esc(d.description)}</textarea></label>
+      <label class="rm-edit-field"><span>Goal / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Why do we need this?">${esc(d.goal)}</textarea></label>
+      <label class="rm-edit-field"><span>Done when …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="One checkable criterion per line">${esc(d.acceptance)}</textarea></label>
       <div class="rm-edit-grid">
-        <label class="rm-edit-field"><span>Priorität</span><select class="settings-select rm-edit-priority">
-          ${['Niedrig', 'Normal', 'Hoch', 'Kritisch'].map(v => `<option${d.priority === v ? ' selected' : ''}>${v}</option>`).join('')}
+        <label class="rm-edit-field"><span>Priority</span><select class="settings-select rm-edit-priority">
+          ${[['Niedrig', 'Low'], ['Normal', 'Normal'], ['Hoch', 'High'], ['Kritisch', 'Critical']].map(([v, label]) => `<option value="${v}"${d.priority === v ? ' selected' : ''}>${label}</option>`).join('')}
         </select></label>
-        <label class="rm-edit-field"><span>Zielversion</span><input type="text" class="styled-prompt-input rm-edit-version" maxlength="32" value="${esc(d.version)}" placeholder="z. B. 3.10" /></label>
+        <label class="rm-edit-field"><span>Target version</span><input type="text" class="styled-prompt-input rm-edit-version" maxlength="32" value="${esc(d.version)}" placeholder="e.g. 3.10" /></label>
       </div>
-      <label class="rm-edit-field"><span>Abhängigkeiten</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="Keine" /></label>
-      <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
+      <label class="rm-edit-field"><span>Dependencies</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="None" /></label>
+      <label class="rm-edit-field"><span>Technical notes / limits</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Abbrechen</button>
-        <button type="button" class="memory-toolbar-btn rm-edit-save">Speichern</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-save">Save</button>
       </div>
     </div>`;
 }
@@ -3678,7 +3678,7 @@ function _renderRoadmapBoard(list, sections) {
           const versionChip = document.createElement('span');
           versionChip.className = 'rm-chip rm-version-chip';
           versionChip.textContent = details.version;
-          versionChip.title = 'Geplante Zielversion';
+          versionChip.title = 'Target version';
           meta.appendChild(versionChip);
         }
         if (details.priority && details.priority !== 'Normal') {
@@ -3691,7 +3691,7 @@ function _renderRoadmapBoard(list, sections) {
           const criteriaChip = document.createElement('span');
           criteriaChip.className = 'rm-chip';
           criteriaChip.title = details.acceptance;
-          criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} Kriterien`;
+          criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} criteria`;
           meta.appendChild(criteriaChip);
         }
         if (build) {
@@ -3699,22 +3699,22 @@ function _renderRoadmapBoard(list, sections) {
           buildChip.type = 'button';
           buildChip.className = 'rm-chip rm-chip-build';
           buildChip.title = 'Open the build chat';
-          buildChip.textContent = `${it.status === 'review' ? 'Beta testen' : it.status === 'done' ? 'Build-Chat' : 'Building'} — ${build.model_label || build.model || 'chat'}`;
+          buildChip.textContent = `${it.status === 'review' ? 'Test on beta' : it.status === 'done' ? 'Build chat' : 'Building'} — ${build.model_label || build.model || 'chat'}`;
           buildChip.addEventListener('click', (e) => { e.stopPropagation(); _openBuildChat(build.session_id); });
           meta.appendChild(buildChip);
         }
         const editBtn = document.createElement('button');
         editBtn.type = 'button';
         editBtn.className = 'rm-move-btn';
-        editBtn.title = 'Feature genauer definieren';
-        editBtn.textContent = 'Bearbeiten';
+        editBtn.title = 'Define this feature more precisely';
+        editBtn.textContent = 'Edit';
         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
         meta.appendChild(editBtn);
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
-        buildBtn.title = _channelIsBeta ? 'Auf Prod starten, damit der Builder das Server-Repo erreicht' : 'Dieses Feature in einem verknüpften Agent-Chat bauen';
-        buildBtn.textContent = build ? 'Neu bauen' : 'Bauen';
+        buildBtn.title = _channelIsBeta ? 'Start on Prod so the builder can reach the server repo' : 'Build this feature in a linked agent chat';
+        buildBtn.textContent = build ? 'Rebuild' : 'Build';
         buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
         meta.appendChild(buildBtn);
         const moves = document.createElement('span');
@@ -3725,7 +3725,7 @@ function _renderRoadmapBoard(list, sections) {
           b.type = 'button';
           b.className = 'rm-move-btn';
           b.title = `Move to ${target.label}`;
-          b.textContent = target.key === 'planned' ? 'Planen' : target.key === 'wip' ? 'Start' : target.key === 'review' ? 'Test' : 'Fertig';
+          b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : target.key === 'review' ? 'Test' : 'Done';
           b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
           moves.appendChild(b);
         }
@@ -3746,7 +3746,7 @@ function _renderRoadmapBoard(list, sections) {
           const detailsFromForm = _detailsFromForm(card);
           if (rawVersion && !detailsFromForm.version) {
             card.querySelector('.rm-edit-version')?.focus();
-            if (uiModule?.showError) uiModule.showError('Ungültige Version — Beispiel: 3.10');
+            if (uiModule?.showError) uiModule.showError('Invalid version — example: 3.10');
             return;
           }
           await _saveItemEdit(it, newTitle, detailsFromForm);
@@ -3766,11 +3766,11 @@ function _renderRoadmapBoard(list, sections) {
         const modeSel = card.querySelector('.rm-build-mode');
         const msgBox = card.querySelector('.rm-build-msg');
         const missing = [];
-        if (!details.description) missing.push('Beschreibung');
-        if (!details.goal) missing.push('Ziel');
-        if (!details.acceptance) missing.push('Akzeptanzkriterien');
+        if (!details.description) missing.push('Description');
+        if (!details.goal) missing.push('Goal');
+        if (!details.acceptance) missing.push('Acceptance criteria');
         if (missing.length) {
-          msgBox.textContent = `Noch ungenau: ${missing.join(', ')}. Du kannst trotzdem starten oder zuerst Bearbeiten wählen.`;
+          msgBox.textContent = `Still vague: ${missing.join(', ')}. You can start anyway or edit first.`;
           msgBox.classList.add('rm-build-warning');
           msgBox.style.display = '';
         }
@@ -3840,6 +3840,11 @@ function _renderRoadmapBoard(list, sections) {
 
 // One-time cleanup: the view toggle is gone, so its key is dead weight.
 try { localStorage.removeItem('ody-roadmap-view'); } catch (_) {}
+
+function _closeNewItemModal() {
+  const m = el('roadmap-new-modal');
+  if (m) m.style.display = 'none';
+}
 
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
@@ -3964,9 +3969,9 @@ function _formatUptime(seconds) {
   remaining %= 86400;
   const hours = Math.floor(remaining / 3600);
   const minutes = Math.floor((remaining % 3600) / 60);
-  if (days) return `${days} T ${hours} Std`;
-  if (hours) return `${hours} Std ${minutes} Min`;
-  return `${minutes} Min`;
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function _setMetricValue(id, value, percent) {
@@ -3993,7 +3998,7 @@ async function _loadServerMetrics(force = false) {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    if (!data.available) throw new Error('Keine Messwerte verfügbar');
+    if (!data.available) throw new Error('No metrics available');
     const cpu = data.cpu || {};
     const memory = data.memory || {};
     const disk = data.disk || {};
@@ -4003,8 +4008,8 @@ async function _loadServerMetrics(force = false) {
       cpu.percent,
     );
     el('dev-metric-load').textContent = Number.isFinite(cpu.load_1)
-      ? `Load ${cpu.load_1.toFixed(2)} · ${cpu.cores || '?'} Kerne`
-      : `${cpu.cores || '?'} Kerne`;
+      ? `Load ${cpu.load_1.toFixed(2)} · ${cpu.cores || '?'} cores`
+      : `${cpu.cores || '?'} cores`;
     _setMetricValue(
       'dev-metric-memory',
       Number.isFinite(memory.percent) ? `${memory.percent.toFixed(1)} %` : '—',
@@ -4026,7 +4031,7 @@ async function _loadServerMetrics(force = false) {
     status.textContent = `Live · ${sampled.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     dot?.classList.add('is-live');
   } catch (error) {
-    if (status) status.textContent = `Nicht erreichbar · ${error.message}`;
+    if (status) status.textContent = `Not reachable · ${error.message}`;
     dot?.classList.remove('is-live');
   } finally {
     _serverMetricsLoading = false;
@@ -4204,7 +4209,7 @@ function initDeveloper() {
   detailsBtn?.addEventListener('click', () => {
     const opening = detailsPanel?.classList.contains('hidden');
     detailsPanel?.classList.toggle('hidden');
-    detailsBtn.textContent = opening ? 'Details schließen' : 'Genauer definieren';
+    detailsBtn.textContent = opening ? 'Hide details' : 'Add details';
     if (opening) el('dev-roadmap-description')?.focus();
   });
   // Screenshots attached to the next entry (bug reports need pictures).
@@ -4262,7 +4267,7 @@ function initDeveloper() {
     const normalizedVersion = _normalizeRoadmapVersion(rawVersion);
     if (rawVersion && !normalizedVersion) {
       if (msg) {
-        msg.textContent = 'Ungültige Version — Beispiel: 3.10';
+        msg.textContent = 'Invalid version — example: 3.10';
         msg.className = 'admin-error';
       }
       el('dev-roadmap-version')?.focus();
@@ -4279,15 +4284,19 @@ function initDeveloper() {
       notes: el('dev-roadmap-notes')?.value?.trim() || '',
     };
     const title = `**${kind}:** ${text || '(Screenshot)'}`;
-    const entryBlock = _roadmapItemBlock(' ', title, details, pendingImgs);
+    // The chosen column decides the marker. Default is Under consideration:
+    // a fresh thought is not yet a commitment to build it.
+    const colKey = el('dev-roadmap-column')?.value || 'consideration';
+    const colMark = (_RM_COLS.find(c => c.key === colKey) || _RM_COLS[0]).mark;
+    const entryBlock = _roadmapItemBlock(colMark, title, details, pendingImgs);
     const { lines, sections } = _roadmapSections(_roadmapText);
-    const sec = sections.find(s => /^Eingang/i.test(s.title));
+    const sec = sections.find(s => /^(Eingang|Inbox)/i.test(s.title));
     let ls;
     if (!sec) {
       // Empty/missing file: start a minimal queue with an Eingang section.
       ls = _roadmapText ? _roadmapText.split('\n') : [];
       if (ls.length && ls[ls.length - 1].trim() !== '') ls.push('');
-      ls.push('## Eingang', ...entryBlock);
+      ls.push('## Inbox', ...entryBlock);
     } else {
       // Insert at the section end, before trailing blank lines.
       let at = sec.end;
@@ -4307,9 +4316,20 @@ function initDeveloper() {
       if (el('dev-roadmap-priority')) el('dev-roadmap-priority').value = 'Normal';
       pendingImgs = [];
       _syncImgBtn();
+      _closeNewItemModal();
       _renderRoadmap();
     }
   };
+  const newModal = el('roadmap-new-modal');
+  if (newModal) {
+    el('dev-roadmap-new-btn')?.addEventListener('click', () => {
+      newModal.style.display = 'flex';
+      el('dev-roadmap-new')?.focus();
+    });
+    el('dev-roadmap-new-close')?.addEventListener('click', _closeNewItemModal);
+    newModal.addEventListener('click', (e) => { if (e.target === newModal) _closeNewItemModal(); });
+    newModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeNewItemModal(); });
+  }
   if (addBtn) addBtn.addEventListener('click', doAdd);
   if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
 
@@ -4335,8 +4355,8 @@ function initDeveloper() {
       const count = await _setAllPlannedVersions(bulkVersionInput?.value);
       if (msg) {
         msg.textContent = count
-          ? `${count} geplante Einträge wurden auf ${_normalizeRoadmapVersion(bulkVersionInput?.value)} gesetzt.`
-          : 'Keine geplanten Einträge außerhalb ausgelieferter Releases gefunden.';
+          ? `${count} planned entries were set to ${_normalizeRoadmapVersion(bulkVersionInput?.value)}.`
+          : 'No planned entries found outside released packages.';
         msg.className = 'admin-success';
       }
     } catch (error) {

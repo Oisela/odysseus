@@ -196,6 +196,70 @@ const DE = {
   'Developer chat setup is intentionally disabled on beta (no host or clone access).':
     'Die Entwickler-Chat-Einrichtung ist auf Beta absichtlich deaktiviert (kein Host- oder Clone-Zugriff).',
 
+  // ── Developer / Roadmap ──
+  'Build autonomously up to beta': 'Autonom bis Beta bauen',
+  'Plan and ask first': 'Erst Plan und Rückfragen',
+  'Start on Prod only': 'Start nur auf Prod',
+  'Preview: on beta you can check the model and workflow; the real start stays locked, because only Prod can reach the server repo.':
+    'Vorschau: Auf Beta kannst du Modell und Ablauf prüfen; der echte Start bleibt gesperrt, weil nur Prod auf das Server-Repo zugreifen darf.',
+  'Refresh': 'Aktualisieren',
+  'Refresh server load now': 'Serverauslastung jetzt aktualisieren',
+  'Connecting…': 'Verbinde …',
+  'Disk': 'Speicher',
+  'Uptime': 'Laufzeit',
+  'Secure, aggregated load without process names or other sensitive server data. Updates every 5 seconds.':
+    'Sichere, aggregierte Auslastung ohne Prozessnamen oder andere sensible Serverdaten. Aktualisiert sich alle 5 Sekunden.',
+  'The development pipeline: define the feature, pick a model, track the build, and accept it on beta. ROADMAP.md stays the shared source.':
+    'Die Entwicklungspipeline: Feature definieren, Modell wählen, Build verfolgen und auf Beta abnehmen. Die ROADMAP.md bleibt die gemeinsame Quelle.',
+  'Short title for a bug, feature, or idea …': 'Kurzer Titel für Bug, Feature oder Idee …',
+  'Idea': 'Idee',
+  'Add details': 'Genauer definieren',
+  'Hide details': 'Details schließen',
+  'The more precise these fields are, the more independently the builder can work. Everything is stored readably in ROADMAP.md and carried into the build prompt.':
+    'Je genauer diese Felder sind, desto selbstständiger kann der Builder arbeiten. Alles wird lesbar in der ROADMAP.md gespeichert und in den Build-Prompt übernommen.',
+  'Description': 'Beschreibung',
+  'What should happen?': 'Was soll passieren?',
+  'What should concretely change for you?': 'Was soll sich für dich konkret ändern?',
+  'Goal / Problem': 'Ziel / Problem',
+  'Why do we need this?': 'Warum brauchen wir das?',
+  'Why does this matter? What problem does it solve?': 'Warum ist das wichtig? Welches Problem löst es?',
+  'Done when …': 'Fertig, wenn …',
+  'One checkable criterion per line': 'Ein prüfbares Kriterium pro Zeile',
+  'One checkable acceptance criterion per line': 'Ein prüfbares Akzeptanzkriterium pro Zeile',
+  'Priority': 'Priorität',
+  'Low': 'Niedrig',
+  'High': 'Hoch',
+  'Critical': 'Kritisch',
+  'Target version': 'Zielversion',
+  'e.g. 3.10': 'z. B. 3.10',
+  'Optional, e.g. 3.10': 'Optional, z. B. 3.10',
+  'Optional, e.g. RemNote-Bridge': 'Optional, z. B. RemNote-Bridge',
+  'Dependencies': 'Abhängigkeiten',
+  'Technical notes / limits': 'Technische Notizen / Grenzen',
+  'Optional: desired workflow, UI, risks, or things that must not be changed':
+    'Optional: gewünschter Workflow, UI, Risiken oder Dinge, die nicht verändert werden dürfen',
+  'Define this feature more precisely': 'Feature genauer definieren',
+  'Workflow': 'Ablauf',
+  'Only available on Prod': 'Nur auf Prod verfügbar',
+  'Start build': 'Build starten',
+  'Start on Prod so the builder can reach the server repo': 'Auf Prod starten, damit der Builder das Server-Repo erreicht',
+  'Build this feature in a linked agent chat': 'Dieses Feature in einem verknüpften Agent-Chat bauen',
+  'Rebuild': 'Neu bauen',
+  'Build': 'Bauen',
+  'Plan': 'Planen',
+  'Invalid version — example: 3.10': 'Ungültige Version — Beispiel: 3.10',
+  'Please enter a valid version, e.g. 3.10.': 'Bitte eine gültige Version eingeben, z. B. 3.10.',
+  'No metrics available': 'Keine Messwerte verfügbar',
+  'The roadmap could not be saved.': 'Die Roadmap konnte nicht gespeichert werden.',
+  'No planned entries found outside released packages.': 'Keine geplanten Einträge außerhalb ausgelieferter Releases gefunden.',
+  'Under consideration': 'In Erwägung',
+  'Planned': 'Geplant',
+  'In progress': 'In Arbeit',
+  'Ready to test': 'Bereit zum Testen',
+  'Nothing in progress': 'Nichts in Arbeit',
+  'Empty': 'Leer',
+  'Nothing completed yet': 'Noch nichts fertig',
+
   // ── Appearance / UI mode / Language ──
   'UI mode': 'UI-Modus',
   'Language': 'Sprache',
@@ -243,6 +307,7 @@ const ROOTS = [
   '.section-title', '.list-item', '.vis-label', '.vis-hint', '.modal-header',
   '.welcome-sub', '.welcome-tip', '.shopping-done-head', '.shopping-empty',
   '.settings-nav-item', '.export-dropdown-item', '.notes-header-btn-label',
+  '.rm-col-head', '.rm-col-empty', '.rm-hint', '.admin-toggle-sub',
 ].join(', ');
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SVG', 'CODE', 'PRE']);

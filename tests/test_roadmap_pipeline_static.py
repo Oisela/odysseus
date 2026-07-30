@@ -76,6 +76,9 @@ def test_roadmap_cards_have_stable_ids_and_structured_requirements():
 
 
 def test_build_prompt_uses_definition_and_selected_workflow():
+    # These stay German on purpose: they are the field labels WRITTEN INTO
+    # ROADMAP.md and parsed back out of it, so they are a data format, not UI
+    # copy. Translating them would silently orphan every existing entry.
     for label in (
         "Beschreibung",
         "Ziel / Problem",
@@ -85,11 +88,12 @@ def test_build_prompt_uses_definition_and_selected_workflow():
         "Technische Notizen / Grenzen",
     ):
         assert label in ADMIN
-    assert 'option value="build">Autonom bis Beta bauen' in ADMIN
-    assert 'option value="plan">Erst Plan und Rückfragen' in ADMIN
+    # The surrounding controls ARE ui and follow the English rule.
+    assert 'option value="build">Build autonomously up to beta' in ADMIN
+    assert 'option value="plan">Plan and ask first' in ADMIN
     assert "model, modelLabel, buildMode" in ADMIN
-    assert "Auf Beta kannst du Modell und Ablauf prüfen" in ADMIN
-    assert "Start nur auf Prod" in ADMIN
+    assert "on beta you can check the model and workflow" in ADMIN
+    assert "Start on Prod only" in ADMIN
 
 
 def test_build_is_recorded_before_prompt_send_and_http_errors_are_not_ignored():
@@ -188,3 +192,37 @@ def test_server_metrics_card_has_manual_and_five_second_refresh():
 def test_build_form_does_not_repeat_dom_ids_per_card():
     assert 'id="rm-build-ep-logo"' not in ADMIN
     assert 'id="rm-build-model-logo"' not in ADMIN
+
+
+def test_new_items_are_created_from_a_popup_not_an_inline_row():
+    """Alessio: "das sollte ein Button sein, der ein Popup öffnet".
+
+    The inline row sat above the board and its detail panel pushed the whole
+    board down when opened. The markup MOVED into the modal rather than being
+    rewritten, so every id the parser and these tests rely on is unchanged.
+    """
+    assert 'id="dev-roadmap-new-btn"' in INDEX
+    assert 'id="roadmap-new-modal"' in INDEX
+    modal_at = INDEX.index('id="roadmap-new-modal"')
+    for field in ('id="dev-roadmap-new"', 'id="dev-roadmap-type"',
+                  'id="dev-roadmap-new-details"', 'id="dev-roadmap-add"'):
+        assert INDEX.index(field) > modal_at, f"{field} must live inside the modal"
+    # Opens, closes, and closes itself once the entry is saved.
+    assert "_closeNewItemModal" in ADMIN
+    assert "newModal.style.display = 'flex'" in ADMIN
+
+
+def test_new_items_start_under_consideration():
+    """A fresh thought is not yet a commitment to build it."""
+    assert 'id="dev-roadmap-column"' in INDEX
+    assert '<option value="consideration" selected>' in INDEX
+    assert "el('dev-roadmap-column')?.value || 'consideration'" in ADMIN
+    # The marker comes from the column table, never hardcoded.
+    assert "_roadmapItemBlock(colMark, title, details, pendingImgs)" in ADMIN
+    assert "_roadmapItemBlock(' ', title" not in ADMIN
+
+
+def test_inbox_section_accepts_both_spellings():
+    """Existing files say "Eingang"; new ones are written in English."""
+    assert "/^(Eingang|Inbox)/i" in ADMIN
+    assert "ls.push('## Inbox', ...entryBlock)" in ADMIN
