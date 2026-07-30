@@ -3762,6 +3762,22 @@ async function _loadRoadmap() {
   }
 }
 
+// `origin` is fetched in the background now (it used to block every /status
+// call for ~2 s). So dev_version describes the last SUCCESSFUL fetch — if the
+// host goes unreachable the fetch quietly stops and the open-package line would
+// keep showing an old version as if it were current. Say so instead. Silent in
+// the normal case: a fetch runs every 2 min, so anything under 5 is fine.
+function _devVersionStaleness(d) {
+  if (!d || !d.dev_version) return '';
+  const age = d.fetch_age_seconds;
+  if (age === null || age === undefined) return ' · not synced yet';
+  if (age < 300) return '';
+  const minutes = Math.round(age / 60);
+  return minutes < 60
+    ? ` · last synced ${minutes} min ago`
+    : ` · last synced ${Math.round(minutes / 60)} h ago`;
+}
+
 async function _loadDevStatus() {
   const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta'), upd = el('dev-update');
   if (!pkg) return;
@@ -3778,7 +3794,8 @@ async function _loadDevStatus() {
     const res = await fetch(`/api/system/status`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const d = await res.json();
-    pkg.textContent = d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`;
+    pkg.textContent = (d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`)
+      + _devVersionStaleness(d);
     if (channel === 'beta') {
       prod.textContent = d.commit && d.commit !== 'unknown' ? `v? @ ${d.commit}` : 'n/a from beta (no host access)';
       beta.textContent = `this instance — ${build || `v${d.version}`}`;
