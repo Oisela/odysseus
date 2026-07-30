@@ -9,6 +9,7 @@
 export function initSectionCollapse(Storage) {
   const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
   const savedState = Storage.getJSON('section-collapsed') || {};
+  let purgedHeaderOnly = false;
 
   document.querySelectorAll('.section .section-header-flex').forEach(header => {
     const section = header.closest('.section');
@@ -16,6 +17,25 @@ export function initSectionCollapse(Storage) {
 
     // Skip email section — it doesn't collapse (title opens popup instead)
     if (section.id === 'email-section') return;
+
+    // Header-only sections (Notes, Pomodoro, Shopping, RemNote, Developer) have
+    // no body — collapsing them hides nothing, and their title already has its
+    // own handler that opens the tool window. Wiring a second handler here made
+    // every such click ALSO toggle .collapsed: that is why Developer needed two
+    // clicks, and why a chevron appeared on a section with nothing to expand
+    // (.section.collapsed .section-collapse-btn is !important and overrode the
+    // rule at the top of this file's CSS that hides it for header-only).
+    //
+    // The purge is not optional: with no handler left to expand them, a section
+    // somebody collapsed under the old code would stay shut forever.
+    if (section.classList.contains('section-header-only')) {
+      section.classList.remove('collapsed');
+      if (savedState[section.id] !== undefined) {
+        delete savedState[section.id];
+        purgedHeaderOnly = true;
+      }
+      return;
+    }
 
     // Add chevron (always visible — rotates when collapsed)
     header.insertAdjacentHTML('beforeend', _chevronHtml);
@@ -110,6 +130,8 @@ export function initSectionCollapse(Storage) {
       toggleCollapse();
     });
   });
+
+  if (purgedHeaderOnly) Storage.setJSON('section-collapsed', savedState);
 }
 
 /**

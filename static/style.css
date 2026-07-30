@@ -1401,7 +1401,11 @@ body.bg-pattern-sparkles {
     .section-collapse-btn:hover .section-collapse-chevron { opacity: 0.6; }
     .section.collapsed .section-collapse-chevron { transform: rotate(-90deg); opacity: 0.5; }
     .section-header-flex:has(.section-header-btn) .section-collapse-btn { display: none; }
-    .section.collapsed .section-collapse-btn { display: inline-flex !important; }
+    /* A collapsed section always shows its chevron — that's the only way back.
+       Header-only sections are excluded: they never collapse (see
+       section-management.js), and without the :not() this !important beat the
+       rule above and put an arrow on a section with nothing to expand. */
+    .section.collapsed:not(.section-header-only) .section-collapse-btn { display: inline-flex !important; }
 
     /* Collapsed state */
     .section.collapsed > *:not(h4):not(.section-title):not(.section-header-flex) { display: none !important; }
