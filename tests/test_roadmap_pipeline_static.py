@@ -11,7 +11,21 @@ SYSTEM_ROUTES = (ROOT / "routes" / "system_routes.py").read_text(encoding="utf-8
 
 def test_roadmap_has_full_delivery_pipeline():
     assert "mark === '!' ? 'review'" in ADMIN
-    assert "{ key: 'review', label: 'Testbereit', mark: '!' }" in ADMIN
+    assert "mark === '?' ? 'consideration'" in ADMIN
+    # Five states, in pipeline order, with the marks that land in ROADMAP.md.
+    for entry in (
+        "{ key: 'consideration', label: 'Under consideration', mark: '?' }",
+        "{ key: 'planned', label: 'Planned', mark: ' ' }",
+        "{ key: 'wip', label: 'In progress', mark: '~' }",
+        "{ key: 'review', label: 'Ready to test', mark: '!' }",
+        "{ key: 'done', label: 'Done', mark: 'x' }",
+    ):
+        assert entry in ADMIN
+    # One definition of the item-line shape. It used to be spelled out in four
+    # places, so adding a state meant finding all four.
+    assert r"_RM_MARK_RE = /^- \[[ xX~!?]\] /" in ADMIN
+    assert r"_RM_MARK_SET_RE = /^- \[[ xX~!?]\]/" in ADMIN
+    assert "[ xX~!]" not in ADMIN, "an old four-state marker regex survived"
 
 
 def test_build_prompt_routes_bugs_and_features_to_different_tracks():
@@ -117,10 +131,50 @@ def test_planned_versions_are_editable_and_can_be_applied_in_bulk():
     assert 'id="dev-roadmap-bulk-version-apply"' in INDEX
 
 
-def test_done_column_is_limited_to_latest_ten_cards():
-    assert "if (col.key === 'done')" in ADMIN
-    assert "items = items.slice(-10).reverse()" in ADMIN
-    assert "Letzte ${items.length} von ${totalItems}" in ADMIN
+def test_done_lives_behind_a_button_not_in_a_column():
+    """Was: a Done column capped at ten cards.
+
+    Finished work is history. As a column it grew without bound and pushed the
+    live states off the screen, and the ten-item cap meant the board was lying
+    about what existed. Behind a button there is room for a real history and
+    the count stays honest.
+    """
+    assert "_RM_BOARD_COLS = _RM_COLS.filter(c => c.key !== 'done')" in ADMIN
+    assert "for (const col of _RM_BOARD_COLS)" in ADMIN
+    assert "_RM_DONE_LIMIT = 50" in ADMIN
+    assert "function _openDoneView(sections)" in ADMIN
+    assert "_doneModalEl.id = 'roadmap-done-modal'" in ADMIN
+    assert 'id="dev-roadmap-done-btn"' in INDEX
+    # Built fresh, never cloned — a clone duplicates every id on the page.
+    done_view = ADMIN[ADMIN.index("function _ensureDoneModal"):ADMIN.index("function _renderRoadmapBoard")]
+    assert "cloneNode" not in done_view
+    # The count must not silently hide the remainder.
+    assert "latest ${shown.length} of ${all.length}" in ADMIN
+
+
+def test_done_view_can_send_an_item_back_to_planned():
+    assert "'Move to planned'" in ADMIN
+    assert "_setItemStatus(it, 'planned')" in ADMIN
+
+
+def test_list_view_is_gone_and_leaves_no_dead_state():
+    """One rendering of the roadmap, not two with separate write paths."""
+    for leftover in ("_roadmapViewMode", "rm-view-opt", "data-rmview"):
+        assert leftover not in ADMIN, f"list-view leftover in admin.js: {leftover}"
+        assert leftover not in INDEX, f"list-view leftover in index.html: {leftover}"
+    assert "localStorage.removeItem('ody-roadmap-view')" in ADMIN
+
+
+def test_screenshots_survived_the_list_view_removal():
+    """They only ever rendered in the list view.
+
+    Without moving them, pasting a screenshot into a roadmap entry would still
+    upload and still be stored — and show up nowhere.
+    """
+    assert "function _appendScreenshots(card, details)" in ADMIN
+    assert ADMIN.count("_appendScreenshots(card, details)") >= 2, (
+        "board cards and the Done view must both render screenshots"
+    )
 
 
 def test_server_metrics_card_has_manual_and_five_second_refresh():

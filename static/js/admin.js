@@ -2980,6 +2980,13 @@ function initSystemStatus() {
 /* ── Developer page (package status + editable roadmap) ── */
 let _roadmapText = '';
 
+// One definition of what a roadmap item line looks like. The four-state
+// character class used to be spelled out inline in four separate places, so
+// adding a state meant finding every one of them — miss one and items silently
+// stop parsing, or stop being writable.
+const _RM_MARK_RE = /^- \[[ xX~!?]\] /;
+const _RM_MARK_SET_RE = /^- \[[ xX~!?]\]/;
+
 function _roadmapSections(text) {
   // Top-level "## " headers with their line ranges; items are top-level
   // "- [ ]"/"- [x]" lines inside a section (continuation lines are the
@@ -2994,14 +3001,19 @@ function _roadmapSections(text) {
       sections.push(cur);
       return;
     }
-    // Pipeline states: [ ] planned, [~] in progress, [!] ready for review,
-    // [x] done. The developer reads the same markers from ROADMAP.md.
-    if (cur && /^- \[[ xX~!]\] /.test(line)) {
+    // Pipeline states: [?] under consideration, [ ] planned, [~] in progress,
+    // [!] ready to test, [x] done. The developer reads the same markers from
+    // ROADMAP.md, so the character IS the contract — see _RM_MARK_RE.
+    if (cur && _RM_MARK_RE.test(line)) {
       const mark = line.charAt(3);
       cur.items.push({
         line: i,
         done: mark === 'x' || mark === 'X',
-        status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : mark === '!' ? 'review' : 'planned',
+        status: (mark === 'x' || mark === 'X') ? 'done'
+          : mark === '~' ? 'wip'
+          : mark === '!' ? 'review'
+          : mark === '?' ? 'consideration'
+          : 'planned',
         text: line.slice(6).trim(),
         extra: [],
         extraLines: [],   // raw line indices of the continuation lines (for editing)
@@ -3105,7 +3117,10 @@ function _roadmapItemBlock(mark, title, details, images = []) {
 
 async function _saveItemEdit(item, newTitle, details) {
   const lines = _roadmapText.split('\n');
-  const mark = item.status === 'done' ? 'x' : item.status === 'review' ? '!' : item.status === 'wip' ? '~' : ' ';
+  // Look the mark up rather than re-deriving it: the old ternary chain had no
+  // branch for a new state, so editing an "under consideration" card would
+  // silently demote it to planned.
+  const mark = (_RM_COLS.find(c => c.key === item.status) || { mark: ' ' }).mark;
   const previous = _roadmapDetails(item);
   // Preserve a legacy title-hash as the new stable ID so an existing build
   // association remains reachable after the first structured edit.
@@ -3152,27 +3167,33 @@ function _roadmapCollapsedState() {
 // statusen". ROADMAP.md stays the source of truth (the developer reads it);
 // the board is a second lens on the same file, and a status click rewrites
 // only that line's marker.
+// The pipeline, in order. `mark` is what lands in ROADMAP.md, so these
+// characters are a contract shared with the developer agent and dev.sh.
+//
+// `?` for "under consideration" fits the existing bracket slot, reads correctly
+// in a plain editor, and does not collide with list syntax the way -, > or /
+// would. Downgrade cost, stated plainly: a pre-4.0 Odysseus parses only
+// [ x ~ !], so these items become invisible in ITS ui — the file keeps them
+// intact and re-upgrading brings them back.
+//
+// `done` is not rendered as a board column; it lives behind the Done button.
 const _RM_COLS = [
-  { key: 'planned', label: 'Geplant', mark: ' ' },
-  { key: 'wip', label: 'In Arbeit', mark: '~' },
-  { key: 'review', label: 'Testbereit', mark: '!' },
-  { key: 'done', label: 'Erledigt', mark: 'x' },
+  { key: 'consideration', label: 'Under consideration', mark: '?' },
+  { key: 'planned', label: 'Planned', mark: ' ' },
+  { key: 'wip', label: 'In progress', mark: '~' },
+  { key: 'review', label: 'Ready to test', mark: '!' },
+  { key: 'done', label: 'Done', mark: 'x' },
 ];
-let _roadmapView = null;
-
-function _roadmapViewMode() {
-  if (!_roadmapView) {
-    try { _roadmapView = localStorage.getItem('ody-roadmap-view') || 'list'; }
-    catch (_) { _roadmapView = 'list'; }
-  }
-  return _roadmapView === 'board' ? 'board' : 'list';
-}
+const _RM_BOARD_COLS = _RM_COLS.filter(c => c.key !== 'done');
+// How many finished items the Done view keeps. The board used to show the last
+// ten in a column; behind a button there is room for a real history.
+const _RM_DONE_LIMIT = 50;
 
 async function _setItemStatus(item, statusKey) {
   const col = _RM_COLS.find(c => c.key === statusKey);
   if (!col) return false;
   const ls = _roadmapText.split('\n');
-  ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, `- [${col.mark}]`);
+  ls[item.line] = ls[item.line].replace(_RM_MARK_SET_RE, `- [${col.mark}]`);
   const saved = await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'));
   if (saved) _renderRoadmap();
   return saved;
@@ -3465,25 +3486,153 @@ function _detailsFromForm(root, prefix = '.rm-edit-') {
   };
 }
 
+// Done lives behind a button, not in a column. Built fresh rather than cloned
+// (same discipline as the Developer window, which is pinned by a test): a clone
+// would duplicate every id on the page.
+let _doneModalEl = null;
+
+function _ensureDoneModal() {
+  if (_doneModalEl) return _doneModalEl;
+  _doneModalEl = document.createElement('div');
+  _doneModalEl.id = 'roadmap-done-modal';
+  _doneModalEl.className = 'modal';
+  _doneModalEl.style.display = 'none';
+  _doneModalEl.innerHTML = `
+    <div class="modal-content" role="dialog" aria-label="Completed roadmap items">
+      <div class="modal-header">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span id="rm-done-title">Done</span>
+        </h4>
+        <button class="close-btn" type="button" aria-label="Close">&#10006;</button>
+      </div>
+      <div class="modal-body"><div id="rm-done-list" class="rm-done-list"></div></div>
+    </div>`;
+  document.body.appendChild(_doneModalEl);
+  _doneModalEl.querySelector('.close-btn').addEventListener('click', _closeDoneView);
+  _doneModalEl.addEventListener('click', (e) => {
+    if (e.target === _doneModalEl) _closeDoneView();
+  });
+  return _doneModalEl;
+}
+
+function _closeDoneView() {
+  if (_doneModalEl) _doneModalEl.style.display = 'none';
+}
+
+function _doneItems(sections) {
+  // Unlike the board, RELEASED sections are included — shipped work IS the
+  // history this view exists to show.
+  const out = [];
+  for (const sec of sections) {
+    for (const it of sec.items) {
+      if ((it.status || 'planned') === 'done') out.push({ it, sec });
+    }
+  }
+  return out;
+}
+
+function _openDoneView(sections) {
+  const modal = _ensureDoneModal();
+  const all = _doneItems(sections);
+  const shown = all.slice(-_RM_DONE_LIMIT).reverse();
+  const title = modal.querySelector('#rm-done-title');
+  // Keep the count honest about what is being hidden.
+  title.textContent = all.length > shown.length
+    ? `Done — latest ${shown.length} of ${all.length}`
+    : `Done (${all.length})`;
+
+  const list = modal.querySelector('#rm-done-list');
+  list.innerHTML = '';
+  if (!shown.length) {
+    const empty = document.createElement('div');
+    empty.className = 'rm-col-empty';
+    empty.textContent = 'Nothing completed yet';
+    list.appendChild(empty);
+  }
+  for (const { it, sec } of shown) {
+    const details = _roadmapDetails(it);
+    const card = document.createElement('div');
+    card.className = 'rm-card rm-card-done';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'rm-card-text';
+    titleEl.textContent = _rmCardText(it);
+    card.appendChild(titleEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'rm-card-meta';
+    const secChip = document.createElement('span');
+    secChip.className = 'rm-chip';
+    secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
+    meta.appendChild(secChip);
+    if (details.version) {
+      const versionChip = document.createElement('span');
+      versionChip.className = 'rm-chip rm-version-chip';
+      versionChip.textContent = details.version;
+      meta.appendChild(versionChip);
+    }
+    card.appendChild(meta);
+    _appendScreenshots(card, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'rm-card-actions';
+    const reopen = document.createElement('button');
+    reopen.className = 'admin-btn-sm';
+    reopen.type = 'button';
+    reopen.textContent = 'Move to planned';
+    reopen.addEventListener('click', async () => {
+      reopen.disabled = true;
+      if (await _setItemStatus(it, 'planned')) _closeDoneView();
+      else reopen.disabled = false;
+    });
+    actions.appendChild(reopen);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+  modal.style.display = 'flex';
+}
+
+// Screenshots used to render only in the list view. With that view gone they
+// would have silently stopped appearing anywhere, so pasting one into a roadmap
+// entry would produce nothing visible.
+function _appendScreenshots(card, details) {
+  const shots = details.screenshots || [];
+  if (!shots.length) return;
+  const row = document.createElement('div');
+  row.className = 'rm-card-shots';
+  for (const url of shots) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'screenshot';
+    img.loading = 'lazy';
+    img.className = 'rm-card-shot';
+    img.addEventListener('click', (e) => { e.stopPropagation(); window.open(url, '_blank'); });
+    row.appendChild(img);
+  }
+  card.appendChild(row);
+}
+
 function _renderRoadmapBoard(list, sections) {
   // Released sections are history — the board is about what is moving now.
   const live = sections.filter(s => !/RELEASED/i.test(s.title));
   const board = document.createElement('div');
   board.className = 'rm-board';
-  for (const col of _RM_COLS) {
-    let items = [];
+  // Done is not a column — finished work is history, and a column for it grew
+  // without bound while pushing the live states off the screen. It opens from
+  // the toolbar button instead (_openDoneView).
+  for (const col of _RM_BOARD_COLS) {
+    const items = [];
     for (const sec of live) {
       for (const it of sec.items) {
         if ((it.status || 'planned') === col.key) items.push({ it, sec });
       }
     }
     const totalItems = items.length;
-    // Completed work is history, not an endlessly growing work queue. Keep
-    // the count truthful while showing only the ten most recently listed
-    // completed items, newest first.
-    if (col.key === 'done') {
-      items = items.slice(-10).reverse();
-    }
     const colEl = document.createElement('div');
     colEl.className = 'rm-col';
     colEl.dataset.col = col.key;
@@ -3582,6 +3731,7 @@ function _renderRoadmapBoard(list, sections) {
         }
         meta.appendChild(moves);
         card.appendChild(meta);
+        _appendScreenshots(card, details);
       };
 
       const renderEdit = () => {
@@ -3672,12 +3822,6 @@ function _renderRoadmapBoard(list, sections) {
       card.addEventListener('dragend', () => card.classList.remove('rm-dragging'));
       body.appendChild(card);
     }
-    if (col.key === 'done' && totalItems > items.length) {
-      const limited = document.createElement('div');
-      limited.className = 'rm-col-limit';
-      limited.textContent = `Letzte ${items.length} von ${totalItems}`;
-      body.appendChild(limited);
-    }
     colEl.appendChild(body);
     colEl.addEventListener('dragover', (e) => { e.preventDefault(); colEl.classList.add('rm-col-over'); });
     colEl.addEventListener('dragleave', () => colEl.classList.remove('rm-col-over'));
@@ -3694,104 +3838,38 @@ function _renderRoadmapBoard(list, sections) {
   list.appendChild(board);
 }
 
+// One-time cleanup: the view toggle is gone, so its key is dead weight.
+try { localStorage.removeItem('ody-roadmap-view'); } catch (_) {}
+
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
-  const msg = el('dev-roadmap-msg');
   if (!list) return;
-  const { lines, sections } = _roadmapSections(_roadmapText);
+  const { sections } = _roadmapSections(_roadmapText);
   list.innerHTML = '';
-  const mode = _roadmapViewMode();
-  document.querySelectorAll('#dev-roadmap-view .rm-view-opt').forEach(b =>
-    b.classList.toggle('active', b.dataset.rmview === mode));
-  if (mode === 'board' && sections.length) {
-    _renderRoadmapBoard(list, sections);
-    return;
-  }
+  // Board only since v4.0. The list view was a second rendering of the same
+  // data with its own checkbox write path, and Alessio never used it.
   if (!sections.length) {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
+    _syncDoneButton([]);
     return;
   }
-  const collapsedState = _roadmapCollapsedState();
-  for (const sec of sections) {
-    const doneCount = sec.items.filter(it => it.done).length;
-    const collapsed = (sec.title in collapsedState)
-      ? !!collapsedState[sec.title]
-      : /RELEASED/i.test(sec.title);
-    const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:600;margin:10px 0 4px;cursor:pointer;user-select:none;';
-    head.innerHTML = `
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.6;transition:transform .15s ease;transform:rotate(${collapsed ? '-90' : '0'}deg);"><polyline points="6 9 12 15 18 9"/></svg>
-      <span></span>
-      <span class="folder-count" style="font-weight:400;">${doneCount}/${sec.items.length}</span>`;
-    head.querySelector('span').textContent = sec.title;
-    head.addEventListener('click', () => {
-      collapsedState[sec.title] = !collapsed;
-      try { localStorage.setItem('ody-roadmap-collapsed', JSON.stringify(collapsedState)); } catch (_) {}
-      _renderRoadmap();
+  _renderRoadmapBoard(list, sections);
+  _syncDoneButton(sections);
+}
+
+// The Done button carries the count, so finished work stays visible as a number
+// even though it no longer occupies a column.
+function _syncDoneButton(sections) {
+  const btn = el('dev-roadmap-done-btn');
+  if (!btn) return;
+  const n = _doneItems(sections).length;
+  btn.textContent = `Done (${n})`;
+  btn.disabled = !n;
+  if (!btn._doneWired) {
+    btn._doneWired = true;
+    btn.addEventListener('click', () => {
+      _openDoneView(_roadmapSections(_roadmapText).sections);
     });
-    list.appendChild(head);
-    if (collapsed) continue;
-    if (!sec.items.length) {
-      const empty = document.createElement('div');
-      empty.textContent = '(no entries)';
-      empty.style.cssText = 'opacity:0.45;margin-left:4px;';
-      list.appendChild(empty);
-      continue;
-    }
-    for (const item of sec.items) {
-      const row = document.createElement('label');
-      row.style.cssText = 'display:flex;gap:7px;align-items:baseline;cursor:pointer;padding:2px 0;';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = item.done;
-      cb.addEventListener('change', async () => {
-        const ls = _roadmapText.split('\n');
-        ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, cb.checked ? '- [x]' : '- [ ]');
-        if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
-      });
-      // Markdown screenshots in the entry (or its wrapped lines) render as
-      // small thumbnails — click opens the full image. Upload-URLs only
-      // (canonical pattern from markdown.js), so a roadmap line can never
-      // make the browser fetch an external host. \s* swallows the gap the
-      // stripped link leaves in the clean text.
-      const IMG_RE = uploadImageMdRe('\\s*');
-      const imgs = [];
-      const cleanText = item.text.replace(IMG_RE, (_, u) => { imgs.push(u); return ''; }).trim();
-      for (const ex of item.extra) {
-        let m;
-        while ((m = IMG_RE.exec(ex))) imgs.push(m[1]);
-      }
-      const span = document.createElement('span');
-      span.textContent = cleanText;
-      const itemDetails = _roadmapDetails(item);
-      const detailSummary = [
-        itemDetails.description, itemDetails.goal, itemDetails.acceptance,
-        itemDetails.dependencies, itemDetails.notes,
-      ].filter(Boolean).join('\n');
-      if (detailSummary) span.title = detailSummary;
-      if (item.done) span.style.cssText = 'opacity:0.5;text-decoration:line-through;';
-      row.appendChild(cb); row.appendChild(span);
-      if (imgs.length) {
-        const wrap = document.createElement('span');
-        wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-shrink:0;';
-        for (const u of imgs) {
-          const img = document.createElement('img');
-          img.src = u;
-          img.alt = 'screenshot';
-          img.style.cssText = 'height:32px;max-width:64px;object-fit:cover;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;align-self:center;';
-          img.addEventListener('click', (ev) => {
-            // The row is a <label> around the done-checkbox — a plain click
-            // would toggle it instead of opening the screenshot.
-            ev.preventDefault();
-            ev.stopPropagation();
-            window.open(u, '_blank', 'noopener');
-          });
-          wrap.appendChild(img);
-        }
-        row.appendChild(wrap);
-      }
-      list.appendChild(row);
-    }
   }
 }
 
@@ -3802,7 +3880,7 @@ async function _loadRoadmap() {
     if (!res.ok) throw new Error(`load ${res.status}`);
     const d = await res.json();
     _roadmapText = d.content || '';
-    if (_roadmapViewMode() === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
+    if (!_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
   } catch (e) {
     if (msg) { msg.textContent = 'Failed to load roadmap: ' + e.message; msg.className = 'admin-error'; }
@@ -4248,14 +4326,6 @@ function initDeveloper() {
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
 
-  el('dev-roadmap-view')?.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.rm-view-opt');
-    if (!btn || btn.dataset.rmview === _roadmapViewMode()) return;
-    _roadmapView = btn.dataset.rmview;
-    try { localStorage.setItem('ody-roadmap-view', _roadmapView); } catch (_) {}
-    if (_roadmapView === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
-    _renderRoadmap();
-  });
   const bulkVersionInput = el('dev-roadmap-bulk-version');
   const bulkVersionBtn = el('dev-roadmap-bulk-version-apply');
   const applyBulkVersion = async () => {

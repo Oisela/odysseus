@@ -2723,17 +2723,14 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Die Entwicklungspipeline: Feature definieren, Modell wählen, Build verfolgen und auf Beta abnehmen. Die ROADMAP.md bleibt die gemeinsame Quelle.</div>
             <div id="dev-roadmap-stale" class="admin-error" style="display:none;margin-bottom:8px;line-height:1.45;"></div>
             <div class="rm-toolbar">
-              <div class="rm-view-toggle" id="dev-roadmap-view" role="group" aria-label="Roadmap view">
-                <button type="button" class="rm-view-opt" data-rmview="list">Liste</button>
-                <button type="button" class="rm-view-opt" data-rmview="board">Board</button>
-              </div>
+              <button type="button" class="admin-btn-sm" id="dev-roadmap-done-btn" title="Completed items">Done</button>
               <div class="rm-toolbar-actions">
-                <div class="rm-version-bulk" title="Alle geplanten Einträge außerhalb ausgelieferter Releases auf diese Version setzen">
-                  <label for="dev-roadmap-bulk-version">Geplante Version</label>
-                  <input id="dev-roadmap-bulk-version" class="styled-prompt-input" type="text" inputmode="decimal" maxlength="32" placeholder="z. B. 3.10">
-                  <button type="button" class="admin-btn-sm" id="dev-roadmap-bulk-version-apply">Auf alle geplanten</button>
+                <div class="rm-version-bulk" title="Set every planned item outside shipped releases to this version">
+                  <label for="dev-roadmap-bulk-version">Target version</label>
+                  <input id="dev-roadmap-bulk-version" class="styled-prompt-input" type="text" inputmode="decimal" maxlength="32" placeholder="e.g. 4.1">
+                  <button type="button" class="admin-btn-sm" id="dev-roadmap-bulk-version-apply">Apply to all planned</button>
                 </div>
-                <button type="button" class="admin-btn-sm" id="dev-roadmap-refresh">Status aktualisieren</button>
+                <button type="button" class="admin-btn-sm" id="dev-roadmap-refresh">Refresh status</button>
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
