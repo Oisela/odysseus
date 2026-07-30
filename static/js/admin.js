@@ -3271,15 +3271,51 @@ async function _openBuildChat(sessionId) {
   }
 }
 
+// doAdd() writes every new item's title as "**Bug:** …" / "**Feature:** …",
+// so the type is already in the file and does not need its own field.
+// Unlabelled legacy items count as features — the cautious track.
+function _rmItemKind(item) {
+  const m = _rmCardText(item).match(/^\*\*(Bug|Feature|Idee|Polish)\s*:?\*\*/i);
+  return m ? m[1].toLowerCase() : 'feature';
+}
+
+// Bugs and polish go straight to main so Alessio can keep debugging live;
+// features get a short beta pass and then wait for an explicit go-word.
+function _rmTrackForKind(kind) {
+  return (kind === 'bug' || kind === 'polish') ? 'bug' : 'feature';
+}
+
 function _buildPrompt(item, buildMode) {
   const title = _rmCardText(item);
   const d = _roadmapDetails(item);
+  const kind = _rmItemKind(item);
+  const track = _rmTrackForKind(kind);
   const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
-    : `Arbeite autonom bis Gate 1. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
-  return `Setze dieses Roadmap-Feature aus der ROADMAP.md um.\n\n`
+    : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+  const workflow = track === 'bug'
+    ? `**Track BUG — direkt auf main, ohne Beta.**\n`
+      + `1. \`dev.sh start fix/<slug>\`\n`
+      + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
+      + `3. EINE Frage an Alessio: "Bugfix <slug> direkt auf main?" Ohne Ja: stopp.\n`
+      + `4. \`dev.sh bugfix fix/<slug>\` (Patch-Bump + Prod-Rebuild, kein Beta).\n`
+      + `5. \`dev.sh verify prod <version>\` — erst wenn das OK sagt, ist es fertig.\n`
+      + `6. \`dev.sh roadmap-status ${_itemKey(item)} x\`\n`
+    : `**Track FEATURE — kurz auf Beta, dann warten.**\n`
+      + `1. \`dev.sh start feat/<slug>\`\n`
+      + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
+      + `3. \`dev.sh ready feat/<slug>\` (pusht auf Beta und hält an).\n`
+      + `4. \`dev.sh roadmap-status ${_itemKey(item)} '!'\`\n`
+      + `5. Melde Beta-URL und eine kurze Testanleitung — und STOPP.\n`
+      + `   Auf der Beta zählt vor allem: stürzt nichts ab, und funktioniert\n`
+      + `   der Downgrade-Knopf. Alles andere findet Alessio live auf main.\n`
+      + `6. NUR nach einem Go-Wort ("push to main", "auf main", "promote",\n`
+      + `   "ausrollen", "prod", "go"): \`dev.sh promote-main feat/<slug>\`,\n`
+      + `   dann \`dev.sh verify prod <version>\` und roadmap-status x.\n`;
+  return `Setze dieses Roadmap-Item aus der ROADMAP.md um.\n\n`
     + `**Roadmap-ID:** ${_itemKey(item)}\n`
+    + `**Typ:** ${kind}\n`
     + `**Titel:** ${title}\n`
     + section('Beschreibung', d.description)
     + section('Ziel / Problem', d.goal)
@@ -3288,11 +3324,10 @@ function _buildPrompt(item, buildMode) {
     + section('Priorität', d.priority)
     + section('Abhängigkeiten', d.dependencies)
     + section('Technische Notizen / Grenzen', d.notes)
-    + `\n${approach}\n\n`
-    + `Nutze den Odysseus-Entwickler-Workflow und halte dieses Roadmap-Item aktuell: `
-    + `Beim Start [~], nach erfolgreichem Gate 1 auf Beta [!], und erst nach Alessios Beta-Freigabe/Gate 2 [x]. `
-    + `Ergänze relevante Entscheidungen und den Beta-Commit beim Item. `
-    + `Melde dich mit einer kurzen Testanleitung, sobald es auf Beta bereit ist, oder mit dem konkreten Blocker.`;
+    + `\n${approach}\n\n${workflow}\n`
+    + `Status IMMER über \`dev.sh roadmap-status\` setzen — ROADMAP.md nie von `
+    + `Hand editieren, die stabile ID steht auf einer Folgezeile und ein sed `
+    + `trifft den falschen Eintrag.`;
 }
 
 async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) {

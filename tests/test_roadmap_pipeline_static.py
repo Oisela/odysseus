@@ -12,8 +12,38 @@ SYSTEM_ROUTES = (ROOT / "routes" / "system_routes.py").read_text(encoding="utf-8
 def test_roadmap_has_full_delivery_pipeline():
     assert "mark === '!' ? 'review'" in ADMIN
     assert "{ key: 'review', label: 'Testbereit', mark: '!' }" in ADMIN
-    assert "nach erfolgreichem Gate 1 auf Beta [!]" in ADMIN
-    assert "erst nach Alessios Beta-Freigabe/Gate 2 [x]" in ADMIN
+
+
+def test_build_prompt_routes_bugs_and_features_to_different_tracks():
+    """Since v4.0 the type of an item decides how it ships.
+
+    Bugs and polish go straight to main so Alessio can keep debugging live;
+    features get a short beta pass and then wait for an explicit go-word. The
+    old prompt sent everything down one "Gate 1 / Gate 2" path, wording that
+    also did not survive translation into a non-Claude model's head.
+    """
+    assert "function _rmItemKind(item)" in ADMIN
+    assert "function _rmTrackForKind(kind)" in ADMIN
+    assert "(kind === 'bug' || kind === 'polish') ? 'bug' : 'feature'" in ADMIN
+
+    start = ADMIN.index("function _buildPrompt(")
+    prompt = ADMIN[start:ADMIN.index("async function _startRoadmapBuild")]
+
+    # Bug track: no beta, one question, verified afterwards.
+    assert "Track BUG" in prompt
+    assert "dev.sh bugfix fix/" in prompt
+    assert "ohne Beta" in prompt
+    # Feature track: beta, then a hard stop until a go-word arrives.
+    assert "Track FEATURE" in prompt
+    assert "dev.sh ready feat/" in prompt
+    assert "dev.sh promote-main feat/" in prompt
+    assert "STOPP" in prompt
+    assert "Go-Wort" in prompt
+    # Both tracks must prove the result rather than assume it.
+    assert prompt.count("dev.sh verify prod") >= 2
+    # And never hand-edit the file the agent plans from.
+    assert "dev.sh roadmap-status" in prompt
+    assert "nie von" in prompt and "Hand editieren" in prompt
 
 
 def test_roadmap_cards_have_stable_ids_and_structured_requirements():
