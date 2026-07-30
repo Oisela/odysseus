@@ -458,6 +458,25 @@ Suggest changes with explanations (for review/feedback requests).""",
 ```
 Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g. 1024x1024), line 4 = quality.""",
 
+    # These twelve had schemas but no prose entry, so `## Available tools` in
+    # the compact prompt never mentioned them. Models that trust the prompt over
+    # the schema list — GPT and Gemini noticeably more than Claude — concluded
+    # they did not exist. `ls`, `grep` and `glob` are in ALWAYS_AVAILABLE, so
+    # they were being sent on every single turn while the prompt stayed silent
+    # about them.
+    "ls": "- ```ls``` — List a directory. Line 1 = path (default: the workspace). Prefer this over `bash ls`.",
+    "grep": "- ```grep``` — Search file CONTENTS by regex. Line 1 = pattern, line 2 = path or glob. Prefer this over `bash grep`.",
+    "glob": "- ```glob``` — Find files by NAME pattern (e.g. `**/*.py`). Line 1 = pattern, line 2 = root. Prefer this over `bash find`.",
+    "delegate": "- ```delegate``` — Hand a self-contained subtask to a cheaper worker model and get back only its result. Line 1 = the task, rest = the context it needs. Use for mechanical work (searching, extracting, summarising) so the main model is not spent on it.",
+    "trigger_research": "- ```trigger_research``` — Start a deep-research run on a topic. Args (JSON): {\"topic\": \"...\"}. Runs in the background and reports back.",
+    "manage_bg_jobs": "- ```manage_bg_jobs``` — Inspect background jobs started with `#!bg`. Args (JSON): {\"action\": \"list|status|cancel\", \"id\": \"...\"}.",
+    "api_call": "- ```api_call``` — Call a configured integration's HTTP API. Args (JSON): {\"integration\": \"...\", \"method\": \"...\", \"path\": \"...\", \"body\": {...}}.",
+    "edit_image": "- ```edit_image``` — Edit an existing image with a prompt. Line 1 = image reference, rest = the instruction.",
+    "serve_preset": "- ```serve_preset``` — Start a local model server from a saved cookbook preset. Line 1 = preset name.",
+    "list_serve_presets": "- ```list_serve_presets``` — List saved cookbook serve presets.",
+    "list_cookbook_servers": "- ```list_cookbook_servers``` — List locally running cookbook model servers.",
+    "adopt_served_model": "- ```adopt_served_model``` — Register an already-running local server as a usable endpoint.",
+
     "chat_with_model": "- ```chat_with_model``` — Ask a DIFFERENT AI model and relay its answer. Line 1 = model name (or 'model@endpoint'), rest = your message. Use when the user says 'ask <model>', 'what does <model> think', or wants to compare/their answer from another model.",
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
@@ -686,6 +705,15 @@ _API_HOSTS = frozenset([
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
+    # Both of these support native function calling and were missing, so
+    # `_is_api_model` fell back to the model-name keyword list. When that also
+    # missed — an endpoint whose DB `supports_tools` is NULL and a slug the
+    # keywords don't cover — `all_tool_schemas` came out empty and the model
+    # got no tool definitions at all. It then said, truthfully, that it had no
+    # shell access. That is the "kein Shell-Zugriff obwohl er Zugriff hatte"
+    # Alessio kept hitting.
+    "chatgpt.com",                          # ChatGPT subscription (Codex)
+    "generativelanguage.googleapis.com",    # Gemini via Google's OpenAI shim
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
@@ -3324,13 +3352,39 @@ async def stream_agent_loop(
     # Match the common phrasings + an action verb that maps to an available
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
+    # German half added 2026-07-30: Alessio works in German, so a model that
+    # announced "Ich schaue mir die Logs an" and then stopped never tripped the
+    # detector — the whole safety net was English-only and silently off for the
+    # language it was needed in most.
+    # German gets its own branches rather than more words in the English ones:
+    # word order differs. English is "let me CHECK" (phrase, then verb), German
+    # is "Ich SCHAUE mir das an" — the finite verb is already the second word,
+    # or the infinitive sits at the very end ("Ich werde das PRÜFEN"). Bolting
+    # German verbs onto the English second group matches nothing, which is how
+    # the detector came to be silently off for the language Alessio works in.
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+        r"(?:^|\n)\s*(?:"
+        # English: intent phrase followed by an action verb.
+        r"(?:let me|i'?ll|i will|i need to|we need to|need to|"
         r"i should|we should|i must|we must|going to|let's)\s+"
-        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
+        r"(?:tail|check|investigate|look at|see|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
+        r"register|list|search|find|query|hit|ping|test|use|perform|do)"
+        # German, finite verb straight after the pronoun.
+        r"|(?:ich|wir)\s+(?:schaue|schau|sehe|prüfe|pruefe|lese|hole|starte|"
+        r"rufe|führe|fuehre|untersuche|teste|suche|öffne|oeffne|kontrolliere|"
+        r"nutze|verwende|setze|baue|ändere|aendere)"
+        # German, modal or "lass mich" with the infinitive at the end.
+        r"|(?:ich|wir|lass mich|lassen sie mich)\s+"
+        r"(?:werde|will|willst|muss|müssen|muessen|sollte|sollten|"
+        r"kann|können|koennen|wollte|würde|wuerde)?[^.\n]{0,60}?"
+        # \b before the infinitive, or the perfect tense matches its own stem:
+        # "Ich habe die Datei ge|lesen" is a REPORT, not an intent.
+        r"\b(?:schauen|anschauen|ansehen|sehen|nachsehen|prüfen|pruefen|lesen|"
+        r"holen|starten|rufen|aufrufen|abrufen|ausführen|ausfuehren|"
+        r"untersuchen|testen|suchen|öffnen|oeffnen|kontrollieren)"
+        r")"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )

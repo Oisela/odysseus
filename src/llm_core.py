@@ -1083,6 +1083,17 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
 # see _tools_rejected_without_reasoning_effort_none). Sent as a reasoning object
 # on the Responses API. Env-overridable in case a future model wants a different
 # effort — empty string omits it entirely.
+#
+# Considered and rejected for v4.0: raising this to "low" to cure the
+# "announces an action but never runs it" complaint. The constraint above is a
+# verified API rule, not a preference, so a higher effort would 400 every turn
+# that carries tools and a retry would just pay that round trip every time. The
+# symptom has causes that can actually be fixed — no tool schemas reaching the
+# model at all (_API_HOSTS), an English-only intent nudge, and that nudge
+# losing its recency when every system message is hoisted into `instructions`.
+# Those are handled instead. Note this only bites WITH tools: a tool-less turn
+# keeps full reasoning, because the payload sets `reasoning` inside
+# `if responses_tools:`.
 _CODEX_TOOLS_REASONING_EFFORT = os.getenv(
     "ODYSSEUS_CODEX_TOOLS_REASONING_EFFORT", "none"
 ).strip()
@@ -1120,10 +1131,29 @@ def _build_chatgpt_responses_payload(
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
-    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    # Only the FIRST system message becomes `instructions`. The agent loop
+    # injects later system messages mid-conversation — the "you said you would,
+    # then didn't" nudge and verifier feedback — and their whole point is that
+    # they arrive last. Hoisting every system message into the global preamble
+    # put those corrections above the conversation they were correcting, where
+    # they read as background policy instead of "do it now".
+    system_msgs = [m for m in (messages or []) if (m.get("role") or "") == "system"]
+    conversation: List[Dict] = []
+    for msg in messages or []:
+        if (msg.get("role") or "") != "system":
+            conversation.append(msg)
+        elif system_msgs and msg is not system_msgs[0]:
+            # Keep it in place, marked, as a user turn — Responses has no
+            # system role inside `input`.
+            conversation.append({
+                "role": "user",
+                "content": f"[system] {_message_content_as_text(msg.get('content'))}",
+            })
     payload: Dict = {
         "model": model,
-        "instructions": _chatgpt_subscription_instructions(messages),
+        "instructions": _chatgpt_subscription_instructions(
+            system_msgs[:1] if system_msgs else []
+        ),
         "input": build_responses_input(conversation),
         "stream": stream,
         "store": False,
@@ -1297,7 +1327,9 @@ _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
     "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
-    "m2-reap", "gemma", "stepfun", "step-3", "step3",
+    # "gemma" is Google's open model and does NOT match "gemini" — the thinking
+    # panel stayed empty for every Gemini model because of that near-miss.
+    "m2-reap", "gemma", "gemini", "stepfun", "step-3", "step3",
     "magistral", "mistral-small", "mistral-medium",
 )
 
