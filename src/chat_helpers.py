@@ -43,6 +43,12 @@ def extract_urls(text: str) -> List[str]:
 _VISION_MODEL_KEYWORDS = (
     # hosted
     "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
+    # The whole GPT-5 generation accepts images, including the ChatGPT
+    # subscription slugs (gpt-5.6-sol / gpt-5.6-terra) that reach us through the
+    # Codex Responses API. Missing this is why those models kept answering that
+    # they could not see a screenshot: the image was swapped for a caption long
+    # before the request was built.
+    "gpt-5",
     "claude-sonnet", "claude-opus", "claude-haiku", "gemini",
     # open / local
     "vision", "multimodal", "llava", "bakllava", "moondream", "pixtral", "minicpm",

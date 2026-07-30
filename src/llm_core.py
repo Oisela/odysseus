@@ -1843,6 +1843,65 @@ def normalize_model_id(
             return a
     return None
 
+def _chatgpt_subscription_call_sync(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    headers: Dict,
+    timeout: int,
+) -> str:
+    """One synchronous Responses call, collected from the SSE stream.
+
+    The Codex endpoint rejects non-streaming requests, so "give me a string"
+    still means "stream it and join the deltas" — the same shape llm_call_async
+    uses, done with a blocking client because llm_call's callers are sync and
+    must not have an event loop forced on them.
+    """
+    target_url = _normalize_chatgpt_subscription_url(url)
+    payload = _build_chatgpt_responses_payload(
+        model, messages, temperature, max_tokens, stream=True,
+    )
+    parts: List[str] = []
+    try:
+        note_model_activity(target_url, model)
+        with httpx.stream(
+            "POST", target_url, headers=headers, json=payload, timeout=timeout,
+        ) as r:
+            if not r.is_success:
+                body = r.read().decode("utf-8", "replace")
+                raise HTTPException(
+                    502,
+                    f"Upstream {target_url} -> {r.status_code}: "
+                    f"{_format_chatgpt_subscription_error(r.status_code, body)}",
+                )
+            event_name = ""
+            for line in r.iter_lines():
+                line = (line or "").strip()
+                if line.startswith("event:"):
+                    event_name = line[6:].strip()
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    continue
+                if (data.get("type") or event_name) == "response.output_text.delta":
+                    delta = data.get("delta")
+                    if isinstance(delta, str):
+                        parts.append(delta)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"POST {target_url} failed: {e}")
+    return "".join(parts)
+
+
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
@@ -1891,6 +1950,23 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "chatgpt-subscription":
+        # Without this branch the generic path below built a chat-completions
+        # body and POSTed it to <base>/codex/chat/completions, which does not
+        # exist -> 404 on every synchronous call. Silent, because all three
+        # callers degrade rather than surface it: the vision-model fallback
+        # (document_processor), session auto-titles (session_routes) and the
+        # web-search query builder (chat_processor). llm_call_async had the
+        # branch; the sync twin never got it.
+        #
+        # Codex insists on stream:true even when the caller only wants a
+        # string (same reason llm_call_async collects deltas), so this streams
+        # and joins rather than doing a plain POST.
+        response = _chatgpt_subscription_call_sync(
+            url, model, messages_copy, temperature, max_tokens, h, timeout,
+        )
+        _set_cached_response(cache_key, response)
+        return response
     else:
         target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":
