@@ -199,6 +199,7 @@ const DE = {
   // ── Developer / Roadmap ──
   'Reload roadmap': 'Roadmap neu laden',
   'Build autonomously up to beta': 'Autonom bis Beta bauen',
+  'Fix bug directly on main': 'Bug direkt auf Main beheben',
   'Plan and ask first': 'Erst Plan und Rückfragen',
   'Start on Prod only': 'Start nur auf Prod',
   'Preview: on beta you can check the model and workflow; the real start stays locked, because only Prod can reach the server repo.':

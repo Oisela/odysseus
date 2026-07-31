@@ -3368,10 +3368,11 @@ function _buildPrompt(item, buildMode) {
   const kind = _rmItemKind(item);
   const track = _rmTrackForKind(kind);
   const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
+  const directBugfix = buildMode === 'direct-bugfix';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
     : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
-  const workflow = track === 'bug'
+  const workflow = (directBugfix || track === 'bug')
     ? `**Track BUG — direkt auf main, ohne Beta.**\n`
       + `1. \`dev.sh start fix/<slug>\`\n`
       + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
@@ -3499,6 +3500,7 @@ function _cardBuildFormHtml() {
       <label class="rm-field"><span>Workflow</span>
         <select class="settings-select rm-build-mode">
           <option value="build">Build autonomously up to beta</option>
+          <option value="direct-bugfix">Fix bug directly on main</option>
           <option value="plan">Plan and ask first</option>
         </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
