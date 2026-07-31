@@ -350,6 +350,55 @@ def setup_upload_routes(upload_handler):
             logger.error(f"Failed to get upload stats: {e}")
             raise HTTPException(500, "Failed to get upload statistics")
 
+    @router.get("/list")
+    async def list_uploads(request: Request, q: str = "", limit: int = 20):
+        """List the caller's own previously uploaded files, newest first.
+
+        Powers the chat composer's @-mention popup so a file already on the
+        server can be attached without re-uploading it. Registered ahead of
+        GET /{file_id} (same trick as /stats above) so the literal path
+        segment "list" isn't swallowed by the {file_id} placeholder.
+        """
+        # Hard cap independent of what the client asks for — this backs an
+        # autocomplete popup, not a paged file browser.
+        limit = max(1, min(limit or 20, 50))
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        auth_configured = bool(auth_mgr and auth_mgr.is_configured)
+        current_user = effective_user(request)
+        if auth_configured and not current_user:
+            raise HTTPException(403, "Access denied")
+        is_admin = bool(auth_configured and auth_mgr.is_admin(current_user))
+
+        # Corruption-tolerant load, same as download_file/_load_upload_info.
+        db = upload_handler._load_upload_index()
+        needle = (q or "").strip().lower()
+        items = []
+        for info in db.values():
+            if not isinstance(info, dict) or not info.get("id"):
+                continue
+            # Same ownership rule as GET /{file_id}: unauthenticated
+            # single-user mode sees everything; once auth is configured, a
+            # file is only visible to its owner or an admin.
+            if auth_configured:
+                file_owner = info.get("owner")
+                if file_owner != current_user and not is_admin:
+                    continue
+            display_name = info.get("original_name") or info.get("name") or info["id"]
+            if needle and needle not in display_name.lower():
+                continue
+            items.append({
+                "id": info["id"],
+                "name": display_name,
+                "mime": info.get("mime") or "",
+                "size": info.get("size") or 0,
+                "uploaded_at": info.get("uploaded_at") or info.get("created_at") or "",
+            })
+
+        # uploaded_at is an ISO 8601 string (datetime.now().isoformat()), so
+        # lexical sort order matches chronological order.
+        items.sort(key=lambda it: it["uploaded_at"], reverse=True)
+        return {"files": items[:limit]}
+
     @router.get("/{file_id}")
     async def download_file(request: Request, file_id: str, thumb: int = 0):
         """Serve an uploaded file by its ID. `?thumb=1` returns a small cached
