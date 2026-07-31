@@ -89,3 +89,79 @@ def test_status_message_access_is_null_safe():
         stripped = line.strip()
         if "msg.textContent" in stripped or "msg.className" in stripped:
             assert stripped.startswith("if (msg)"), f"unguarded msg access: {stripped}"
+
+
+def test_developer_page_init_does_not_skip_its_own_loads():
+    """Regression, v4.0.1 — found by Alessio on prod within minutes.
+
+    initDeveloperPage() used to `return` after initAll() on the first call, so
+    everything below it — including the version-switcher mount — was skipped.
+    Opening Developer is usually the first admin action of a session, so the
+    dropdown sat on its "versions…" placeholder until you happened to open the
+    page a second time. That dropdown IS the downgrade button.
+
+    Every call below is safe to repeat, which is what makes falling through
+    the right fix rather than reordering.
+    """
+    start = ADMIN_JS.index("export function initDeveloperPage()")
+    body = ADMIN_JS[start:ADMIN_JS.index("export function open(", start)]
+    assert "if (!initialized) initAll();" in body
+    assert "return;" not in body, "an early return here silently skips the loads"
+    for call in ("_loadDevStatus()", "_loadRoadmap()", "_initVersionSwitcher('dev-')"):
+        assert call in body
+
+
+def test_index_html_has_no_orphaned_markup():
+    """Regression, v4.0.1 — raw HTML was rendering as text on the page.
+
+    Moving the new-item form into its modal left a truncated <textarea> tag
+    behind, so `s="2" placeholder="…">` showed up as visible text under the
+    toolbar. A structural parse catches this class of damage; counting <div>s
+    does not.
+    """
+    from html.parser import HTMLParser
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"}
+
+    class Checker(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack, self.errors = [], []
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in VOID:
+                self.stack.append((tag, self.getpos()[0]))
+
+        def handle_endtag(self, tag):
+            if tag in VOID:
+                return
+            if not self.stack:
+                self.errors.append(f"line {self.getpos()[0]}: stray </{tag}>")
+                return
+            if self.stack[-1][0] == tag:
+                self.stack.pop()
+                return
+            for k in range(len(self.stack) - 1, -1, -1):
+                if self.stack[k][0] == tag:
+                    for open_tag, line in self.stack[k + 1:]:
+                        self.errors.append(f"line {line}: <{open_tag}> never closed")
+                    del self.stack[k:]
+                    return
+            self.errors.append(f"line {self.getpos()[0]}: </{tag}> matches nothing")
+
+    checker = Checker()
+    checker.feed(INDEX_HTML)
+    for tag, line in checker.stack:
+        checker.errors.append(f"line {line}: <{tag}> left open")
+    assert not checker.errors, "index.html is structurally broken:\n" + "\n".join(checker.errors[:10])
+
+
+def test_roadmap_reload_button_says_what_it_does():
+    """It re-reads ROADMAP.md; "Refresh status" read as deployment status.
+
+    Alessio had to ask what the button did — that is the evidence the label
+    failed, and the package card next to it has its own status refresh.
+    """
+    assert ">Reload roadmap<" in INDEX_HTML
+    assert ">Refresh status<" not in INDEX_HTML

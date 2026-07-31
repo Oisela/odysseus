@@ -4375,9 +4375,22 @@ function initDeveloper() {
       applyBulkVersion();
     }
   });
-  el('dev-roadmap-refresh')?.addEventListener('click', async () => {
+  el('dev-roadmap-refresh')?.addEventListener('click', async (e) => {
+    // A successful reload re-renders to something identical, so without a word
+    // of feedback the button looks broken. Alessio: "da passiert gar nichts".
+    const btn = e.currentTarget;
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Reloading…';
     _roadmapBuilds = null;
-    await _loadRoadmap();
+    try {
+      await _loadRoadmap();
+      if (msg) { msg.textContent = 'Roadmap reloaded.'; msg.className = ''; }
+      setTimeout(() => { if (msg && msg.textContent === 'Roadmap reloaded.') msg.textContent = ''; }, 2500);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   });
 
   el('dev-status-refresh')?.addEventListener('click', () => {
@@ -4743,10 +4756,15 @@ export function _initData() {
 }
 
 export function initDeveloperPage() {
-  if (!initialized) {
-    initAll();
-    return;
-  }
+  // Fall through rather than return: on the FIRST call initAll() wires the
+  // admin surface, but none of the Developer-page loads below. Opening
+  // Developer is usually the first admin action of a session, so returning
+  // here left the version dropdown stuck on its "versions…" placeholder until
+  // you happened to open the page a second time — and that dropdown is the
+  // downgrade button. Every call below is safe to repeat: the loads are plain
+  // fetches, metrics polling has its own guard, and the switcher attaches its
+  // listeners once (btn._switcherWired).
+  if (!initialized) initAll();
   _loadDevStatus();
   _loadServerMetrics();
   _startServerMetricsPolling();
