@@ -3587,6 +3587,122 @@ function _closeDoneView() {
   if (_doneModalEl) _doneModalEl.style.display = 'none';
 }
 
+// Roadmap cards deliberately stay compact on the board. Open their complete
+// structured content in a shared modal instead of expanding a column and
+// pushing every other card out of view.
+let _roadmapItemModalEl = null;
+
+function _ensureRoadmapItemModal() {
+  if (_roadmapItemModalEl) return _roadmapItemModalEl;
+  _roadmapItemModalEl = document.createElement('div');
+  _roadmapItemModalEl.id = 'roadmap-item-modal';
+  _roadmapItemModalEl.className = 'modal';
+  _roadmapItemModalEl.style.display = 'none';
+  _roadmapItemModalEl.innerHTML = `
+    <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="rm-item-modal-title">
+      <div class="modal-header">
+        <h4 id="rm-item-modal-title"></h4>
+        <button class="close-btn" type="button" aria-label="Close">&#10006;</button>
+      </div>
+      <div class="modal-body rm-item-modal-body"></div>
+    </div>`;
+  document.body.appendChild(_roadmapItemModalEl);
+  _roadmapItemModalEl.querySelector('.close-btn').addEventListener('click', _closeRoadmapItemModal);
+  _roadmapItemModalEl.addEventListener('click', (e) => {
+    if (e.target === _roadmapItemModalEl) _closeRoadmapItemModal();
+  });
+  return _roadmapItemModalEl;
+}
+
+function _closeRoadmapItemModal() {
+  if (_roadmapItemModalEl) _roadmapItemModalEl.style.display = 'none';
+}
+
+function _appendRoadmapDetail(body, label, value) {
+  if (!value) return;
+  const section = document.createElement('section');
+  section.className = 'rm-item-detail';
+  const heading = document.createElement('h5');
+  heading.textContent = label;
+  const content = document.createElement('div');
+  content.className = 'rm-item-detail-content';
+  content.textContent = value;
+  section.appendChild(heading);
+  section.appendChild(content);
+  body.appendChild(section);
+}
+
+function _openRoadmapItemModal(item, section) {
+  const modal = _ensureRoadmapItemModal();
+  const details = _roadmapDetails(item);
+  modal.querySelector('#rm-item-modal-title').textContent = _rmCardText(item);
+  const body = modal.querySelector('.rm-item-modal-body');
+  body.innerHTML = '';
+
+  const meta = document.createElement('div');
+  meta.className = 'rm-item-modal-meta';
+  const sectionChip = document.createElement('span');
+  sectionChip.className = 'rm-chip';
+  sectionChip.textContent = section.title.replace(/\s*\(.*$/, '');
+  meta.appendChild(sectionChip);
+  if (details.version) {
+    const versionChip = document.createElement('span');
+    versionChip.className = 'rm-chip rm-version-chip';
+    versionChip.textContent = details.version;
+    meta.appendChild(versionChip);
+  }
+  if (details.priority && details.priority !== 'Normal') {
+    const priorityChip = document.createElement('span');
+    priorityChip.className = `rm-chip rm-priority rm-priority-${details.priority.toLowerCase()}`;
+    priorityChip.textContent = details.priority;
+    meta.appendChild(priorityChip);
+  }
+  body.appendChild(meta);
+
+  _appendRoadmapDetail(body, 'Description', details.description);
+  _appendRoadmapDetail(body, 'Goal / problem', details.goal);
+  _appendRoadmapDetail(body, 'Done when', details.acceptance);
+  _appendRoadmapDetail(body, 'Dependencies', details.dependencies);
+  _appendRoadmapDetail(body, 'Technical notes / limits', details.notes);
+
+  if (details.tests.length) {
+    const tests = document.createElement('section');
+    tests.className = 'rm-item-detail';
+    const heading = document.createElement('h5');
+    heading.textContent = 'Test points';
+    const list = document.createElement('div');
+    list.className = 'rm-item-modal-tests';
+    details.tests.forEach((test, index) => {
+      const row = document.createElement('label');
+      row.className = 'rm-test-row' + (test.done ? ' rm-test-row-done' : '');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!test.done;
+      checkbox.addEventListener('change', async () => {
+        checkbox.disabled = true;
+        if (!await _setTestPoint(item, index, checkbox.checked)) {
+          checkbox.checked = !checkbox.checked;
+          checkbox.disabled = false;
+          return;
+        }
+        row.classList.toggle('rm-test-row-done', checkbox.checked);
+      });
+      const text = document.createElement('span');
+      text.textContent = test.text;
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      list.appendChild(row);
+    });
+    tests.appendChild(heading);
+    tests.appendChild(list);
+    body.appendChild(tests);
+  }
+
+  _appendScreenshots(body, details);
+  modal.style.display = 'flex';
+  modal.querySelector('.close-btn').focus();
+}
+
 function _doneItems(sections) {
   // Unlike the board, RELEASED sections are included — shipped work IS the
   // history this view exists to show.
@@ -3770,10 +3886,15 @@ function _renderRoadmapBoard(list, sections) {
       const renderView = () => {
         card.innerHTML = '';
         card.draggable = true;
-        const title = document.createElement('div');
-        title.className = 'rm-card-text';
+        const title = document.createElement('button');
+        title.type = 'button';
+        title.className = 'rm-card-text rm-card-open';
         title.textContent = _rmCardText(it);
-        if (details.description) title.title = details.description;
+        title.title = 'Open roadmap item';
+        title.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _openRoadmapItemModal(it, sec);
+        });
         card.appendChild(title);
         if (details.description) {
           const desc = document.createElement('div');
