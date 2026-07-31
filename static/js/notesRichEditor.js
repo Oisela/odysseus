@@ -16,6 +16,10 @@
 
 import markdownModule, { INLINE_MATH_MD_SOURCE } from './markdown.js';
 
+// Same-origin API root, same pattern as notes.js / fileHandler.js — never a
+// hardcoded host.
+const API_BASE = window.location.origin;
+
 // ── Lazy-load Turndown (same pattern as document.js ensureDocx) ──
 let _turndownReady = null;
 function ensureTurndown() {
@@ -78,6 +82,14 @@ function _turndown() {
       const text = code.textContent.replace(/\n$/, '');
       return '\n\n```' + lang + '\n' + text + '\n```\n\n';
     },
+  });
+  // Pasted-image upload placeholder (see _pasteImage) is UI-only feedback —
+  // if a sync lands mid-upload it must vanish, not leave "Uploading
+  // image…" behind as literal saved text. Default <img> handling (no rule
+  // needed) already gives us `![](src)` once the real <img> lands.
+  td.addRule('nreImgPending', {
+    filter: (node) => node.nodeType === 1 && node.classList && node.classList.contains('note-rich-img-pending'),
+    replacement: () => '',
   });
   return (_td = td);
 }
@@ -186,6 +198,85 @@ function htmlToMd(rootEl) {
   // never part of the note.
   md = md.replace(/\u200B/g, '');
   return md;
+}
+
+// ── Image paste ──
+// Same upload contract the chat composer (fileHandler.js) and the roadmap
+// image paste (admin.js) use: POST FormData field "files" to /api/upload,
+// read the server's error detail on failure instead of swallowing it.
+const _IMG_UPLOAD_TIMEOUT_MS = 120000;
+
+async function _uploadPastedImage(file) {
+  const fd = new FormData();
+  fd.append('files', file, file.name || 'paste.png');
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), _IMG_UPLOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/api/upload`, {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      let detail = '';
+      try { const errBody = await res.json(); detail = errBody.detail || errBody.error || ''; } catch (_) {}
+      throw new Error(detail || `Upload failed (HTTP ${res.status})`);
+    }
+    const data = await res.json();
+    const id = data.files && data.files[0] && data.files[0].id;
+    if (!id) throw new Error('Upload failed');
+    return `${API_BASE}/api/upload/${id}`;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Drops a contenteditable="false" placeholder at the caret the instant the
+// paste happens — the user can keep typing elsewhere while the upload is in
+// flight, so the insertion point is captured as a DOM node reference (not a
+// Range, which would drift with later edits). The placeholder itself never
+// reaches saved markdown (nreImgPending strips it in Turndown); on success
+// it's swapped for the real <img>, on failure it's simply removed — no
+// broken placeholder left behind either way.
+function _pasteImage(rich, file, sync) {
+  const sel = window.getSelection();
+  let range = null;
+  if (sel && sel.rangeCount) {
+    const r = sel.getRangeAt(0);
+    if (rich.contains(r.commonAncestorContainer)) range = r.cloneRange();
+  }
+  if (!range) {
+    range = document.createRange();
+    range.selectNodeContents(rich);
+    range.collapse(false);
+  }
+  const placeholder = document.createElement('span');
+  placeholder.className = 'note-rich-img-pending';
+  placeholder.contentEditable = 'false';
+  placeholder.style.cssText = 'color:var(--fg-muted);font-style:italic;';
+  placeholder.textContent = 'Uploading image…';
+  range.deleteContents();
+  range.insertNode(placeholder);
+  // Caret right after the placeholder so prose can continue immediately.
+  const caret = document.createRange();
+  caret.setStartAfter(placeholder);
+  caret.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(caret);
+  rich.focus();
+
+  _uploadPastedImage(file).then((url) => {
+    if (!placeholder.isConnected) return; // editor was torn down meanwhile
+    const img = document.createElement('img');
+    img.src = url;
+    placeholder.replaceWith(img);
+    sync();
+  }).catch((err) => {
+    console.warn('notesRichEditor: image paste upload failed:', err);
+    if (placeholder.isConnected) placeholder.remove();
+    sync();
+  });
 }
 
 // ── Toolbar (compact reuse of the documents md-toolbar visual language) ──
@@ -820,8 +911,25 @@ export function attach(ta, opts = {}) {
   rich.addEventListener('input', syncToTextarea);
   rich.addEventListener('change', syncToTextarea); // checkbox clicks
   // Paste as plain text — pasted HTML from chat/web brings styling that
-  // would otherwise leak into the serialized markdown.
+  // would otherwise leak into the serialized markdown. A pasted image is the
+  // one exception: upload it and insert it at the caret like any other note
+  // image, so it round-trips through markdown as `![](...)`.
   rich.addEventListener('paste', (e) => {
+    if (e.clipboardData) {
+      for (const item of e.clipboardData.items) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          e.preventDefault();
+          // stopPropagation is the point: app.js has a window-level paste
+          // handler that puts any pasted file into the CHAT attach strip —
+          // without this the image would land there too (same trap admin.js
+          // hit with the roadmap's image paste).
+          e.stopPropagation();
+          const file = item.getAsFile();
+          if (file) _pasteImage(rich, file, syncToTextarea);
+          return;
+        }
+      }
+    }
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text/plain');
     if (text) document.execCommand('insertText', false, text);
