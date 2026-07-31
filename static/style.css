@@ -6188,6 +6188,17 @@ body.bg-pattern-sparkles {
       font-weight: 400;
       margin-left: 2px;
     }
+    /* Mobile (v4.2): this list had zero breakpoints. Rows were already a
+       single column (nothing to overflow), but at 5px padding + a 20px
+       icon each row was only ~30px tall — under the 40px thumb minimum.
+       The whole row is a <label> (the tap target already covers it), so
+       growing the row is enough; icon and switch keep their normal size. */
+    @media (max-width: 768px) {
+      .vis-row {
+        min-height: 40px;
+        padding: 9px 6px;
+      }
+    }
     /* Settings toggle — admin-only lock indicator */
     .ui-vis-lock {
       display: none;
@@ -40898,6 +40909,30 @@ body.theme-frosted .modal {
 }
 .workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
 
+/* ── Project files panel (projects.js #project-panel) ── */
+/* Mobile (v4.2): the panel reuses .modal-content (so it already inherits
+   the generic 768px bottom-sheet treatment above) plus the shared
+   .workspace-row / .confirm-btn classes, so it had no breakpoint of its
+   own. Two concrete gaps: the filename link had no min-width:0, so a long
+   name could push the row wider than the sheet instead of eliding — flex
+   items don't shrink below their content size by default, ellipsis or not;
+   and Save/Upload are bare .confirm-btn, so outside .styled-confirm-box
+   they only ever got the small padding:2px 16px 4px bump above (~line
+   5656), not the taller padding:8px 12px 12px .styled-confirm-box gives
+   its own buttons (~line 5635) — they stayed ~22px tall. The per-file
+   delete "✕" is left alone on purpose: it's a destructive action, and
+   Alessio's "secondary can shrink" guidance argues against making it an
+   easy fat-finger target. */
+@media (max-width: 768px) {
+  #project-panel .workspace-row a {
+    min-width: 0;
+  }
+  #project-panel .confirm-btn {
+    min-height: 40px;
+    padding: 8px 16px;
+  }
+}
+
 /* Real-time Diagnostics Log Terminal UI Styles */
 .settings-system-logs-svg {
   vertical-align: -2px;
@@ -41454,6 +41489,36 @@ body.theme-frosted .modal {
   gap: 6px !important;
   cursor: pointer;
   font-size: 12px;
+}
+
+/* Mobile (v4.2): the Pomodoro tool window had zero breakpoints. Stack the
+   two-column settings/manual-add grids (Alessio: simpler beats compact on
+   a phone) and bump every thumb-tapped control — start/pause/reset, the
+   duration inputs, the preset chips, the water-tracker buttons — up to the
+   40px touch minimum used elsewhere in the file (see the export-dropdown
+   bump near the top). min-height clamps the box even where a smaller fixed
+   `height` is already set (e.g. .pomo-preset-name-input, .pomo-manual-row
+   .pomo-btn), so those don't need to be touched separately. #pomo-controls
+   is ID-scoped on purpose: it's the on-screen timer only, not #pip-controls
+   (the desktop-only Document-PiP popout), which keeps its own smaller
+   .pomo-pip-controls .pomo-btn sizing untouched. */
+@media (max-width: 768px) {
+  .pomo-settings,
+  .pomo-manual-row {
+    grid-template-columns: 1fr;
+  }
+  #pomo-controls .pomo-btn,
+  .pomo-manual-row .pomo-btn,
+  .pomo-input,
+  .pomo-preset-chip,
+  .pomo-preset-name-input,
+  .pomo-drink-btn {
+    min-height: 40px;
+  }
+  #pomo-controls .pomo-btn { padding: 8px 18px; }
+  .pomo-input { padding: 8px; }
+  .pomo-preset-chip { padding: 6px 12px; }
+  .pomo-drink-btn { padding: 0 10px; }
 }
 
 /* Quote-and-Ask (v3.5): floating pill over a text selection in the chat

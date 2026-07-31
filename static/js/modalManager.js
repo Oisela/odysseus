@@ -32,6 +32,42 @@ import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
+// ── One-time heal for windows already poisoned by the old min-height
+// ratchet (see the restoreMinHeight floor in _applyRestoreHeight below) ──
+// Before this fix, a modal that had ever been minimized while "too tall"
+// stayed pinned at that height forever: dragging it smaller moved the
+// resize handle, but the leftover inline min-height overruled the smaller
+// explicit height, so windowResize.js kept re-measuring and re-saving the
+// still-inflated rect into localStorage on every resize-end — the bloated
+// size became permanent, even across reloads. The code fix above only
+// stops the ratchet from happening again; it can't retroactively un-poison
+// a value that's already sitting in an existing user's browser (Alessio's,
+// specifically — his `winsize-pomodoro-modal` entry). So: once per
+// browser, sweep every persisted window size and drop any entry whose
+// saved height is suspiciously close to the ratchet's own ceiling (the
+// same `window.innerHeight - 24` bound _captureRestoreHeight/
+// _applyRestoreHeight clamp against) — that's the tell-tale sign of a
+// window stuck maxed-out rather than one the user genuinely resized. The
+// window just falls back to its natural size next time it opens and can
+// be resized freely again.
+(function _healWinsizeRatchet() {
+  try {
+    if (localStorage.getItem('odysseus.winsizeRatchetHealed.v1')) return;
+    const ceiling = Math.max(180, window.innerHeight - 24);
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('winsize-')) continue;
+      try {
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (saved && Number.isFinite(saved.h) && saved.h >= ceiling - 40) {
+          localStorage.removeItem(key);
+        }
+      } catch (_) {}
+    }
+    localStorage.setItem('odysseus.winsizeRatchetHealed.v1', '1');
+  } catch (_) {}
+})();
+
 const _rememberedDockKey = rememberedDockKey;
 function _rememberDock(id, side) {
   if (!id || !side) return;
@@ -112,7 +148,23 @@ function _applyRestoreHeight(modal, state) {
     ? Math.min(560, maxHeight)
     : 0;
   const height = Number.isFinite(requested) ? Math.max(minHeight, Math.min(requested, maxHeight)) : null;
-  if (height) content.style.minHeight = `${height}px`;
+  if (!height) return;
+  content.style.minHeight = `${height}px`;
+  // ONE-SHOT floor against the restore-flash collapsing to near-zero height
+  // while the browser settles layout — NOT a permanent constraint. Left in
+  // place forever this becomes a ratchet: the user drags the window
+  // smaller, but an inline min-height taller than the new size wins over
+  // the explicit height windowResize.js sets, so the window visually
+  // refuses to shrink — and windowResize's resize-end handler then
+  // persists THAT still-inflated rect back into localStorage, making the
+  // size permanent across reloads too. This is exactly what pinned the
+  // Pomodoro window open at whatever height it once had, no matter how
+  // often it was resized smaller ("Pomodoro bleibt einfach lang, sehr
+  // lang", Alessio 2026-07-30). Clear the floor two frames after the
+  // restore paints so manual resizing afterwards is unobstructed again.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (content.style.minHeight === `${height}px`) content.style.minHeight = '';
+  }));
 }
 
 function _setBadge(btnIds, on) {
@@ -1121,7 +1173,17 @@ function _wireChipDrag(chip, dock) {
 
     if (dragMode === 'reorder') {
       chip.style.transition = 'none';
-      chip.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
+      // Clamp the vertical offset — reordering only ever needs to detect
+      // which HORIZONTAL sibling the pointer is over, but the transform used
+      // to follow the raw, unclamped pointer delta on both axes. The dock
+      // (and #chat-container) clip overflowing children, so a stray upward
+      // drag carried the chip straight past that clipped edge and it
+      // visually vanished until release ("wenn ich sie nach oben schiebe
+      // hauen sie ab", Alessio 2026-07-30). Capping dy keeps the chip inside
+      // the row no matter how far the pointer strays vertically, while the
+      // horizontal delta — the actual reorder gesture — stays unclamped.
+      const clampedDy = Math.max(-24, Math.min(24, dy));
+      chip.style.transform = `translate(${dx}px, ${clampedDy}px) scale(1.05)`;
       chip.style.zIndex = '10030';
 
       // Find sibling under cursor and swap
@@ -1506,7 +1568,6 @@ export function unregister(id) {
   // to draw a chip for a now-dead id.
   const idx = _dockOrder.indexOf(id);
   if (idx >= 0) _dockOrder.splice(idx, 1);
-  _saveDockState();
   _renderDock();
 }
 
@@ -1528,6 +1589,11 @@ export function minimize(id) {
     // pending layout, so doing it separately for height and float geometry
     // made the minimize click unnecessarily expensive.
     const content = modal.querySelector('.modal-content');
+    // Clear any still-applied restore floor before measuring — otherwise
+    // the floor itself gets read back as "the real height" here and
+    // reapplied on the next restore, which is the ratchet loop that pinned
+    // the Pomodoro window open (see _applyRestoreHeight).
+    if (content) content.style.minHeight = '';
     const rect = content?.getBoundingClientRect();
     _captureRestoreHeight(modal, s, content, rect);
     // If this window is edge-docked (right/left), SUSPEND the dock: release
@@ -1669,6 +1735,13 @@ export function close(id) {
       content.style.transition = '';
       content.style.animation = '';
       content.style.opacity = '';
+      // Some tools (Pomodoro) keep a single persistent modal element alive
+      // for the whole page session instead of rebuilding it on every open —
+      // close() only hides it. Without this, a restore-floor min-height
+      // applied earlier (see _applyRestoreHeight) would survive a full
+      // close+reopen forever, because there is no fresh DOM node to reset
+      // it. Part of the same ratchet fix as above.
+      content.style.minHeight = '';
     }
   }
   _setBadge(s.btnIds, false);

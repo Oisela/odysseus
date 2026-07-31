@@ -833,6 +833,35 @@ function initializeEventListeners() {
 
   // Mobile bottom-sheet swipe-to-dismiss is handled by ui.js (header-only)
 
+  // ── Single reset point for everything a free "New Chat" must NOT inherit
+  // from whatever chat was open before: incognito, persona/preset, the
+  // project pill + workspace, and any files/@-mentions still queued in the
+  // composer. _startFreshChat() and _handleNewChatAction() both funnel
+  // through this — previously each reimplemented its own subset, and the
+  // composer's "+New" send-button mode (in startOdysseusApp(), a separate
+  // closure that can't call either directly) reimplemented a THIRD, partial
+  // version that skipped persona/workspace/project entirely. That's why a
+  // project chat with a model attached still "looked" like the old project
+  // after clicking it (Alessio, project stayed attached, 2026-07-30/31).
+  // Returns the project-pill clear promise so async callers may await it.
+  function _resetNewChatContext() {
+    _deactivateIncognito();
+    if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+    // Clear workspace too — a project chat sets it and it must not leak into fresh chats
+    try { workspaceModule.setWorkspace(''); } catch (_) {}
+    // Attachments/@-mentions queued for the previous chat must not ride along
+    // into a new one — the strip lives outside #chat-history so clearing that
+    // box alone never touched them. Both clear* calls re-render the strip themselves.
+    if (fileHandlerModule) {
+      if (fileHandlerModule.clearPending) fileHandlerModule.clearPending();
+      if (fileHandlerModule.clearMentions) fileHandlerModule.clearMentions();
+    }
+    // A project chat's pill/class/workspace must not survive into a fresh
+    // blank chat — without a session switch nothing else clears them
+    // ("stuck project" bug, 2026-07-20).
+    return import('./js/projects.js').then(m => { try { m.onSessionSwitch(null, null); } catch (_) {} }).catch(() => {});
+  }
+
   // ── Helper: start a fresh chat (deselect current, clear history, show welcome) ──
   function _startFreshChat() {
     try {
@@ -843,10 +872,7 @@ function initializeEventListeners() {
       console.warn('fresh chat stream detach failed:', e);
     }
     if (sessionModule) sessionModule.setCurrentSessionId(null);
-    // A project chat's pill/class/workspace must not survive into a fresh
-    // blank chat — without a session switch nothing else clears them
-    // ("stuck project" bug, 2026-07-20).
-    import('./js/projects.js').then(m => { try { m.onSessionSwitch(null, null); } catch (_) {} }).catch(() => {});
+    _resetNewChatContext();
     const box = el('chat-history');
     if (box) box.innerHTML = '';
     if (chatModule && chatModule.showWelcomeScreen) {
@@ -862,10 +888,6 @@ function initializeEventListeners() {
     // Reset agent mode to Chat
     const modeToggle = el('agent-mode-toggle');
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
-    // Clear character/persona
-    if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
-    // Clear workspace too — a project chat sets it and it must not leak into fresh chats
-    try { workspaceModule.setWorkspace(''); } catch (_) {}
   }
 
   /** Sync Research indicator button + overflow + tool sidebar active state. */
@@ -2854,7 +2876,7 @@ function initializeEventListeners() {
   // (Alessio 2026-07-21).
   const UI_SIMPLE_OFF = [
     'projects-section', 'email-section', 'models-section',
-    'tool-pomodoro', 'tool-compare', 'tool-cookbook', 'tool-research',
+    'tool-pomodoro', 'tool-remnote', 'tool-compare', 'tool-cookbook', 'tool-research',
     'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks',
     'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
     'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
@@ -3431,19 +3453,12 @@ function initializeEventListeners() {
   async function _handleNewChatAction({ preferModel = true, focus = true } = {}) {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
-      // Clear character on new chat
-      if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
-      // Clear workspace too — a project chat sets it and it must not leak into fresh chats
-      try { workspaceModule.setWorkspace(''); } catch (_) {}
-      // …and the project pill/context. _startFreshChat does this, but the
-      // model-preferring branch below returns before ever reaching it, so a
-      // New Chat started with a usable model kept showing the old project
-      // ("neuer chat aber projekt ist immer noch aktiviert", 2026-07-27).
-      try {
-        const _pm = await import('./js/projects.js');
-        _pm.onSessionSwitch(null, null);
-      } catch (_) {}
+      // …persona/workspace/project/attachments. _startFreshChat() does this
+      // too, but the model-preferring branch below returns before ever
+      // reaching it, so a New Chat started with a usable model kept showing
+      // the old project ("neuer chat aber projekt ist immer noch aktiviert",
+      // 2026-07-27) — must run here regardless of which branch follows.
+      await _resetNewChatContext();
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
@@ -3458,6 +3473,11 @@ function initializeEventListeners() {
         if (input) { try { input.focus(); } catch (_) {} }
       }
   }
+  // Exposed for the composer's "+New" send-button mode, wired up later in
+  // startOdysseusApp() — a separate closure from initializeEventListeners()
+  // that can't reach this function by name otherwise (see the sendBtn
+  // 'newchat' branch, which used to reimplement a partial copy instead).
+  window.__odysseusHandleNewChatAction = _handleNewChatAction;
 
   // New session button on icon rail
   const railNewSession = el('rail-new-session');
@@ -4154,11 +4174,15 @@ function startOdysseusApp() {
       // New chat mode — empty input, no attachments, no STT
       if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
         if (sessionModule) {
-          const sessions = sessionModule.getSessions();
-          const currentId = sessionModule.getCurrentSessionId();
-          const current = sessions.find(s => s.id === currentId);
-          if (current && current.endpoint_url && current.model) {
-            sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+          // Route through the same reset+create routine as the rail/logo/
+          // sidebar "New chat" buttons instead of calling createDirectChat()
+          // directly — this branch used to skip the persona/workspace/project
+          // reset entirely (different closure than _handleNewChatAction, see
+          // window.__odysseusHandleNewChatAction), so a project chat with a
+          // model still attached kept showing its old project pill after
+          // clicking here (Alessio, "Projekt bleibt", 2026-07-30/31).
+          if (typeof window.__odysseusHandleNewChatAction === 'function') {
+            window.__odysseusHandleNewChatAction();
           } else {
             // Fallback to rail button
             const railNew = el('rail-new-session');
