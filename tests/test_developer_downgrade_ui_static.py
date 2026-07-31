@@ -174,11 +174,18 @@ def test_roadmap_paste_does_not_leak_the_image_into_the_chat():
     has a window-level paste handler, dropped the same file into the chat
     attach strip. preventDefault alone does not stop that; stopPropagation
     does.
+
+    v4.1 lifted the handler out of the title-line listener so every detail
+    field of the popup takes a screenshot too; the rule is unchanged, so this
+    test follows the handler to its new name rather than being relaxed.
     """
-    start = ADMIN_JS.index("if (input) input.addEventListener('paste'")
+    start = ADMIN_JS.index("const _onRoadmapPaste = ")
     handler = ADMIN_JS[start:start + 900]
     assert "e.preventDefault();" in handler
     assert "e.stopPropagation();" in handler
+    # and it is actually wired to the fields, not just defined
+    assert "input.addEventListener('paste', _onRoadmapPaste)" in ADMIN_JS
+    assert "el(id)?.addEventListener('paste', _onRoadmapPaste)" in ADMIN_JS
 
 
 def test_roadmap_feedback_is_visible_while_the_popup_is_open():

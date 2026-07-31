@@ -398,6 +398,29 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0; opacity: 0.5;
     }
+    /* Doc indicator dropdown (#doc-indicator-btn / #doc-indicator-menu) reuses
+       .export-dropdown-menu for the shared panel chrome (position, border,
+       shadow, closeAllPopups() integration) but rows get their own class
+       instead of .export-dropdown-item — that class is swept by i18n.js's
+       exact-match text translator (ROOTS list), and document titles are user
+       content, not UI copy that should ever be translated. */
+    .doc-indicator-item {
+      padding: 6px 8px; font-size: 11px; cursor: pointer;
+      border-radius: 6px; color: var(--fg); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 240px;
+      display: flex; align-items: center; gap: 10px;
+      transition: background 0.1s;
+    }
+    .doc-indicator-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .doc-indicator-item .dropdown-icon {
+      width: 14px; height: 14px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; opacity: 0.5;
+    }
+    .doc-indicator-item.doc-indicator-empty {
+      cursor: default; opacity: 0.55;
+    }
+    .doc-indicator-item.doc-indicator-empty:hover { background: none; }
     /* On mobile the chat-header export dropdown was cramped — items
        were 11px font with 6px padding. Bump to readable touch targets:
        larger min-width, taller rows, bigger icons + text. */
@@ -41852,6 +41875,22 @@ body.theme-frosted .modal {
   cursor: zoom-in; opacity: 0.75;
 }
 .rm-card-shot:hover { opacity: 1; }
+/* Test points sit on the card so Alessio can tick them off while clicking
+   through a build, instead of hunting for a checklist file. */
+.rm-card-tests { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
+.rm-test-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 10px;
+  line-height: 1.35;
+  opacity: 0.8;
+  cursor: pointer;
+}
+.rm-test-row input { margin: 1px 0 0; width: 11px; height: 11px; accent-color: var(--accent, var(--red)); cursor: pointer; }
+.rm-test-row-done span { text-decoration: line-through; opacity: 0.55; }
+.rm-chip-tests { border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border)); opacity: 0.75; }
+.rm-chip-tests-done { color: var(--accent, var(--red)); opacity: 1; }
 /* Done view — a flat history list, not a fifth column. */
 .rm-done-list { display: flex; flex-direction: column; gap: 6px; }
 .rm-done-list .rm-card { cursor: default; }

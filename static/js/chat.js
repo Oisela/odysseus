@@ -349,6 +349,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+    // Same for the @-mention popup: pick an already-uploaded file as an
+    // attachment without re-uploading it (issue: "AI doesn't know which
+    // file I mean" / duplicate uploads).
+    import('./atMention.js').then(mod => {
+      const ta = document.getElementById('message');
+      if (ta && mod.initAtMention) mod.initAtMention(ta);
+    }).catch(() => {});
 
     // ArrowUp on empty composer recalls last user message (like many chat apps).
     const _wireArrowUpRecall = (composer) =>
@@ -775,8 +782,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const el = uiModule.el;
     const msg = el('message').value;
     // Allow empty text when a regen carries over the original message's
-    // attachment ids — a photo-only message still has something to send.
-    if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
+    // attachment ids, or the composer has pending uploads, or the user only
+    // @-mentioned existing files (no new upload, so getPendingCount() alone
+    // would miss it) — any of those is "something to send" on its own.
+    if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(fileHandlerModule.getMentionIds && fileHandlerModule.getMentionIds().length) && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
 
     // --- Slash commands: execute directly without AI (no session needed) ---
     if (isCommand(msg.trim())) {
@@ -1053,6 +1062,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         ids = ids.concat(_pendingRegenAttachments);
       }
       _pendingRegenAttachments = null;
+
+      // Fold in @-mentioned files (already on the server, never re-uploaded)
+      // after freshly uploaded/regenerated ones. This runs past the upload-
+      // failure guard above, so the send is committed at this point — mirror
+      // uploadPending()'s own clear-on-success by consuming the mentions now
+      // even though the chat request itself hasn't gone out yet.
+      const _mentionIds = fileHandlerModule.getMentionIds ? fileHandlerModule.getMentionIds() : [];
+      if (_mentionIds.length) ids = ids.concat(_mentionIds);
+      if (fileHandlerModule.clearMentions) fileHandlerModule.clearMentions();
 
       // The optimistic user bubble was rendered before the upload assigned ids,
       // so image previews couldn't show (the renderer needs att.id). Now that

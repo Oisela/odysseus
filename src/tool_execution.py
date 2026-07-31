@@ -151,7 +151,45 @@ def _tool_path_roots() -> list[str]:
     return out
 
 
-def _resolve_tool_path(raw_path: str) -> str:
+def _contained(resolved: str, roots: list[str]) -> bool:
+    """True when ``resolved`` is one of ``roots`` or lives under one of them.
+
+    normcase so containment holds on case-insensitive filesystems (Windows,
+    default macOS). commonpath raises ValueError across Windows drives (C: vs
+    D:) or mixed abs/rel — both mean "outside", so that root just doesn't match.
+    """
+    target = os.path.normcase(resolved)
+    for root in roots:
+        nroot = os.path.normcase(root)
+        if target == nroot:
+            return True
+        try:
+            if os.path.commonpath([target, nroot]) == nroot:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _read_roots() -> list[str]:
+    """Roots a *read* may reach: the global allowlist plus the active workspace.
+
+    Alessio 2026-07-30: "obwohl Projekte zugewiesene Ordner haben sollten sie
+    trotzdem auf alle Dateien zugreifen können." A project chat may therefore
+    read anywhere a chat without a project could — the data dir and temp — and
+    additionally its own workspace, which an admin may have pointed outside the
+    data dir. Writing stays confined to the workspace; see _resolve_tool_path.
+    """
+    roots = _tool_path_roots()
+    ws = get_active_workspace()
+    if ws:
+        real = os.path.realpath(ws)
+        if real not in roots:
+            roots.append(real)
+    return roots
+
+
+def _resolve_tool_path(raw_path: str, *, write: bool = True) -> str:
     """Resolve and confine a model-supplied path.
 
     Order of checks:
@@ -163,15 +201,25 @@ def _resolve_tool_path(raw_path: str) -> str:
     Returns the realpath on success. Raises ValueError on rejection.
     Symlinks are resolved before comparison.
 
-    When a workspace is active for this turn, paths are confined to it instead
-    of the default allowlist (see _resolve_tool_path_in_workspace).
+    ``write`` defaults to True — the confining answer — so a tool added later
+    that forgets to pass it is confined rather than quietly opened up. Reads
+    pass write=False and get the wider _read_roots() instead.
+
+    When a workspace is active for this turn, writes are confined to it (see
+    _resolve_tool_path_in_workspace) while reads resolve relative to it but may
+    land anywhere under the read roots.
     """
     ws = get_active_workspace()
-    if ws:
+    if ws and write:
         return _resolve_tool_path_in_workspace(ws, raw_path)
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
+    if ws and not os.path.isabs(expanded):
+        # A relative read inside a project chat means "next to my project
+        # files", not "next to the server process' cwd" — same base the shell
+        # gets from agent_cwd().
+        expanded = os.path.join(os.path.realpath(ws), expanded)
     resolved = os.path.realpath(expanded)
 
     if _is_sensitive_path(resolved):
@@ -180,15 +228,8 @@ def _resolve_tool_path(raw_path: str) -> str:
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
 
-    for root in _tool_path_roots():
-        if resolved == root:
-            return resolved
-        try:
-            common = os.path.commonpath([resolved, root])
-        except ValueError:
-            continue
-        if common == root:
-            return resolved
+    if _contained(resolved, _read_roots() if not write else _tool_path_roots()):
+        return resolved
     raise ValueError(
         f"path '{raw_path}' is outside the allowed roots"
     )
@@ -288,19 +329,25 @@ def get_mcp_manager():
 def _resolve_search_root(raw_path: str) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
-    With a workspace active, the workspace folder is the root and a supplied
-    path is confined inside it. Otherwise an empty path defaults to the agent's
-    primary root (project data dir) and a supplied path is confined by the
-    global allowlist + sensitive-file policy.
+    With a workspace active, an empty path still means "my project folder" —
+    that default is what makes an unqualified grep search the project rather
+    than everything. A path the model names explicitly is resolved with read
+    semantics, so a project chat can search the wider data dir when it asks to.
+    Without a workspace, an empty path defaults to the agent's primary root
+    (project data dir) and a supplied path is confined by the global allowlist
+    + sensitive-file policy.
+
+    All three callers (ls, glob, grep) are read-only, hence write=False
+    throughout.
     """
     raw = (raw_path or "").strip()
     ws = get_active_workspace()
-    if ws:
-        return os.path.realpath(ws) if not raw else _resolve_tool_path_in_workspace(ws, raw)
+    if ws and not raw:
+        return os.path.realpath(ws)
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
-    return _resolve_tool_path(raw)
+    return _resolve_tool_path(raw, write=False)
 
 logger = logging.getLogger(__name__)
 

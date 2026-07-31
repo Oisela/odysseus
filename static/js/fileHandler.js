@@ -9,6 +9,10 @@ import spinnerModule from './spinner.js';
 
 let pendingFiles = [];
 let uploaded = [];
+// Files referenced via @-mention (already on the server — never re-uploaded).
+// Kept separate from pendingFiles because those are raw File objects still
+// awaiting upload; a mentionedRefs entry is just {id, name, mime}.
+let mentionedRefs = [];
 // Holds the full meta (id/name/mime/size/width/height/…) from the most recent
 // uploadPending() so callers can stamp width/height onto their attachment
 // objects without changing uploadPending()'s return signature.
@@ -190,13 +194,15 @@ export function renderAttachStrip() {
   const strip = document.getElementById('attach-strip');
 
   while (strip.firstChild) strip.removeChild(strip.firstChild);
-  if (pendingFiles.length === 0) {
+  // Mentions count toward the same strip/limit as pending uploads — otherwise
+  // "N files" would undercount once @-mentioned files are mixed in.
+  const total = pendingFiles.length + mentionedRefs.length;
+  if (total === 0) {
     _expanded = false;
     if (window._updateSendBtnIcon) window._updateSendBtnIcon();
     return;
   }
 
-  const total = pendingFiles.length;
   const collapsed = total > MAX_VISIBLE && !_expanded;
 
   if (collapsed) {
@@ -207,7 +213,9 @@ export function renderAttachStrip() {
     label.textContent = total + ' file' + (total > 1 ? 's' : '');
     label.className = 'thumb-collapsed-label';
     badge.appendChild(label);
-    badge.title = pendingFiles.map(f => f.name || 'pasted-image').join('\n');
+    badge.title = pendingFiles.map(f => f.name || 'pasted-image')
+      .concat(mentionedRefs.map(r => r.name || 'file'))
+      .join('\n');
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', (e) => {
       if (e.target.closest('.thumb-collapsed-x')) return;
@@ -218,13 +226,18 @@ export function renderAttachStrip() {
     x.className = 'thumb-collapsed-x';
     x.textContent = '\u00d7';
     x.title = 'Remove all';
+    // Only clears freshly-picked pending files, not @-mentions — see the
+    // comment on clearPending() for why the two lists don't cascade.
     x.addEventListener('click', (e) => { e.stopPropagation(); clearPending(); });
     badge.appendChild(x);
     strip.appendChild(badge);
   } else {
-    // Show individual chips
-    for (let idx = 0; idx < total; idx++) {
+    // Show individual chips: pending uploads first, then mentioned files.
+    for (let idx = 0; idx < pendingFiles.length; idx++) {
       strip.appendChild(_createChip(pendingFiles[idx], idx));
+    }
+    for (let idx = 0; idx < mentionedRefs.length; idx++) {
+      strip.appendChild(_createMentionChip(mentionedRefs[idx], idx));
     }
   }
   if (window._updateSendBtnIcon) window._updateSendBtnIcon();
@@ -250,6 +263,39 @@ function _createChip(f, idx) {
   x.textContent = '\u00d7';
   x.setAttribute('aria-label', 'Remove attachment');
   x.addEventListener('click', (e) => { e.stopPropagation(); removePending(idx); });
+  chip.appendChild(x);
+  return chip;
+}
+
+// Chip for an @-mentioned (already-uploaded) file. Mirrors _createChip's
+// markup/classes exactly so the two kinds of attachment look identical in
+// the strip; the only difference is the image source, since there's no
+// local File object to build an object URL from \u2014 the thumbnail endpoint
+// already exists for this exact purpose (chat attachment previews).
+function _createMentionChip(ref, idx) {
+  const chip = document.createElement('div');
+  chip.className = 'thumb';
+  const isImage = (ref.mime || '').startsWith('image/');
+  if (isImage) {
+    chip.classList.add('thumb-image');
+    const img = document.createElement('img');
+    img.className = 'thumb-img';
+    img.src = `${API_BASE}/api/upload/${encodeURIComponent(ref.id)}?thumb=1`;
+    img.alt = ref.name || 'image';
+    chip.appendChild(img);
+  } else {
+    const span = document.createElement('span');
+    span.textContent = ref.name || 'file';
+    chip.appendChild(span);
+  }
+  const x = document.createElement('button');
+  x.textContent = '\u00d7';
+  x.setAttribute('aria-label', 'Remove attachment');
+  x.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mentionedRefs.splice(idx, 1);
+    renderAttachStrip();
+  });
   chip.appendChild(x);
   return chip;
 }
@@ -432,11 +478,46 @@ export function getPendingInfo() {
 
 /**
  * Clear all pending files
+ *
+ * Deliberately does NOT clear mentionedRefs. Pending files and @-mentions
+ * are cleared by different events: this function fires on upload
+ * cancel/failure/retry, whereas mentions are only meant to be cleared by
+ * chat.js after a message actually goes out (clearMentions()). If this
+ * cleared both, a failed upload of a freshly-picked file would silently
+ * drop an already-attached @-mention that had nothing to do with the
+ * failure.
  */
 export function clearPending() {
   if (_uploading) cancelUpload();
   pendingFiles.forEach(_revokePreviewUrl);
   pendingFiles = [];
+  renderAttachStrip();
+}
+
+/**
+ * Reference an already-uploaded file as an attachment (via @-mention),
+ * without re-uploading it. Deduplicates by id and shares pendingFiles' cap
+ * so the composer can't be flooded past MAX_FILES from either source.
+ */
+export function addMention(ref) {
+  if (!ref || !ref.id) return;
+  if (mentionedRefs.some(r => r.id === ref.id)) return;
+  if (pendingFiles.length + mentionedRefs.length >= MAX_FILES) {
+    _showToast(`Max ${MAX_FILES} files allowed`);
+    return;
+  }
+  mentionedRefs.push({ id: ref.id, name: ref.name, mime: ref.mime });
+  renderAttachStrip();
+}
+
+/** Upload IDs of the currently @-mentioned files, in mention order. */
+export function getMentionIds() {
+  return mentionedRefs.map(r => r.id);
+}
+
+/** Drop all @-mentions (called by chat.js once a message has been sent). */
+export function clearMentions() {
+  mentionedRefs = [];
   renderAttachStrip();
 }
 
@@ -474,6 +555,9 @@ const fileHandlerModule = {
   getPendingInfo,
   getPendingRaw,
   clearPending,
+  addMention,
+  getMentionIds,
+  clearMentions,
   getLastUploadedMeta,
   isUploading,
   wasLastUploadCancelled,
