@@ -2871,8 +2871,17 @@ const _SYS_SWITCHER_MIN_VERSION = '3.3.1';
 /* Version switcher — jump prod to any RELEASED version (down- or re-upgrade).
    The list comes from the host's release ledger; the server refuses commits
    that are not in it. Works with zero AI involvement by design. */
-async function _initVersionSwitcher() {
-  const sel = el('sys-versionSel'), btn = el('sys-switchBtn'), msg = el('sys-statusMsg');
+// Mounted twice (Settings → System and the Developer page), and
+// initDeveloperPage() re-runs on every visit to that page. The release list is
+// re-fetched each time — that part SHOULD be fresh — but the listeners are
+// attached exactly once per mount. Without the guard a user who opened the
+// Developer page three times would fire three confirms and three POSTs from one
+// click on the switch button. Element-property guard is the house idiom
+// (cf. `textarea._slashAcWired` in slashAutocomplete.js).
+const _switcherReleases = {};
+
+async function _initVersionSwitcher(prefix = 'sys-') {
+  const sel = el(prefix + 'versionSel'), btn = el(prefix + 'switchBtn'), msg = el(prefix + 'statusMsg');
   if (!sel || !btn) return;
   let releases = [];
   let currentCommit = '';
@@ -2898,14 +2907,20 @@ async function _initVersionSwitcher() {
     const label = `v${r.version} (${r.commit})${r.current ? ' — current' : ''}`;
     sel.appendChild(new Option(label, r.commit));
   });
+  // Listeners read through the map, never through this call's closure — on a
+  // re-open the closure would hold the PREVIOUS fetch's list and a freshly
+  // released version would be rejected as "not a release".
+  _switcherReleases[prefix] = releases;
   const sync = () => {
-    const chosen = releases.find((r) => r.commit === sel.value);
+    const chosen = (_switcherReleases[prefix] || []).find((r) => r.commit === sel.value);
     btn.disabled = !chosen || chosen.current;
   };
-  sel.addEventListener('change', sync);
   sync();
+  if (btn._switcherWired) return;
+  btn._switcherWired = true;
+  sel.addEventListener('change', sync);
   btn.addEventListener('click', async () => {
-    const chosen = releases.find((r) => r.commit === sel.value);
+    const chosen = (_switcherReleases[prefix] || []).find((r) => r.commit === sel.value);
     if (!chosen) return;
     let confirmMsg = `Switch production to v${chosen.version} (${chosen.commit})?\n\nData is kept; dev stays untouched. IMPORTANT: close and reopen the app window once it is back.`;
     if (_sysCmpSemver(chosen.version, _SYS_SWITCHER_MIN_VERSION) < 0) {
@@ -2913,7 +2928,7 @@ async function _initVersionSwitcher() {
     }
     if (!confirm(confirmMsg)) return;
     btn.disabled = true;
-    msg.textContent = '';
+    if (msg) msg.textContent = '';
     try {
       const res = await fetch(`/api/system/switch`, {
         method: 'POST', credentials: 'same-origin',
@@ -2922,16 +2937,13 @@ async function _initVersionSwitcher() {
       });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'switch_started') {
-        msg.textContent = `Switching to v${d.version} — prod rebuilds and restarts shortly. Close and REOPEN the app window once it is back.`;
-        msg.className = 'admin-success';
+        if (msg) { msg.textContent = `Switching to v${d.version} — prod rebuilds and restarts shortly. Close and REOPEN the app window once it is back.`; msg.className = 'admin-success'; }
       } else {
-        msg.textContent = (d && (d.detail || d.message)) || `Switch failed (status ${res.status})`;
-        msg.className = 'admin-error';
+        if (msg) { msg.textContent = (d && (d.detail || d.message)) || `Switch failed (status ${res.status})`; msg.className = 'admin-error'; }
         btn.disabled = false;
       }
     } catch (e) {
-      msg.textContent = 'Switch failed: ' + e.message;
-      msg.className = 'admin-error';
+      if (msg) { msg.textContent = 'Switch failed: ' + e.message; msg.className = 'admin-error'; }
       btn.disabled = false;
     }
   });
@@ -2968,6 +2980,13 @@ function initSystemStatus() {
 /* ── Developer page (package status + editable roadmap) ── */
 let _roadmapText = '';
 
+// One definition of what a roadmap item line looks like. The four-state
+// character class used to be spelled out inline in four separate places, so
+// adding a state meant finding every one of them — miss one and items silently
+// stop parsing, or stop being writable.
+const _RM_MARK_RE = /^- \[[ xX~!?]\] /;
+const _RM_MARK_SET_RE = /^- \[[ xX~!?]\]/;
+
 function _roadmapSections(text) {
   // Top-level "## " headers with their line ranges; items are top-level
   // "- [ ]"/"- [x]" lines inside a section (continuation lines are the
@@ -2982,14 +3001,19 @@ function _roadmapSections(text) {
       sections.push(cur);
       return;
     }
-    // Pipeline states: [ ] planned, [~] in progress, [!] ready for review,
-    // [x] done. The developer reads the same markers from ROADMAP.md.
-    if (cur && /^- \[[ xX~!]\] /.test(line)) {
+    // Pipeline states: [?] under consideration, [ ] planned, [~] in progress,
+    // [!] ready to test, [x] done. The developer reads the same markers from
+    // ROADMAP.md, so the character IS the contract — see _RM_MARK_RE.
+    if (cur && _RM_MARK_RE.test(line)) {
       const mark = line.charAt(3);
       cur.items.push({
         line: i,
         done: mark === 'x' || mark === 'X',
-        status: (mark === 'x' || mark === 'X') ? 'done' : mark === '~' ? 'wip' : mark === '!' ? 'review' : 'planned',
+        status: (mark === 'x' || mark === 'X') ? 'done'
+          : mark === '~' ? 'wip'
+          : mark === '!' ? 'review'
+          : mark === '?' ? 'consideration'
+          : 'planned',
         text: line.slice(6).trim(),
         extra: [],
         extraLines: [],   // raw line indices of the continuation lines (for editing)
@@ -3093,7 +3117,10 @@ function _roadmapItemBlock(mark, title, details, images = []) {
 
 async function _saveItemEdit(item, newTitle, details) {
   const lines = _roadmapText.split('\n');
-  const mark = item.status === 'done' ? 'x' : item.status === 'review' ? '!' : item.status === 'wip' ? '~' : ' ';
+  // Look the mark up rather than re-deriving it: the old ternary chain had no
+  // branch for a new state, so editing an "under consideration" card would
+  // silently demote it to planned.
+  const mark = (_RM_COLS.find(c => c.key === item.status) || { mark: ' ' }).mark;
   const previous = _roadmapDetails(item);
   // Preserve a legacy title-hash as the new stable ID so an existing build
   // association remains reachable after the first structured edit.
@@ -3140,27 +3167,33 @@ function _roadmapCollapsedState() {
 // statusen". ROADMAP.md stays the source of truth (the developer reads it);
 // the board is a second lens on the same file, and a status click rewrites
 // only that line's marker.
+// The pipeline, in order. `mark` is what lands in ROADMAP.md, so these
+// characters are a contract shared with the developer agent and dev.sh.
+//
+// `?` for "under consideration" fits the existing bracket slot, reads correctly
+// in a plain editor, and does not collide with list syntax the way -, > or /
+// would. Downgrade cost, stated plainly: a pre-4.0 Odysseus parses only
+// [ x ~ !], so these items become invisible in ITS ui — the file keeps them
+// intact and re-upgrading brings them back.
+//
+// `done` is not rendered as a board column; it lives behind the Done button.
 const _RM_COLS = [
-  { key: 'planned', label: 'Geplant', mark: ' ' },
-  { key: 'wip', label: 'In Arbeit', mark: '~' },
-  { key: 'review', label: 'Testbereit', mark: '!' },
-  { key: 'done', label: 'Erledigt', mark: 'x' },
+  { key: 'consideration', label: 'Under consideration', mark: '?' },
+  { key: 'planned', label: 'Planned', mark: ' ' },
+  { key: 'wip', label: 'In progress', mark: '~' },
+  { key: 'review', label: 'Ready to test', mark: '!' },
+  { key: 'done', label: 'Done', mark: 'x' },
 ];
-let _roadmapView = null;
-
-function _roadmapViewMode() {
-  if (!_roadmapView) {
-    try { _roadmapView = localStorage.getItem('ody-roadmap-view') || 'list'; }
-    catch (_) { _roadmapView = 'list'; }
-  }
-  return _roadmapView === 'board' ? 'board' : 'list';
-}
+const _RM_BOARD_COLS = _RM_COLS.filter(c => c.key !== 'done');
+// How many finished items the Done view keeps. The board used to show the last
+// ten in a column; behind a button there is room for a real history.
+const _RM_DONE_LIMIT = 50;
 
 async function _setItemStatus(item, statusKey) {
   const col = _RM_COLS.find(c => c.key === statusKey);
   if (!col) return false;
   const ls = _roadmapText.split('\n');
-  ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, `- [${col.mark}]`);
+  ls[item.line] = ls[item.line].replace(_RM_MARK_SET_RE, `- [${col.mark}]`);
   const saved = await _saveRoadmap(ls.join('\n'), el('dev-roadmap-msg'));
   if (saved) _renderRoadmap();
   return saved;
@@ -3177,7 +3210,7 @@ function _normalizeRoadmapVersion(raw) {
 
 async function _setAllPlannedVersions(rawVersion) {
   const version = _normalizeRoadmapVersion(rawVersion);
-  if (!version) throw new Error('Bitte eine gültige Version eingeben, z. B. 3.10.');
+  if (!version) throw new Error('Please enter a valid version, e.g. 3.10.');
   const parsed = _roadmapSections(_roadmapText);
   const targets = parsed.sections
     .filter(section => !/RELEASED/i.test(section.title))
@@ -3193,7 +3226,7 @@ async function _setAllPlannedVersions(rawVersion) {
     lines.splice(item.line, item.endLine - item.line + 1, ...block);
   }
   const saved = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
-  if (!saved) throw new Error('Die Roadmap konnte nicht gespeichert werden.');
+  if (!saved) throw new Error('The roadmap could not be saved.');
   _renderRoadmap();
   return targets.length;
 }
@@ -3259,15 +3292,51 @@ async function _openBuildChat(sessionId) {
   }
 }
 
+// doAdd() writes every new item's title as "**Bug:** …" / "**Feature:** …",
+// so the type is already in the file and does not need its own field.
+// Unlabelled legacy items count as features — the cautious track.
+function _rmItemKind(item) {
+  const m = _rmCardText(item).match(/^\*\*(Bug|Feature|Idee|Polish)\s*:?\*\*/i);
+  return m ? m[1].toLowerCase() : 'feature';
+}
+
+// Bugs and polish go straight to main so Alessio can keep debugging live;
+// features get a short beta pass and then wait for an explicit go-word.
+function _rmTrackForKind(kind) {
+  return (kind === 'bug' || kind === 'polish') ? 'bug' : 'feature';
+}
+
 function _buildPrompt(item, buildMode) {
   const title = _rmCardText(item);
   const d = _roadmapDetails(item);
+  const kind = _rmItemKind(item);
+  const track = _rmTrackForKind(kind);
   const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
-    : `Arbeite autonom bis Gate 1. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
-  return `Setze dieses Roadmap-Feature aus der ROADMAP.md um.\n\n`
+    : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+  const workflow = track === 'bug'
+    ? `**Track BUG — direkt auf main, ohne Beta.**\n`
+      + `1. \`dev.sh start fix/<slug>\`\n`
+      + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
+      + `3. EINE Frage an Alessio: "Bugfix <slug> direkt auf main?" Ohne Ja: stopp.\n`
+      + `4. \`dev.sh bugfix fix/<slug>\` (Patch-Bump + Prod-Rebuild, kein Beta).\n`
+      + `5. \`dev.sh verify prod <version>\` — erst wenn das OK sagt, ist es fertig.\n`
+      + `6. \`dev.sh roadmap-status ${_itemKey(item)} x\`\n`
+    : `**Track FEATURE — kurz auf Beta, dann warten.**\n`
+      + `1. \`dev.sh start feat/<slug>\`\n`
+      + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
+      + `3. \`dev.sh ready feat/<slug>\` (pusht auf Beta und hält an).\n`
+      + `4. \`dev.sh roadmap-status ${_itemKey(item)} '!'\`\n`
+      + `5. Melde Beta-URL und eine kurze Testanleitung — und STOPP.\n`
+      + `   Auf der Beta zählt vor allem: stürzt nichts ab, und funktioniert\n`
+      + `   der Downgrade-Knopf. Alles andere findet Alessio live auf main.\n`
+      + `6. NUR nach einem Go-Wort ("push to main", "auf main", "promote",\n`
+      + `   "ausrollen", "prod", "go"): \`dev.sh promote-main feat/<slug>\`,\n`
+      + `   dann \`dev.sh verify prod <version>\` und roadmap-status x.\n`;
+  return `Setze dieses Roadmap-Item aus der ROADMAP.md um.\n\n`
     + `**Roadmap-ID:** ${_itemKey(item)}\n`
+    + `**Typ:** ${kind}\n`
     + `**Titel:** ${title}\n`
     + section('Beschreibung', d.description)
     + section('Ziel / Problem', d.goal)
@@ -3276,11 +3345,10 @@ function _buildPrompt(item, buildMode) {
     + section('Priorität', d.priority)
     + section('Abhängigkeiten', d.dependencies)
     + section('Technische Notizen / Grenzen', d.notes)
-    + `\n${approach}\n\n`
-    + `Nutze den Odysseus-Entwickler-Workflow und halte dieses Roadmap-Item aktuell: `
-    + `Beim Start [~], nach erfolgreichem Gate 1 auf Beta [!], und erst nach Alessios Beta-Freigabe/Gate 2 [x]. `
-    + `Ergänze relevante Entscheidungen und den Beta-Commit beim Item. `
-    + `Melde dich mit einer kurzen Testanleitung, sobald es auf Beta bereit ist, oder mit dem konkreten Blocker.`;
+    + `\n${approach}\n\n${workflow}\n`
+    + `Status IMMER über \`dev.sh roadmap-status\` setzen — ROADMAP.md nie von `
+    + `Hand editieren, die stabile ID steht auf einer Folgezeile und ein sed `
+    + `trifft den falschen Eintrag.`;
 }
 
 async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) {
@@ -3340,7 +3408,7 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
     const chatMod = await import('./chat.js');
     await chatMod.handleChatSubmit({ preventDefault() {} });
 
-    if (uiModule?.showToast) uiModule.showToast(`Build gestartet (${modelLabel}) — läuft im Hintergrund weiter.`);
+    if (uiModule?.showToast) uiModule.showToast(`Build started (${modelLabel}) — running in the background.`);
   } catch (error) {
     // The hand-off never became a running agent turn. Put the item back so
     // the board does not claim work is active after a setup/send failure.
@@ -3362,22 +3430,22 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
 function _cardBuildFormHtml() {
   return `
     <div class="rm-buildform">
-      ${_channelIsBeta ? '<div class="rm-hint">Vorschau: Auf Beta kannst du Modell und Ablauf prüfen; der echte Start bleibt gesperrt, weil nur Prod auf das Server-Repo zugreifen darf.</div>' : ''}
+      ${_channelIsBeta ? '<div class="rm-hint">Preview: on beta you can check the model and workflow; the real start stays locked, because only Prod can reach the server repo.</div>' : ''}
       <label class="rm-field"><span>Endpoint</span>
         <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-ep"></select></label>
       <label class="rm-field"><span>Model</span>
         <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;"></span>
         <select class="settings-select rm-build-model"></select></label>
-      <label class="rm-field"><span>Ablauf</span>
+      <label class="rm-field"><span>Workflow</span>
         <select class="settings-select rm-build-mode">
-          <option value="build">Autonom bis Beta bauen</option>
-          <option value="plan">Erst Plan und Rückfragen</option>
+          <option value="build">Build autonomously up to beta</option>
+          <option value="plan">Plan and ask first</option>
         </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-build-cancel">Abbrechen</button>
-        <button type="button" class="memory-toolbar-btn rm-build-start"${_channelIsBeta ? ' disabled title="Nur auf Prod verfügbar"' : ''}>${_channelIsBeta ? 'Start nur auf Prod' : 'Build starten'}</button>
+        <button type="button" class="memory-toolbar-btn rm-build-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-build-start"${_channelIsBeta ? ' disabled title="Only available on Prod"' : ''}>${_channelIsBeta ? 'Start on Prod only' : 'Start build'}</button>
       </div>
     </div>`;
 }
@@ -3386,21 +3454,21 @@ function _cardEditFormHtml(it) {
   const d = _roadmapDetails(it);
   return `
     <div class="rm-editform">
-      <label class="rm-edit-field"><span>Titel</span><input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" /></label>
-      <label class="rm-edit-field"><span>Beschreibung</span><textarea class="rm-edit-desc" rows="3" placeholder="Was soll passieren?">${esc(d.description)}</textarea></label>
-      <label class="rm-edit-field"><span>Ziel / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Warum brauchen wir das?">${esc(d.goal)}</textarea></label>
-      <label class="rm-edit-field"><span>Fertig, wenn …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="Ein prüfbares Kriterium pro Zeile">${esc(d.acceptance)}</textarea></label>
+      <label class="rm-edit-field"><span>Title</span><input type="text" class="styled-prompt-input rm-edit-title" value="${esc(_rmCardText(it))}" /></label>
+      <label class="rm-edit-field"><span>Description</span><textarea class="rm-edit-desc" rows="3" placeholder="What should happen?">${esc(d.description)}</textarea></label>
+      <label class="rm-edit-field"><span>Goal / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Why do we need this?">${esc(d.goal)}</textarea></label>
+      <label class="rm-edit-field"><span>Done when …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="One checkable criterion per line">${esc(d.acceptance)}</textarea></label>
       <div class="rm-edit-grid">
-        <label class="rm-edit-field"><span>Priorität</span><select class="settings-select rm-edit-priority">
-          ${['Niedrig', 'Normal', 'Hoch', 'Kritisch'].map(v => `<option${d.priority === v ? ' selected' : ''}>${v}</option>`).join('')}
+        <label class="rm-edit-field"><span>Priority</span><select class="settings-select rm-edit-priority">
+          ${[['Niedrig', 'Low'], ['Normal', 'Normal'], ['Hoch', 'High'], ['Kritisch', 'Critical']].map(([v, label]) => `<option value="${v}"${d.priority === v ? ' selected' : ''}>${label}</option>`).join('')}
         </select></label>
-        <label class="rm-edit-field"><span>Zielversion</span><input type="text" class="styled-prompt-input rm-edit-version" maxlength="32" value="${esc(d.version)}" placeholder="z. B. 3.10" /></label>
+        <label class="rm-edit-field"><span>Target version</span><input type="text" class="styled-prompt-input rm-edit-version" maxlength="32" value="${esc(d.version)}" placeholder="e.g. 3.10" /></label>
       </div>
-      <label class="rm-edit-field"><span>Abhängigkeiten</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="Keine" /></label>
-      <label class="rm-edit-field"><span>Technische Notizen / Grenzen</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
+      <label class="rm-edit-field"><span>Dependencies</span><input type="text" class="styled-prompt-input rm-edit-dependencies" value="${esc(d.dependencies)}" placeholder="None" /></label>
+      <label class="rm-edit-field"><span>Technical notes / limits</span><textarea class="rm-edit-notes" rows="2" placeholder="Optional">${esc(d.notes)}</textarea></label>
       <div class="rm-actions">
-        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Abbrechen</button>
-        <button type="button" class="memory-toolbar-btn rm-edit-save">Speichern</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-cancel">Cancel</button>
+        <button type="button" class="memory-toolbar-btn rm-edit-save">Save</button>
       </div>
     </div>`;
 }
@@ -3418,25 +3486,153 @@ function _detailsFromForm(root, prefix = '.rm-edit-') {
   };
 }
 
+// Done lives behind a button, not in a column. Built fresh rather than cloned
+// (same discipline as the Developer window, which is pinned by a test): a clone
+// would duplicate every id on the page.
+let _doneModalEl = null;
+
+function _ensureDoneModal() {
+  if (_doneModalEl) return _doneModalEl;
+  _doneModalEl = document.createElement('div');
+  _doneModalEl.id = 'roadmap-done-modal';
+  _doneModalEl.className = 'modal';
+  _doneModalEl.style.display = 'none';
+  _doneModalEl.innerHTML = `
+    <div class="modal-content" role="dialog" aria-label="Completed roadmap items">
+      <div class="modal-header">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span id="rm-done-title">Done</span>
+        </h4>
+        <button class="close-btn" type="button" aria-label="Close">&#10006;</button>
+      </div>
+      <div class="modal-body"><div id="rm-done-list" class="rm-done-list"></div></div>
+    </div>`;
+  document.body.appendChild(_doneModalEl);
+  _doneModalEl.querySelector('.close-btn').addEventListener('click', _closeDoneView);
+  _doneModalEl.addEventListener('click', (e) => {
+    if (e.target === _doneModalEl) _closeDoneView();
+  });
+  return _doneModalEl;
+}
+
+function _closeDoneView() {
+  if (_doneModalEl) _doneModalEl.style.display = 'none';
+}
+
+function _doneItems(sections) {
+  // Unlike the board, RELEASED sections are included — shipped work IS the
+  // history this view exists to show.
+  const out = [];
+  for (const sec of sections) {
+    for (const it of sec.items) {
+      if ((it.status || 'planned') === 'done') out.push({ it, sec });
+    }
+  }
+  return out;
+}
+
+function _openDoneView(sections) {
+  const modal = _ensureDoneModal();
+  const all = _doneItems(sections);
+  const shown = all.slice(-_RM_DONE_LIMIT).reverse();
+  const title = modal.querySelector('#rm-done-title');
+  // Keep the count honest about what is being hidden.
+  title.textContent = all.length > shown.length
+    ? `Done — latest ${shown.length} of ${all.length}`
+    : `Done (${all.length})`;
+
+  const list = modal.querySelector('#rm-done-list');
+  list.innerHTML = '';
+  if (!shown.length) {
+    const empty = document.createElement('div');
+    empty.className = 'rm-col-empty';
+    empty.textContent = 'Nothing completed yet';
+    list.appendChild(empty);
+  }
+  for (const { it, sec } of shown) {
+    const details = _roadmapDetails(it);
+    const card = document.createElement('div');
+    card.className = 'rm-card rm-card-done';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'rm-card-text';
+    titleEl.textContent = _rmCardText(it);
+    card.appendChild(titleEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'rm-card-meta';
+    const secChip = document.createElement('span');
+    secChip.className = 'rm-chip';
+    secChip.textContent = sec.title.replace(/\s*\(.*$/, '').slice(0, 26);
+    meta.appendChild(secChip);
+    if (details.version) {
+      const versionChip = document.createElement('span');
+      versionChip.className = 'rm-chip rm-version-chip';
+      versionChip.textContent = details.version;
+      meta.appendChild(versionChip);
+    }
+    card.appendChild(meta);
+    _appendScreenshots(card, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'rm-card-actions';
+    const reopen = document.createElement('button');
+    reopen.className = 'admin-btn-sm';
+    reopen.type = 'button';
+    reopen.textContent = 'Move to planned';
+    reopen.addEventListener('click', async () => {
+      reopen.disabled = true;
+      if (await _setItemStatus(it, 'planned')) _closeDoneView();
+      else reopen.disabled = false;
+    });
+    actions.appendChild(reopen);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+  modal.style.display = 'flex';
+}
+
+// Screenshots used to render only in the list view. With that view gone they
+// would have silently stopped appearing anywhere, so pasting one into a roadmap
+// entry would produce nothing visible.
+function _appendScreenshots(card, details) {
+  const shots = details.screenshots || [];
+  if (!shots.length) return;
+  const row = document.createElement('div');
+  row.className = 'rm-card-shots';
+  for (const url of shots) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'screenshot';
+    img.loading = 'lazy';
+    img.className = 'rm-card-shot';
+    img.addEventListener('click', (e) => { e.stopPropagation(); window.open(url, '_blank'); });
+    row.appendChild(img);
+  }
+  card.appendChild(row);
+}
+
 function _renderRoadmapBoard(list, sections) {
   // Released sections are history — the board is about what is moving now.
   const live = sections.filter(s => !/RELEASED/i.test(s.title));
   const board = document.createElement('div');
   board.className = 'rm-board';
-  for (const col of _RM_COLS) {
-    let items = [];
+  // Done is not a column — finished work is history, and a column for it grew
+  // without bound while pushing the live states off the screen. It opens from
+  // the toolbar button instead (_openDoneView).
+  for (const col of _RM_BOARD_COLS) {
+    const items = [];
     for (const sec of live) {
       for (const it of sec.items) {
         if ((it.status || 'planned') === col.key) items.push({ it, sec });
       }
     }
     const totalItems = items.length;
-    // Completed work is history, not an endlessly growing work queue. Keep
-    // the count truthful while showing only the ten most recently listed
-    // completed items, newest first.
-    if (col.key === 'done') {
-      items = items.slice(-10).reverse();
-    }
     const colEl = document.createElement('div');
     colEl.className = 'rm-col';
     colEl.dataset.col = col.key;
@@ -3482,7 +3678,7 @@ function _renderRoadmapBoard(list, sections) {
           const versionChip = document.createElement('span');
           versionChip.className = 'rm-chip rm-version-chip';
           versionChip.textContent = details.version;
-          versionChip.title = 'Geplante Zielversion';
+          versionChip.title = 'Target version';
           meta.appendChild(versionChip);
         }
         if (details.priority && details.priority !== 'Normal') {
@@ -3495,7 +3691,7 @@ function _renderRoadmapBoard(list, sections) {
           const criteriaChip = document.createElement('span');
           criteriaChip.className = 'rm-chip';
           criteriaChip.title = details.acceptance;
-          criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} Kriterien`;
+          criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} criteria`;
           meta.appendChild(criteriaChip);
         }
         if (build) {
@@ -3503,22 +3699,22 @@ function _renderRoadmapBoard(list, sections) {
           buildChip.type = 'button';
           buildChip.className = 'rm-chip rm-chip-build';
           buildChip.title = 'Open the build chat';
-          buildChip.textContent = `${it.status === 'review' ? 'Beta testen' : it.status === 'done' ? 'Build-Chat' : 'Building'} — ${build.model_label || build.model || 'chat'}`;
+          buildChip.textContent = `${it.status === 'review' ? 'Test on beta' : it.status === 'done' ? 'Build chat' : 'Building'} — ${build.model_label || build.model || 'chat'}`;
           buildChip.addEventListener('click', (e) => { e.stopPropagation(); _openBuildChat(build.session_id); });
           meta.appendChild(buildChip);
         }
         const editBtn = document.createElement('button');
         editBtn.type = 'button';
         editBtn.className = 'rm-move-btn';
-        editBtn.title = 'Feature genauer definieren';
-        editBtn.textContent = 'Bearbeiten';
+        editBtn.title = 'Define this feature more precisely';
+        editBtn.textContent = 'Edit';
         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
         meta.appendChild(editBtn);
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
-        buildBtn.title = _channelIsBeta ? 'Auf Prod starten, damit der Builder das Server-Repo erreicht' : 'Dieses Feature in einem verknüpften Agent-Chat bauen';
-        buildBtn.textContent = build ? 'Neu bauen' : 'Bauen';
+        buildBtn.title = _channelIsBeta ? 'Start on Prod so the builder can reach the server repo' : 'Build this feature in a linked agent chat';
+        buildBtn.textContent = build ? 'Rebuild' : 'Build';
         buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
         meta.appendChild(buildBtn);
         const moves = document.createElement('span');
@@ -3529,12 +3725,13 @@ function _renderRoadmapBoard(list, sections) {
           b.type = 'button';
           b.className = 'rm-move-btn';
           b.title = `Move to ${target.label}`;
-          b.textContent = target.key === 'planned' ? 'Planen' : target.key === 'wip' ? 'Start' : target.key === 'review' ? 'Test' : 'Fertig';
+          b.textContent = target.key === 'planned' ? 'Plan' : target.key === 'wip' ? 'Start' : target.key === 'review' ? 'Test' : 'Done';
           b.addEventListener('click', (e) => { e.stopPropagation(); _setItemStatus(it, target.key); });
           moves.appendChild(b);
         }
         meta.appendChild(moves);
         card.appendChild(meta);
+        _appendScreenshots(card, details);
       };
 
       const renderEdit = () => {
@@ -3549,7 +3746,7 @@ function _renderRoadmapBoard(list, sections) {
           const detailsFromForm = _detailsFromForm(card);
           if (rawVersion && !detailsFromForm.version) {
             card.querySelector('.rm-edit-version')?.focus();
-            if (uiModule?.showError) uiModule.showError('Ungültige Version — Beispiel: 3.10');
+            if (uiModule?.showError) uiModule.showError('Invalid version — example: 3.10');
             return;
           }
           await _saveItemEdit(it, newTitle, detailsFromForm);
@@ -3569,11 +3766,11 @@ function _renderRoadmapBoard(list, sections) {
         const modeSel = card.querySelector('.rm-build-mode');
         const msgBox = card.querySelector('.rm-build-msg');
         const missing = [];
-        if (!details.description) missing.push('Beschreibung');
-        if (!details.goal) missing.push('Ziel');
-        if (!details.acceptance) missing.push('Akzeptanzkriterien');
+        if (!details.description) missing.push('Description');
+        if (!details.goal) missing.push('Goal');
+        if (!details.acceptance) missing.push('Acceptance criteria');
         if (missing.length) {
-          msgBox.textContent = `Noch ungenau: ${missing.join(', ')}. Du kannst trotzdem starten oder zuerst Bearbeiten wählen.`;
+          msgBox.textContent = `Still vague: ${missing.join(', ')}. You can start anyway or edit first.`;
           msgBox.classList.add('rm-build-warning');
           msgBox.style.display = '';
         }
@@ -3625,12 +3822,6 @@ function _renderRoadmapBoard(list, sections) {
       card.addEventListener('dragend', () => card.classList.remove('rm-dragging'));
       body.appendChild(card);
     }
-    if (col.key === 'done' && totalItems > items.length) {
-      const limited = document.createElement('div');
-      limited.className = 'rm-col-limit';
-      limited.textContent = `Letzte ${items.length} von ${totalItems}`;
-      body.appendChild(limited);
-    }
     colEl.appendChild(body);
     colEl.addEventListener('dragover', (e) => { e.preventDefault(); colEl.classList.add('rm-col-over'); });
     colEl.addEventListener('dragleave', () => colEl.classList.remove('rm-col-over'));
@@ -3647,104 +3838,43 @@ function _renderRoadmapBoard(list, sections) {
   list.appendChild(board);
 }
 
+// One-time cleanup: the view toggle is gone, so its key is dead weight.
+try { localStorage.removeItem('ody-roadmap-view'); } catch (_) {}
+
+function _closeNewItemModal() {
+  const m = el('roadmap-new-modal');
+  if (m) m.style.display = 'none';
+}
+
 function _renderRoadmap() {
   const list = el('dev-roadmap-list');
-  const msg = el('dev-roadmap-msg');
   if (!list) return;
-  const { lines, sections } = _roadmapSections(_roadmapText);
+  const { sections } = _roadmapSections(_roadmapText);
   list.innerHTML = '';
-  const mode = _roadmapViewMode();
-  document.querySelectorAll('#dev-roadmap-view .rm-view-opt').forEach(b =>
-    b.classList.toggle('active', b.dataset.rmview === mode));
-  if (mode === 'board' && sections.length) {
-    _renderRoadmapBoard(list, sections);
-    return;
-  }
+  // Board only since v4.0. The list view was a second rendering of the same
+  // data with its own checkbox write path, and Alessio never used it.
   if (!sections.length) {
     list.innerHTML = '<div style="opacity:0.6">No roadmap file yet — add an entry or use Edit raw.</div>';
+    _syncDoneButton([]);
     return;
   }
-  const collapsedState = _roadmapCollapsedState();
-  for (const sec of sections) {
-    const doneCount = sec.items.filter(it => it.done).length;
-    const collapsed = (sec.title in collapsedState)
-      ? !!collapsedState[sec.title]
-      : /RELEASED/i.test(sec.title);
-    const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:600;margin:10px 0 4px;cursor:pointer;user-select:none;';
-    head.innerHTML = `
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.6;transition:transform .15s ease;transform:rotate(${collapsed ? '-90' : '0'}deg);"><polyline points="6 9 12 15 18 9"/></svg>
-      <span></span>
-      <span class="folder-count" style="font-weight:400;">${doneCount}/${sec.items.length}</span>`;
-    head.querySelector('span').textContent = sec.title;
-    head.addEventListener('click', () => {
-      collapsedState[sec.title] = !collapsed;
-      try { localStorage.setItem('ody-roadmap-collapsed', JSON.stringify(collapsedState)); } catch (_) {}
-      _renderRoadmap();
+  _renderRoadmapBoard(list, sections);
+  _syncDoneButton(sections);
+}
+
+// The Done button carries the count, so finished work stays visible as a number
+// even though it no longer occupies a column.
+function _syncDoneButton(sections) {
+  const btn = el('dev-roadmap-done-btn');
+  if (!btn) return;
+  const n = _doneItems(sections).length;
+  btn.textContent = `Done (${n})`;
+  btn.disabled = !n;
+  if (!btn._doneWired) {
+    btn._doneWired = true;
+    btn.addEventListener('click', () => {
+      _openDoneView(_roadmapSections(_roadmapText).sections);
     });
-    list.appendChild(head);
-    if (collapsed) continue;
-    if (!sec.items.length) {
-      const empty = document.createElement('div');
-      empty.textContent = '(no entries)';
-      empty.style.cssText = 'opacity:0.45;margin-left:4px;';
-      list.appendChild(empty);
-      continue;
-    }
-    for (const item of sec.items) {
-      const row = document.createElement('label');
-      row.style.cssText = 'display:flex;gap:7px;align-items:baseline;cursor:pointer;padding:2px 0;';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = item.done;
-      cb.addEventListener('change', async () => {
-        const ls = _roadmapText.split('\n');
-        ls[item.line] = ls[item.line].replace(/^- \[[ xX~!]\]/, cb.checked ? '- [x]' : '- [ ]');
-        if (await _saveRoadmap(ls.join('\n'), msg)) _renderRoadmap();
-      });
-      // Markdown screenshots in the entry (or its wrapped lines) render as
-      // small thumbnails — click opens the full image. Upload-URLs only
-      // (canonical pattern from markdown.js), so a roadmap line can never
-      // make the browser fetch an external host. \s* swallows the gap the
-      // stripped link leaves in the clean text.
-      const IMG_RE = uploadImageMdRe('\\s*');
-      const imgs = [];
-      const cleanText = item.text.replace(IMG_RE, (_, u) => { imgs.push(u); return ''; }).trim();
-      for (const ex of item.extra) {
-        let m;
-        while ((m = IMG_RE.exec(ex))) imgs.push(m[1]);
-      }
-      const span = document.createElement('span');
-      span.textContent = cleanText;
-      const itemDetails = _roadmapDetails(item);
-      const detailSummary = [
-        itemDetails.description, itemDetails.goal, itemDetails.acceptance,
-        itemDetails.dependencies, itemDetails.notes,
-      ].filter(Boolean).join('\n');
-      if (detailSummary) span.title = detailSummary;
-      if (item.done) span.style.cssText = 'opacity:0.5;text-decoration:line-through;';
-      row.appendChild(cb); row.appendChild(span);
-      if (imgs.length) {
-        const wrap = document.createElement('span');
-        wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-shrink:0;';
-        for (const u of imgs) {
-          const img = document.createElement('img');
-          img.src = u;
-          img.alt = 'screenshot';
-          img.style.cssText = 'height:32px;max-width:64px;object-fit:cover;border:1px solid var(--border);border-radius:4px;cursor:zoom-in;align-self:center;';
-          img.addEventListener('click', (ev) => {
-            // The row is a <label> around the done-checkbox — a plain click
-            // would toggle it instead of opening the screenshot.
-            ev.preventDefault();
-            ev.stopPropagation();
-            window.open(u, '_blank', 'noopener');
-          });
-          wrap.appendChild(img);
-        }
-        row.appendChild(wrap);
-      }
-      list.appendChild(row);
-    }
   }
 }
 
@@ -3755,11 +3885,27 @@ async function _loadRoadmap() {
     if (!res.ok) throw new Error(`load ${res.status}`);
     const d = await res.json();
     _roadmapText = d.content || '';
-    if (_roadmapViewMode() === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
+    if (!_roadmapBuilds) await _loadRoadmapBuilds();
     _renderRoadmap();
   } catch (e) {
     if (msg) { msg.textContent = 'Failed to load roadmap: ' + e.message; msg.className = 'admin-error'; }
   }
+}
+
+// `origin` is fetched in the background now (it used to block every /status
+// call for ~2 s). So dev_version describes the last SUCCESSFUL fetch — if the
+// host goes unreachable the fetch quietly stops and the open-package line would
+// keep showing an old version as if it were current. Say so instead. Silent in
+// the normal case: a fetch runs every 2 min, so anything under 5 is fine.
+function _devVersionStaleness(d) {
+  if (!d || !d.dev_version) return '';
+  const age = d.fetch_age_seconds;
+  if (age === null || age === undefined) return ' · not synced yet';
+  if (age < 300) return '';
+  const minutes = Math.round(age / 60);
+  return minutes < 60
+    ? ` · last synced ${minutes} min ago`
+    : ` · last synced ${Math.round(minutes / 60)} h ago`;
 }
 
 async function _loadDevStatus() {
@@ -3778,7 +3924,8 @@ async function _loadDevStatus() {
     const res = await fetch(`/api/system/status`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const d = await res.json();
-    pkg.textContent = d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`;
+    pkg.textContent = (d.dev_version ? `v${d.dev_version} (on dev)` : `v${d.version}`)
+      + _devVersionStaleness(d);
     if (channel === 'beta') {
       prod.textContent = d.commit && d.commit !== 'unknown' ? `v? @ ${d.commit}` : 'n/a from beta (no host access)';
       beta.textContent = `this instance — ${build || `v${d.version}`}`;
@@ -3822,9 +3969,9 @@ function _formatUptime(seconds) {
   remaining %= 86400;
   const hours = Math.floor(remaining / 3600);
   const minutes = Math.floor((remaining % 3600) / 60);
-  if (days) return `${days} T ${hours} Std`;
-  if (hours) return `${hours} Std ${minutes} Min`;
-  return `${minutes} Min`;
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function _setMetricValue(id, value, percent) {
@@ -3851,7 +3998,7 @@ async function _loadServerMetrics(force = false) {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    if (!data.available) throw new Error('Keine Messwerte verfügbar');
+    if (!data.available) throw new Error('No metrics available');
     const cpu = data.cpu || {};
     const memory = data.memory || {};
     const disk = data.disk || {};
@@ -3861,8 +4008,8 @@ async function _loadServerMetrics(force = false) {
       cpu.percent,
     );
     el('dev-metric-load').textContent = Number.isFinite(cpu.load_1)
-      ? `Load ${cpu.load_1.toFixed(2)} · ${cpu.cores || '?'} Kerne`
-      : `${cpu.cores || '?'} Kerne`;
+      ? `Load ${cpu.load_1.toFixed(2)} · ${cpu.cores || '?'} cores`
+      : `${cpu.cores || '?'} cores`;
     _setMetricValue(
       'dev-metric-memory',
       Number.isFinite(memory.percent) ? `${memory.percent.toFixed(1)} %` : '—',
@@ -3884,7 +4031,7 @@ async function _loadServerMetrics(force = false) {
     status.textContent = `Live · ${sampled.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     dot?.classList.add('is-live');
   } catch (error) {
-    if (status) status.textContent = `Nicht erreichbar · ${error.message}`;
+    if (status) status.textContent = `Not reachable · ${error.message}`;
     dot?.classList.remove('is-live');
   } finally {
     _serverMetricsLoading = false;
@@ -4062,7 +4209,7 @@ function initDeveloper() {
   detailsBtn?.addEventListener('click', () => {
     const opening = detailsPanel?.classList.contains('hidden');
     detailsPanel?.classList.toggle('hidden');
-    detailsBtn.textContent = opening ? 'Details schließen' : 'Genauer definieren';
+    detailsBtn.textContent = opening ? 'Hide details' : 'Add details';
     if (opening) el('dev-roadmap-description')?.focus();
   });
   // Screenshots attached to the next entry (bug reports need pictures).
@@ -4120,7 +4267,7 @@ function initDeveloper() {
     const normalizedVersion = _normalizeRoadmapVersion(rawVersion);
     if (rawVersion && !normalizedVersion) {
       if (msg) {
-        msg.textContent = 'Ungültige Version — Beispiel: 3.10';
+        msg.textContent = 'Invalid version — example: 3.10';
         msg.className = 'admin-error';
       }
       el('dev-roadmap-version')?.focus();
@@ -4137,15 +4284,19 @@ function initDeveloper() {
       notes: el('dev-roadmap-notes')?.value?.trim() || '',
     };
     const title = `**${kind}:** ${text || '(Screenshot)'}`;
-    const entryBlock = _roadmapItemBlock(' ', title, details, pendingImgs);
+    // The chosen column decides the marker. Default is Under consideration:
+    // a fresh thought is not yet a commitment to build it.
+    const colKey = el('dev-roadmap-column')?.value || 'consideration';
+    const colMark = (_RM_COLS.find(c => c.key === colKey) || _RM_COLS[0]).mark;
+    const entryBlock = _roadmapItemBlock(colMark, title, details, pendingImgs);
     const { lines, sections } = _roadmapSections(_roadmapText);
-    const sec = sections.find(s => /^Eingang/i.test(s.title));
+    const sec = sections.find(s => /^(Eingang|Inbox)/i.test(s.title));
     let ls;
     if (!sec) {
       // Empty/missing file: start a minimal queue with an Eingang section.
       ls = _roadmapText ? _roadmapText.split('\n') : [];
       if (ls.length && ls[ls.length - 1].trim() !== '') ls.push('');
-      ls.push('## Eingang', ...entryBlock);
+      ls.push('## Inbox', ...entryBlock);
     } else {
       // Insert at the section end, before trailing blank lines.
       let at = sec.end;
@@ -4165,9 +4316,20 @@ function initDeveloper() {
       if (el('dev-roadmap-priority')) el('dev-roadmap-priority').value = 'Normal';
       pendingImgs = [];
       _syncImgBtn();
+      _closeNewItemModal();
       _renderRoadmap();
     }
   };
+  const newModal = el('roadmap-new-modal');
+  if (newModal) {
+    el('dev-roadmap-new-btn')?.addEventListener('click', () => {
+      newModal.style.display = 'flex';
+      el('dev-roadmap-new')?.focus();
+    });
+    el('dev-roadmap-new-close')?.addEventListener('click', _closeNewItemModal);
+    newModal.addEventListener('click', (e) => { if (e.target === newModal) _closeNewItemModal(); });
+    newModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeNewItemModal(); });
+  }
   if (addBtn) addBtn.addEventListener('click', doAdd);
   if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
 
@@ -4184,14 +4346,6 @@ function initDeveloper() {
   });
   el('dev-roadmap-raw-cancel')?.addEventListener('click', closeRaw);
 
-  el('dev-roadmap-view')?.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.rm-view-opt');
-    if (!btn || btn.dataset.rmview === _roadmapViewMode()) return;
-    _roadmapView = btn.dataset.rmview;
-    try { localStorage.setItem('ody-roadmap-view', _roadmapView); } catch (_) {}
-    if (_roadmapView === 'board' && !_roadmapBuilds) await _loadRoadmapBuilds();
-    _renderRoadmap();
-  });
   const bulkVersionInput = el('dev-roadmap-bulk-version');
   const bulkVersionBtn = el('dev-roadmap-bulk-version-apply');
   const applyBulkVersion = async () => {
@@ -4201,8 +4355,8 @@ function initDeveloper() {
       const count = await _setAllPlannedVersions(bulkVersionInput?.value);
       if (msg) {
         msg.textContent = count
-          ? `${count} geplante Einträge wurden auf ${_normalizeRoadmapVersion(bulkVersionInput?.value)} gesetzt.`
-          : 'Keine geplanten Einträge außerhalb ausgelieferter Releases gefunden.';
+          ? `${count} planned entries were set to ${_normalizeRoadmapVersion(bulkVersionInput?.value)}.`
+          : 'No planned entries found outside released packages.';
         msg.className = 'admin-success';
       }
     } catch (error) {
@@ -4597,6 +4751,7 @@ export function initDeveloperPage() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initVersionSwitcher('dev-');
 }
 
 export function open(tab) {

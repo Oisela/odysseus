@@ -1083,6 +1083,17 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
 # see _tools_rejected_without_reasoning_effort_none). Sent as a reasoning object
 # on the Responses API. Env-overridable in case a future model wants a different
 # effort — empty string omits it entirely.
+#
+# Considered and rejected for v4.0: raising this to "low" to cure the
+# "announces an action but never runs it" complaint. The constraint above is a
+# verified API rule, not a preference, so a higher effort would 400 every turn
+# that carries tools and a retry would just pay that round trip every time. The
+# symptom has causes that can actually be fixed — no tool schemas reaching the
+# model at all (_API_HOSTS), an English-only intent nudge, and that nudge
+# losing its recency when every system message is hoisted into `instructions`.
+# Those are handled instead. Note this only bites WITH tools: a tool-less turn
+# keeps full reasoning, because the payload sets `reasoning` inside
+# `if responses_tools:`.
 _CODEX_TOOLS_REASONING_EFFORT = os.getenv(
     "ODYSSEUS_CODEX_TOOLS_REASONING_EFFORT", "none"
 ).strip()
@@ -1120,10 +1131,29 @@ def _build_chatgpt_responses_payload(
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
-    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    # Only the FIRST system message becomes `instructions`. The agent loop
+    # injects later system messages mid-conversation — the "you said you would,
+    # then didn't" nudge and verifier feedback — and their whole point is that
+    # they arrive last. Hoisting every system message into the global preamble
+    # put those corrections above the conversation they were correcting, where
+    # they read as background policy instead of "do it now".
+    system_msgs = [m for m in (messages or []) if (m.get("role") or "") == "system"]
+    conversation: List[Dict] = []
+    for msg in messages or []:
+        if (msg.get("role") or "") != "system":
+            conversation.append(msg)
+        elif system_msgs and msg is not system_msgs[0]:
+            # Keep it in place, marked, as a user turn — Responses has no
+            # system role inside `input`.
+            conversation.append({
+                "role": "user",
+                "content": f"[system] {_message_content_as_text(msg.get('content'))}",
+            })
     payload: Dict = {
         "model": model,
-        "instructions": _chatgpt_subscription_instructions(messages),
+        "instructions": _chatgpt_subscription_instructions(
+            system_msgs[:1] if system_msgs else []
+        ),
         "input": build_responses_input(conversation),
         "stream": stream,
         "store": False,
@@ -1297,7 +1327,9 @@ _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
     "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
-    "m2-reap", "gemma", "stepfun", "step-3", "step3",
+    # "gemma" is Google's open model and does NOT match "gemini" — the thinking
+    # panel stayed empty for every Gemini model because of that near-miss.
+    "m2-reap", "gemma", "gemini", "stepfun", "step-3", "step3",
     "magistral", "mistral-small", "mistral-medium",
 )
 
@@ -1843,6 +1875,65 @@ def normalize_model_id(
             return a
     return None
 
+def _chatgpt_subscription_call_sync(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    headers: Dict,
+    timeout: int,
+) -> str:
+    """One synchronous Responses call, collected from the SSE stream.
+
+    The Codex endpoint rejects non-streaming requests, so "give me a string"
+    still means "stream it and join the deltas" — the same shape llm_call_async
+    uses, done with a blocking client because llm_call's callers are sync and
+    must not have an event loop forced on them.
+    """
+    target_url = _normalize_chatgpt_subscription_url(url)
+    payload = _build_chatgpt_responses_payload(
+        model, messages, temperature, max_tokens, stream=True,
+    )
+    parts: List[str] = []
+    try:
+        note_model_activity(target_url, model)
+        with httpx.stream(
+            "POST", target_url, headers=headers, json=payload, timeout=timeout,
+        ) as r:
+            if not r.is_success:
+                body = r.read().decode("utf-8", "replace")
+                raise HTTPException(
+                    502,
+                    f"Upstream {target_url} -> {r.status_code}: "
+                    f"{_format_chatgpt_subscription_error(r.status_code, body)}",
+                )
+            event_name = ""
+            for line in r.iter_lines():
+                line = (line or "").strip()
+                if line.startswith("event:"):
+                    event_name = line[6:].strip()
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    continue
+                if (data.get("type") or event_name) == "response.output_text.delta":
+                    delta = data.get("delta")
+                    if isinstance(delta, str):
+                        parts.append(delta)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"POST {target_url} failed: {e}")
+    return "".join(parts)
+
+
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
@@ -1891,6 +1982,23 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "chatgpt-subscription":
+        # Without this branch the generic path below built a chat-completions
+        # body and POSTed it to <base>/codex/chat/completions, which does not
+        # exist -> 404 on every synchronous call. Silent, because all three
+        # callers degrade rather than surface it: the vision-model fallback
+        # (document_processor), session auto-titles (session_routes) and the
+        # web-search query builder (chat_processor). llm_call_async had the
+        # branch; the sync twin never got it.
+        #
+        # Codex insists on stream:true even when the caller only wants a
+        # string (same reason llm_call_async collects deltas), so this streams
+        # and joins rather than doing a plain POST.
+        response = _chatgpt_subscription_call_sync(
+            url, model, messages_copy, temperature, max_tokens, h, timeout,
+        )
+        _set_cached_response(cache_key, response)
+        return response
     else:
         target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":

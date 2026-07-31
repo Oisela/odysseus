@@ -1124,12 +1124,22 @@ function initializeEventListeners() {
   // for the roadmap and deployment controls.
   const toolDeveloperBtn = el('tool-developer-btn');
   if (toolDeveloperBtn) {
+    // The first click pays a dynamic import, so the window appears late. A
+    // second click landing in that gap used to resolve the same promise and
+    // immediately toggle back shut, which read as "it needs two clicks".
+    let developerBusy = false;
     toolDeveloperBtn.addEventListener('click', async () => {
-      const m = await import('./js/developer.js');
-      const Modals = await import('./js/modalManager.js');
-      if (!Modals.toggle('developer-modal')) {
-        if (m.isDeveloperOpen()) m.closeDeveloper();
-        else m.openDeveloper();
+      if (developerBusy) return;
+      developerBusy = true;
+      try {
+        const m = await import('./js/developer.js');
+        const Modals = await import('./js/modalManager.js');
+        if (!Modals.toggle('developer-modal')) {
+          if (m.isDeveloperOpen()) m.closeDeveloper();
+          else m.openDeveloper();
+        }
+      } finally {
+        developerBusy = false;
       }
     });
   }

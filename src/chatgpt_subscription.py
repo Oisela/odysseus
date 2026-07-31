@@ -300,6 +300,12 @@ def to_http_exception(exc: Exception) -> HTTPException:
 
 
 def _message_text(content: Any) -> str:
+    """Flatten message content to plain text.
+
+    Text-only by design: `function_call_output` must carry a string, so tool
+    results keep going through here. For user/assistant turns use
+    `_content_parts`, which preserves images.
+    """
     if isinstance(content, list):
         return "\n".join(
             str(part.get("text") or part.get("content") or "")
@@ -307,6 +313,41 @@ def _message_text(content: Any) -> str:
             if isinstance(part, dict)
         )
     return "" if content is None else str(content)
+
+
+def _content_parts(content: Any, role: str) -> list[dict]:
+    """Translate canonical OpenAI-style content into Responses input parts.
+
+    Images used to be dropped on the floor here: `_message_text` reads only
+    `text`/`content` from each part, and an image part carries neither, so it
+    flattened to "". The Responses API has never seen an `input_image` item
+    from us — which is why gpt-5.6-sol/terra could not read a screenshot no
+    matter what the vision settings said (Alessio, repeatedly).
+
+    Assistant turns stay text-only: `output_image` is not an input item type,
+    and a model does not need to be shown its own rendering of an image.
+    """
+    text_type = "output_text" if role == "assistant" else "input_text"
+    if not isinstance(content, list):
+        text = _message_text(content)
+        return [{"type": text_type, "text": text}] if text else []
+
+    parts: list[dict] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind == "image_url" and role != "assistant":
+            url = (part.get("image_url") or {}).get("url") or ""
+            if url:
+                # Responses takes the data: URI or a plain URL directly, the
+                # same value the OpenAI chat-completions path passes through.
+                parts.append({"type": "input_image", "image_url": url})
+            continue
+        text = str(part.get("text") or part.get("content") or "")
+        if text:
+            parts.append({"type": text_type, "text": text})
+    return parts
 
 
 def build_responses_input(messages: list[dict]) -> list[dict]:
@@ -338,10 +379,9 @@ def build_responses_input(messages: list[dict]) -> list[dict]:
             })
             continue
 
-        text = _message_text(msg.get("content"))
-        if text:
-            input_type = "output_text" if role == "assistant" else "input_text"
-            input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+        parts = _content_parts(msg.get("content"), role)
+        if parts:
+            input_items.append({"role": role, "content": parts})
 
         for tc in tool_calls or []:
             fn = tc.get("function") or {}

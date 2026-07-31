@@ -46,6 +46,61 @@ awk '{ print "uptime_seconds=" $1 }' /proc/uptime
 df -Pk / | awk 'NR == 2 { print "disk_total_kb=" $2; print "disk_used_kb=" $3 }'
 """
 
+# Everything /status needs about the deployment, in ONE round trip. This used to
+# be six sequential `_ssh` calls; each one pays the full ConnectTimeout=6 SSH
+# handshake, so the endpoint sat at 2-3 s (measured in prod logs 2026-07-30) and
+# the Developer page polls it every 30 s. Every line is guarded so one missing
+# checkout or a dead beta degrades that single key instead of the whole probe.
+#
+# Deliberately NO `git fetch` here — the two fetches that used to live in the
+# request path were synchronous calls to GitHub and were the 2-second floor all
+# by themselves. `_maybe_refresh_origin` does that in the background now.
+_HOST_STATUS_SCRIPT = f"""
+git -C {_PROD_DIR} rev-parse --short HEAD 2>/dev/null | head -1 | sed 's/^/commit=/'
+curl -fsS -m 3 {_BETA_URL} >/dev/null 2>&1 && echo beta_http=1 || echo beta_http=0
+git -C {_BETA_DIR} rev-parse --abbrev-ref HEAD 2>/dev/null | head -1 | sed 's/^/beta_branch=/'
+git -C {_BETA_DIR} rev-parse --short HEAD 2>/dev/null | head -1 | sed 's/^/beta_commit=/'
+git -C {_BETA_DIR} merge-base --is-ancestor HEAD origin/dev 2>/dev/null \
+  && echo beta_in_dev=1 || echo beta_in_dev=0
+git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null \
+  | grep -m1 APP_VERSION | cut -d'"' -f2 | head -1 | sed 's/^/dev_version=/'
+"""
+
+# Everything POST /switch must know before it fires. The switch runs detached,
+# so once it is launched nothing can report back synchronously — every check
+# that can be made has to be made HERE, while there is still an HTTP response to
+# put the answer in. Emitted as key=value, one round trip, ~0.3 s.
+#
+# `wc -l` rather than `grep -c .`: grep exits 1 on zero matches, which trips the
+# guard clause and appends a second line to the value.
+_SWITCH_PREFLIGHT_SCRIPT = f"""
+echo "head=$(git -C {_PROD_DIR} rev-parse --short HEAD 2>/dev/null)"
+echo "disk_avail_kb=$(df --output=avail / | tail -1 | tr -d ' ')"
+echo "build_active=$(systemctl list-units --state=active --no-legend \
+  'odysseus-promote-*' 'odysseus-switch-*' 'odysseus-beta-start-*' 2>/dev/null \
+  | wc -l | tr -d ' ')"
+"""
+
+# A docker build needs room; below this the build bricks more than itself.
+# switch-version.sh enforces the same number, but only AFTER the UI has already
+# said "switch started" — by then the user is watching a rebuild that will not
+# happen. Checking here turns a silent failure into a sentence.
+_SWITCH_MIN_FREE_KB = 5 * 1024 * 1024
+
+# When the host is unreachable the UI cannot switch at all — so the message has
+# to carry the way out rather than just naming the failure. This is the exact
+# command from the odysseus-entwickler skill's emergency section.
+_CLI_FALLBACK = (
+    "Cannot reach the deploy host over SSH, so the switch cannot be started. "
+    "Run it from a terminal instead: "
+    "ssh root@odysseus-server \"systemd-run --collect bash "
+    f"{_SWITCH} {{commit}}\""
+)
+
+# Breadcrumbs written by switch-version.sh. The switch is detached, so this file
+# is the only record of what actually happened after the UI lost contact.
+_SWITCH_LOG = "/home/deploy/odysseus-entwickler/switch-last.log"
+
 # Last /proc CPU counters per source. CPU utilisation is a delta, not the
 # since-boot average; keeping only two aggregate numbers avoids exposing any
 # process or host-identifying data through the admin endpoint.
@@ -54,6 +109,22 @@ _METRICS_LOCK = threading.Lock()
 _METRICS_REFRESH_LOCK = threading.Lock()
 _METRICS_CACHE = {"at": 0.0, "payload": None}
 _METRICS_CACHE_SECONDS = 4.0
+
+# Same cache discipline as the metrics probe, longer TTL: deployment state only
+# changes when someone deploys. `?refresh=1` bypasses it for the manual button.
+_STATUS_REFRESH_LOCK = threading.Lock()
+_STATUS_CACHE = {"at": 0.0, "snapshot": None}
+_STATUS_CACHE_SECONDS = 20.0
+_RELEASES_CACHE = {"at": 0.0, "releases": None}
+_RELEASES_CACHE_SECONDS = 20.0
+
+# Background `git fetch` so `origin/dev` is reasonably current without any
+# request ever waiting on GitHub. `done_at` is exposed as `fetch_age_seconds`:
+# if the host is unreachable the fetch silently stops happening, and a stale
+# `dev_version`/`beta_in_dev` must be *visible* rather than quietly wrong.
+_FETCH_LOCK = threading.Lock()
+_FETCH_STATE = {"started_at": 0.0, "done_at": None, "ok": False}
+_FETCH_INTERVAL_SECONDS = 120.0
 
 
 # Living work queue — same file the developer skill reads on every start.
@@ -124,8 +195,15 @@ def _ssh_script(script: str, timeout: int = 8) -> subprocess.CompletedProcess:
     shlex-quoted into a single remote word. (Found 2026-07-16: the beta-start
     button ran a bare `sudo`, and the update-ready/dev-version checks were
     silently broken the same way.)
+
+    CRs are stripped because a multi-line script literal in a .py file picks up
+    CRLF on a Windows checkout (`git ls-files --eol` -> `i/lf w/crlf`), and the
+    remote bash then chokes on `$'\r'` and mangles every `sed` expression. The
+    image is built from a Linux checkout so prod was never affected, but it made
+    local verification lie. `.gitattributes` pins `*.sh` to LF for the same class
+    of bug (issues #150/#77); shell text inside Python needs the same guarantee.
     """
-    return _ssh("bash", "-lc", shlex.quote(script), timeout=timeout)
+    return _ssh("bash", "-lc", shlex.quote(script.replace("\r", "")), timeout=timeout)
 
 
 def _parse_metric_lines(text: str) -> dict:
@@ -140,6 +218,104 @@ def _parse_metric_lines(text: str) -> dict:
         except (TypeError, ValueError):
             continue
     return values
+
+
+def _parse_kv_lines(text: str) -> dict:
+    """Parse `key=value` probe output, keeping values as strings.
+
+    Deliberately NOT `_parse_metric_lines`: that one coerces to float and drops
+    everything non-numeric, which is a privacy property of the metrics endpoint
+    (pinned by tests/test_developer_metrics.py) and must stay. The status probe
+    returns commits and branch names, so it needs its own string-tolerant parser
+    with the same allow-list on key names.
+    """
+    values = {}
+    for line in (text or "").splitlines():
+        key, sep, raw = line.partition("=")
+        key = key.strip()
+        if not sep or not key or not key.replace("_", "").isalnum():
+            continue
+        values[key] = raw.strip()
+    return values
+
+
+def _maybe_refresh_origin() -> None:
+    """Kick off a background `git fetch` on the host at most every 2 minutes.
+
+    Marks the attempt as started *before* spawning, so concurrent /status calls
+    can never pile up threads on the same interval.
+    """
+    with _FETCH_LOCK:
+        now = time.monotonic()
+        if now - _FETCH_STATE["started_at"] < _FETCH_INTERVAL_SECONDS:
+            return
+        _FETCH_STATE["started_at"] = now
+
+    def _run():
+        ok = False
+        try:
+            r = _ssh_script(
+                f"git -C {_PROD_DIR} fetch -q origin 2>/dev/null; "
+                f"git -C {_BETA_DIR} fetch -q origin 2>/dev/null; "
+                f"echo done",
+                timeout=45,
+            )
+            ok = r.returncode == 0
+        except Exception as exc:
+            logger.debug("system/status: background fetch failed: %s", exc)
+        with _FETCH_LOCK:
+            _FETCH_STATE["ok"] = ok
+            if ok:
+                _FETCH_STATE["done_at"] = time.monotonic()
+
+    threading.Thread(target=_run, name="odysseus-origin-fetch", daemon=True).start()
+
+
+def _fetch_age_seconds():
+    """Seconds since the last SUCCESSFUL background fetch, None if never."""
+    with _FETCH_LOCK:
+        done_at = _FETCH_STATE["done_at"]
+    return None if done_at is None else int(max(0.0, time.monotonic() - done_at))
+
+
+def _host_status_snapshot(force: bool = False) -> dict:
+    """One cached round trip describing the deployment. Never raises."""
+    with _STATUS_REFRESH_LOCK:
+        now = time.monotonic()
+        cached = _STATUS_CACHE["snapshot"]
+        if (
+            not force
+            and cached is not None
+            and now - _STATUS_CACHE["at"] < _STATUS_CACHE_SECONDS
+        ):
+            return cached
+        values = {}
+        try:
+            r = _ssh_script(_HOST_STATUS_SCRIPT, timeout=12)
+            if r.returncode == 0:
+                values = _parse_kv_lines(r.stdout)
+            else:
+                logger.warning(
+                    "system/status: host probe rc=%s err=%s",
+                    r.returncode, (r.stderr or "").strip()[:200],
+                )
+        except Exception as exc:
+            logger.debug("system/status: host probe unavailable: %s", exc)
+
+        beta_active = values.get("beta_http") == "1"
+        snapshot = {
+            "commit": values.get("commit") or "unknown",
+            "beta_active": beta_active,
+            # Only surface beta details for a beta that actually answers — a
+            # stale checkout on disk must not look like a running instance.
+            "beta_branch": (values.get("beta_branch") or None) if beta_active else None,
+            "beta_commit": (values.get("beta_commit") or None) if beta_active else None,
+            "beta_in_dev": beta_active and values.get("beta_in_dev") == "1",
+            "dev_version": values.get("dev_version") or None,
+            "reachable": bool(values),
+        }
+        _STATUS_CACHE.update(at=time.monotonic(), snapshot=snapshot)
+        return snapshot
 
 
 def _cpu_percent(source: str, total: float, idle: float):
@@ -249,15 +425,32 @@ def _server_metrics_snapshot(force: bool = False) -> dict:
         return payload
 
 
-def _read_releases() -> list:
-    """Parse the host's release ledger (version<TAB>commit<TAB>date)."""
+def _read_releases(force: bool = False) -> list:
+    """Parse the host's release ledger (version<TAB>commit<TAB>date).
+
+    Cached like the status probe. Callers that use the ledger as a *guard*
+    (POST /switch) must pass force=True. A stale cache can only ever hold FEWER
+    entries than the file — the ledger is append-only — so it could reject a
+    brand-new release but never admit a commit that was never released. Forcing
+    on the guard path removes even that.
+    """
+    if not force:
+        with _STATUS_REFRESH_LOCK:
+            cached = _RELEASES_CACHE["releases"]
+            if (
+                cached is not None
+                and time.monotonic() - _RELEASES_CACHE["at"] < _RELEASES_CACHE_SECONDS
+            ):
+                return cached
     releases = []
     try:
         r = _ssh("cat", _RELEASES)
         if r.returncode != 0:
             return releases
         for line in r.stdout.splitlines():
-            parts = line.strip().split("\t")
+            # Tolerate whitespace-separated ledgers: a hand-appended line with
+            # spaces instead of tabs used to parse as one field and vanish.
+            parts = [p for p in line.strip().replace("\t", " ").split(" ") if p]
             if len(parts) >= 2 and parts[0] and parts[1]:
                 releases.append({
                     "version": parts[0],
@@ -266,6 +459,9 @@ def _read_releases() -> list:
                 })
     except Exception:
         logger.exception("system/releases: ledger read failed")
+        return releases
+    with _STATUS_REFRESH_LOCK:
+        _RELEASES_CACHE.update(at=time.monotonic(), releases=releases)
     return releases
 
 
@@ -273,77 +469,33 @@ def setup_system_routes() -> APIRouter:
     router = APIRouter(prefix="/api/system")
 
     @router.get("/status")
-    def get_status(request: Request):
+    def get_status(request: Request, refresh: bool = False):
+        """Deployment state for the System/Developer cards.
+
+        One cached SSH round trip (`_host_status_snapshot`) plus a local file
+        read for roadmap freshness. `origin` is fetched in the background, so
+        `dev_version`/`beta_in_dev` describe the last successful fetch —
+        `fetch_age_seconds` says how old that is.
+        """
         require_admin(request)
-
-        # Current prod commit (host repo; safe.directory set host-side for deploy).
-        commit = "unknown"
-        try:
-            r = _ssh("git", "-C", _PROD_DIR, "rev-parse", "--short", "HEAD")
-            if r.returncode == 0 and r.stdout.strip():
-                commit = r.stdout.strip()
-        except Exception:
-            logger.exception("system/status: prod commit lookup failed")
-
-        # Is a beta actually serving on :7001?
-        beta_active = False
-        try:
-            r = _ssh("curl", "-fsS", "-m", "3", _BETA_URL)
-            beta_active = r.returncode == 0
-        except Exception:
-            logger.exception("system/status: beta liveness check failed")
-
-        # Which branch/commit is the beta checkout on, and would promoting it be
-        # honest? Promotion builds prod from origin/dev, so a beta commit that
-        # isn't an ancestor of origin/dev would NOT be what ships — surface that.
-        beta_branch = None
-        beta_commit = None
-        beta_in_dev = False
-        if beta_active:
-            try:
-                r = _ssh("git", "-C", _BETA_DIR, "rev-parse", "--abbrev-ref", "HEAD")
-                if r.returncode == 0:
-                    beta_branch = r.stdout.strip() or None
-                r = _ssh("git", "-C", _BETA_DIR, "rev-parse", "--short", "HEAD")
-                if r.returncode == 0:
-                    beta_commit = r.stdout.strip() or None
-                r = _ssh_script(
-                    f"git -C {_BETA_DIR} fetch -q origin 2>/dev/null; "
-                    f"git -C {_BETA_DIR} merge-base --is-ancestor HEAD origin/dev "
-                    f"&& echo yes || echo no"
-                )
-                beta_in_dev = r.returncode == 0 and r.stdout.strip() == "yes"
-            except Exception:
-                logger.exception("system/status: beta branch inspection failed")
-
-        # Promote is only safe/honest when a beta is live AND its commit is
-        # already merged into origin/dev (what prod will actually build).
-        promotable = bool(beta_active and beta_in_dev)
-
-        # The open package = APP_VERSION on origin/dev's tip (may be ahead of
-        # this running instance). Read it from the host checkout's remote ref.
-        dev_version = None
-        try:
-            r = _ssh_script(
-                f"git -C {_PROD_DIR} fetch -q origin 2>/dev/null; "
-                f"git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null "
-                f"| grep -m1 'APP_VERSION'"
-            )
-            if r.returncode == 0 and '"' in r.stdout:
-                dev_version = r.stdout.split('"')[1] or None
-        except Exception:
-            logger.exception("system/status: dev version lookup failed")
-
+        _maybe_refresh_origin()
+        snap = _host_status_snapshot(force=refresh)
+        dev_version = snap["dev_version"]
         return {
             "version": APP_VERSION,
             "dev_version": dev_version,
-            "commit": commit,
-            "beta_active": beta_active,
-            "beta_branch": beta_branch,
-            "beta_commit": beta_commit,
-            "beta_in_dev": beta_in_dev,
-            "promotable": promotable,
+            "commit": snap["commit"],
+            "beta_active": snap["beta_active"],
+            "beta_branch": snap["beta_branch"],
+            "beta_commit": snap["beta_commit"],
+            "beta_in_dev": snap["beta_in_dev"],
+            # Promote is only safe/honest when a beta is live AND its commit is
+            # already merged into origin/dev (what prod will actually build).
+            "promotable": bool(snap["beta_active"] and snap["beta_in_dev"]),
+            # Roadmap freshness is a local file read — never cache it, or an
+            # edit would not clear the banner for up to a cache TTL.
             "roadmap": _roadmap_freshness(dev_version or APP_VERSION),
+            "fetch_age_seconds": _fetch_age_seconds(),
         }
 
     @router.get("/roadmap-freshness")
@@ -507,20 +659,43 @@ def setup_system_routes() -> APIRouter:
         return {"status": "beta_stopped"}
 
     @router.get("/releases")
-    def list_releases(request: Request):
-        """Released versions from the host ledger, newest last; marks current."""
+    def list_releases(request: Request, refresh: bool = False):
+        """Released versions from the host ledger, newest last; marks current.
+
+        The current commit comes from the shared status snapshot instead of its
+        own `git rev-parse` — this endpoint is polled next to /status, and one
+        SSH handshake is the whole cost of either.
+        """
         require_admin(request)
-        releases = _read_releases()
-        current = "unknown"
-        try:
-            r = _ssh("git", "-C", _PROD_DIR, "rev-parse", "--short", "HEAD")
-            if r.returncode == 0:
-                current = r.stdout.strip()
-        except Exception:
-            logger.exception("system/releases: current commit lookup failed")
+        releases = _read_releases(force=refresh)
+        current = _host_status_snapshot(force=refresh)["commit"]
         for rel in releases:
             rel["current"] = rel["commit"] == current
         return {"releases": releases, "current_commit": current}
+
+    @router.get("/switch-log")
+    def switch_log(request: Request):
+        """Last outcomes recorded by switch-version.sh.
+
+        A switch detaches itself (the rebuild kills this process), so the UI
+        loses the thread the moment it starts. After the window is reopened this
+        is how it learns whether the target came up, whether the auto-revert
+        caught it, or whether the script died before doing anything.
+        """
+        require_admin(request)
+        entries = []
+        try:
+            r = _ssh("tail", "-n", "20", _SWITCH_LOG)
+            if r.returncode == 0:
+                for line in r.stdout.splitlines():
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        entries.append({
+                            "at": parts[0], "event": parts[1], "commit": parts[2],
+                        })
+        except Exception:
+            logger.exception("system/switch-log: read failed")
+        return {"entries": entries}
 
     @router.post("/switch")
     def switch_version(body: SwitchBody, request: Request):
@@ -532,10 +707,57 @@ def setup_system_routes() -> APIRouter:
         very process, exactly like promote.
         """
         require_admin(request)
-        releases = _read_releases()
+
+        # Preflight FIRST: the switch is detached, so this response is the only
+        # chance to tell the user why nothing is going to happen.
+        try:
+            probe = _ssh_script(_SWITCH_PREFLIGHT_SCRIPT, timeout=12)
+            reachable = probe.returncode == 0
+        except Exception:
+            logger.exception("system/switch: preflight probe failed")
+            reachable = False
+        if not reachable:
+            raise HTTPException(503, _CLI_FALLBACK.format(commit=body.commit))
+        pre = _parse_kv_lines(probe.stdout)
+
+        # force: the ledger is the security guard here, never serve it cached.
+        releases = _read_releases(force=True)
+        if not releases:
+            raise HTTPException(
+                503,
+                "Release ledger is empty or unreadable — nothing to switch to. "
+                f"Check {_RELEASES} on the host.",
+            )
         target = next((rel for rel in releases if rel["commit"] == body.commit), None)
         if not target:
             raise HTTPException(400, "Commit is not a released version — refusing to switch.")
+
+        head = pre.get("head") or ""
+        if head and (head == target["commit"] or target["commit"].startswith(head)
+                     or head.startswith(target["commit"])):
+            raise HTTPException(
+                409, f"Production already runs v{target['version']} ({head})."
+            )
+
+        try:
+            avail_kb = int(float(pre.get("disk_avail_kb", 0)))
+        except (TypeError, ValueError):
+            avail_kb = 0
+        if avail_kb and avail_kb < _SWITCH_MIN_FREE_KB:
+            raise HTTPException(
+                507,
+                f"Only {avail_kb // 1024 // 1024} GB free on the host — a rebuild "
+                "needs 5 GB. Run 'docker image prune -f' first.",
+            )
+
+        if (pre.get("build_active") or "0") != "0":
+            raise HTTPException(
+                409,
+                "A deployment is already running on the host (promote, switch or "
+                "beta start). Wait for it to finish — two builds at once corrupt "
+                "the checkout.",
+            )
+
         unit = "odysseus-switch-$(date +%s)"
         cmd = (
             f"sudo systemd-run --unit={unit} --collect "

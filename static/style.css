@@ -1401,7 +1401,11 @@ body.bg-pattern-sparkles {
     .section-collapse-btn:hover .section-collapse-chevron { opacity: 0.6; }
     .section.collapsed .section-collapse-chevron { transform: rotate(-90deg); opacity: 0.5; }
     .section-header-flex:has(.section-header-btn) .section-collapse-btn { display: none; }
-    .section.collapsed .section-collapse-btn { display: inline-flex !important; }
+    /* A collapsed section always shows its chevron — that's the only way back.
+       Header-only sections are excluded: they never collapse (see
+       section-management.js), and without the :not() this !important beat the
+       rule above and put an arrow on a section with nothing to expand. */
+    .section.collapsed:not(.section-header-only) .section-collapse-btn { display: inline-flex !important; }
 
     /* Collapsed state */
     .section.collapsed > *:not(h4):not(.section-title):not(.section-header-flex) { display: none !important; }
@@ -41834,6 +41838,19 @@ body.theme-frosted .modal {
 .rm-card-done .rm-card-text { opacity: 0.55; text-decoration: line-through; }
 .rm-card-text { font-size: 11.5px; line-height: 1.4; word-break: break-word; }
 .rm-card-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* Screenshots used to render only in the removed list view. Same thumbnail
+   size and zoom-in affordance they had there. */
+.rm-card-shots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+.rm-card-shot {
+  width: 24px; height: 24px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 3px;
+  cursor: zoom-in; opacity: 0.75;
+}
+.rm-card-shot:hover { opacity: 1; }
+/* Done view — a flat history list, not a fifth column. */
+.rm-done-list { display: flex; flex-direction: column; gap: 6px; }
+.rm-done-list .rm-card { cursor: default; }
+.rm-card-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
 .rm-chip {
   font-size: 9px;
   padding: 1px 5px;
