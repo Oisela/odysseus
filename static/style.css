@@ -1279,6 +1279,11 @@ body.bg-pattern-sparkles {
          / assistant dots all line up vertically in the same column
          instead of trailing right after each (differently-sized) label. */
       margin-left: auto;
+      /* ...and the same nudge in from the corner the email dot always had.
+         Header-only sections used to carry an (invisible) chevron that kept
+         the dot off the border; since v4.0 they don't, so the dots ended up
+         glued to the right edge. */
+      margin-right: 6px;
       border-radius: 50%;
       background: var(--accent, var(--red));
       flex-shrink: 0;
@@ -1290,7 +1295,7 @@ body.bg-pattern-sparkles {
     #email-unread-dot.sidebar-notif-dot {
       animation: email-notif-breathe 2.2s ease-in-out infinite;
       /* Nudge in from the far-right edge so it doesn't crowd the corner. */
-      margin-right: 4px;
+      margin-right: 6px;
       /* Tiny vertical nudge to center with the email label. */
       position: relative;
       top: 0.1px;
@@ -42232,6 +42237,7 @@ body.theme-frosted .modal {
 /* Sidebar count dot — the buffer is only useful if you notice it filled up. */
 .remnote-sidebar-dot {
   margin-left: 5px;
+  margin-right: 6px;   /* same column as the notification dots */
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
@@ -42587,3 +42593,15 @@ img.doc-latex-page { user-select: none; -webkit-user-select: none; }
 #custom-preset-modal #custom-system-prompt { min-height: 90px; }
 #doc-pdf-view.latex-marking .doc-mark,
 #doc-latex-view.latex-marking .doc-mark { pointer-events: none; }
+
+
+/* ── New roadmap item popup (v4.0) ────────────────────────────────────────
+   Wider than the default modal because the first row carries a title field,
+   two selects and three buttons; at the default width they were cut off at
+   the right edge. */
+#roadmap-new-modal .modal-content { width: min(620px, 94vw); }
+#roadmap-new-modal .modal-body { padding: 12px 14px 14px; }
+#roadmap-new-modal .modal-body > div:first-child { row-gap: 8px; }
+#roadmap-new-modal #dev-roadmap-new { min-width: 220px; }
+#roadmap-new-modal select { max-width: 190px; }
+#roadmap-new-modal .rm-new-details { margin-top: 2px; }

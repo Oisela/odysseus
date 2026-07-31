@@ -4206,6 +4206,18 @@ function initDeveloper() {
   const imgBtn = el('dev-roadmap-img');
   const detailsBtn = el('dev-roadmap-details'), detailsPanel = el('dev-roadmap-new-details');
   const msg = el('dev-roadmap-msg');
+  // #dev-roadmap-msg sits BELOW the board, i.e. behind the popup. While the
+  // popup is open that is invisible, which is why "Screenshot attached" never
+  // reached Alessio. Prefer the in-popup line whenever the popup is showing.
+  const _roadmapNote = (text, cls = '') => {
+    const modal = el('roadmap-new-modal');
+    const inPopup = modal && modal.style.display !== 'none';
+    const target = inPopup ? el('dev-roadmap-new-msg') : msg;
+    if (!target) return;
+    target.textContent = text;
+    target.className = cls;
+    if (text) setTimeout(() => { if (target.textContent === text) target.textContent = ''; }, 2500);
+  };
   detailsBtn?.addEventListener('click', () => {
     const opening = detailsPanel?.classList.contains('hidden');
     detailsPanel?.classList.toggle('hidden');
@@ -4231,7 +4243,7 @@ function initDeveloper() {
     if (!fileId) throw new Error('Upload failed');
     pendingImgs.push(`/api/upload/${fileId}`);
     _syncImgBtn();
-    if (msg) { msg.textContent = 'Screenshot attached'; setTimeout(() => { if (msg.textContent === 'Screenshot attached') msg.textContent = ''; }, 2000); }
+    _roadmapNote(`${pendingImgs.length} screenshot(s) attached`);
   };
   if (imgBtn) imgBtn.addEventListener('click', () => {
     const fi = document.createElement('input');
@@ -4242,7 +4254,7 @@ function initDeveloper() {
     fi.addEventListener('change', async () => {
       const f = fi.files?.[0];
       fi.remove();
-      if (f) { try { await _uploadRoadmapImg(f); } catch (_) { if (msg) msg.textContent = 'Upload failed'; } }
+      if (f) { try { await _uploadRoadmapImg(f); } catch (_) { _roadmapNote('Upload failed', 'admin-error'); } }
     });
     fi.click();
   });
@@ -4251,8 +4263,13 @@ function initDeveloper() {
     for (const it of items) {
       if (it.kind === 'file' && it.type.startsWith('image/')) {
         e.preventDefault();
+        // stopPropagation is the point: app.js has a window-level paste handler
+        // that puts any pasted file into the CHAT attach strip. Without this the
+        // screenshot went to the chat as well, which is why pasting into the
+        // roadmap field looked like it did nothing.
+        e.stopPropagation();
         const f = it.getAsFile();
-        if (f) { try { await _uploadRoadmapImg(f); } catch (_) { if (msg) msg.textContent = 'Upload failed'; } }
+        if (f) { try { await _uploadRoadmapImg(f); } catch (_) { _roadmapNote('Upload failed'); } }
         return;
       }
     }

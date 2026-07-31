@@ -165,3 +165,40 @@ def test_roadmap_reload_button_says_what_it_does():
     """
     assert ">Reload roadmap<" in INDEX_HTML
     assert ">Refresh status<" not in INDEX_HTML
+
+
+def test_roadmap_paste_does_not_leak_the_image_into_the_chat():
+    """Regression, v4.0.2 — pasting a screenshot "did nothing".
+
+    It actually did two things: uploaded to the roadmap AND, because app.js
+    has a window-level paste handler, dropped the same file into the chat
+    attach strip. preventDefault alone does not stop that; stopPropagation
+    does.
+    """
+    start = ADMIN_JS.index("if (input) input.addEventListener('paste'")
+    handler = ADMIN_JS[start:start + 900]
+    assert "e.preventDefault();" in handler
+    assert "e.stopPropagation();" in handler
+
+
+def test_roadmap_feedback_is_visible_while_the_popup_is_open():
+    """#dev-roadmap-msg sits below the board, i.e. behind the popup."""
+    assert "const _roadmapNote = (text, cls = '') =>" in ADMIN_JS
+    assert "el('dev-roadmap-new-msg')" in ADMIN_JS
+    assert 'id="dev-roadmap-new-msg"' in INDEX_HTML
+    # The in-popup line must be inside the modal, not next to the board.
+    assert INDEX_HTML.index('id="dev-roadmap-new-msg"') > INDEX_HTML.index('id="roadmap-new-modal"')
+
+
+def test_sidebar_dots_keep_clear_of_the_border():
+    """Regression, v4.0.2.
+
+    The dots use margin-left:auto to line up in one column. Header-only
+    sections used to carry an invisible chevron that kept them off the edge;
+    dropping it in v4.0 glued them to the border.
+    """
+    css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    block = css[css.index(".sidebar-notif-dot {"):]
+    block = block[:block.index("}")]
+    assert "margin-left: auto;" in block
+    assert "margin-right: 6px;" in block
