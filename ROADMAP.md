@@ -1,132 +1,115 @@
 # Odysseus Roadmap — lebt in /app/data/dev/ROADMAP.md
 
-Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in die Roadmap ein: …"). Der Entwickler liest sie bei JEDEM Start, arbeitet oben nach unten, hakt Erledigtes ab ([x]) und sortiert Neues ein.
+Alessio trägt hier Bugs/Ideen ein (oder diktiert sie dem Entwickler: „trag in die Roadmap ein: …").
+Der Entwickler liest sie bei JEDEM Start und arbeitet oben nach unten.
 
-## v3.1.0 — RELEASED 2026-07-15 (Prod @ e56818e)
-- [x] Versionierung (APP_VERSION 3.1.0) + Kanal-Badge in der Sidebar
-- [x] System-Karte in Settings mit "Update"-Knopf (feat/system-status-card)
-- [x] Create-Folder-Button im Projekt-Ordner-Picker (feat/create-folder-button)
-- [x] Projekt-Standard-Modell inkl. Dropdown-Fix für Gemini (feat/project-default-model)
-- [x] Anthropic-History-Caching (feat/anthropic-history-caching) — größter Kostenhebel
-- [x] Fix: Stale Pending-Draft schluckte Sends (fix/pending-chat-precedence)
-- [x] Fix: Workspace-Pill klebte nach Projekt-Chat (fix/workspace-switch-leak)
-- [x] Fix: Queued Task-Runs überleben Foreground-Aktivität (fix/queued-task-abort)
+Marker: `[?]` under consideration · `[ ]` planned · `[~]` in progress · `[!]` ready to test · `[x]` done.
+Status NUR über `dev.sh roadmap-status <rm-id> <marker>` setzen — die stabile ID steht auf einer
+Folgezeile, ein sed trifft den falschen Eintrag.
 
-## v3.2.0 — RELEASED 2026-07-16 (Prod @ b76be32)
-- [x] Entwickler-Seite, Projekt-Panel, Entwickler-Werkzeuge und Tool-Output-Trunkierung
-- [x] Chroma-Collection-Präfix pro Instanz, Kalender-API-Base-Fix und E-Mail-Papierkorb
-- [x] Pomodoro-Einzel-Einträge/Statistik/Skip-Break und stabile manuelle Task-Runs
+Aufgeräumt am 2026-07-31: ausgelieferte Runden stehen unten als je eine Zeile; die Details dazu
+im Setup-Repo (README 6a–6l) und in der Git-Historie. Sicherung der alten Fassung:
+`data/backups/ROADMAP-2026-07-31-vor-aufraeumen.md`.
 
-## v3.3 — RELEASED 2026-07-16
-- [x] Beta-Start/Stop auf der Entwickler-Seite und Version-Switcher mit Reload-Banner
-- [x] SSH-Quoting-Hotfix und Warnung für alte Switch-Ziele
-- [x] Entwickler-Persona als Builder-Projekt-Template
-
-## v3.5 — RELEASED 2026-07-17 (Prod @ c496c42)
-- [x] Parallele Tool-Calls, Kontext-Kompaktierung und Claude-5-Kontextfenster-Fix
-- [x] Projekt-Chat-Sortierung, Endpoint-Umbenennung und Quote-and-Ask
-- [x] Korrektur-Memories, einklappbare Roadmap und ask_user-Options-Fix
-
-## v3.6 — RELEASED 2026-07-21 (Prod @ c0a708d)
-- [x] Projekt-Preset-Scope, E-Mail-Stale-Serve und ask_user-Options-Layout
-- [x] Notes für schmale Panels, TickTick-UI und Projekt-von-Neuem-Chat-Fix
-- [x] Pomodoro-Sounds, Hauptnavigation, vorzeitiges Buchen und Kalender-Logging
-- [x] Roadmap-Screenshots, Sidebar-Dot-Fix, PDF-Markierungen und PDF-Textmarker
-- [x] Delegate-Worker, Ntfy-Integration, Shopping-&-Recipes-Modul und globale Chat-Suche
-- [x] Simple-UI-Modus, deutsche Kernoberfläche, Persona-Skills/-Prompt-Dateien und Mobile-Politur
-- [x] Persistente PDF-Markierungen und PC-Terminal-Zugriff als umgesetzt dokumentiert
-
-## v3.7 — RELEASED 2026-07-22 (Prod @ b4dbb84)
-- [x] Model-Picker-/Modell-Call-Refactors, Button-min-height, E-Mail-Filter-Tabelle und serverseitige Projekt-Presets
-- [x] Notes-Event-Delegation, zentraler Upload-Bild-Regex und Prefs-Store-Refactor
-- [x] Vollständiger eager-modulepreload
-- [x] Sortierbare Todos, Fenster-Positions-Restore und Listen-Umbenennung
-- [x] Pomodoro-Presets/Trink-Tracker, Skill-Paket und Sticky-Session-Tools-Fix
-
-## v3.8 — RELEASED 2026-07-23 (Prod @ 93789ad)
-- [x] SRS-/Flashcard-Modul als eigener machbarer RemNote-Kern
-- [x] Separate Accounts als eigene Beta-Runde
-- [x] Pomodoro-UI-Redesign
-- [x] Upstream-Merge-Check als Runden-Routine
-
-## v3.9.0 — RELEASED 2026-07-28 (Prod @ 3427f75)
-
-### Ausgeliefert
-- [x] **Get better:** Nachrichtenaktion neben Rewrite, Explain,
-      Generate from here und Fork. Startet im Hintergrund einen Fork mit
-      vordefiniertem Verbesserungsauftrag und analysiert Halluzinationen,
-      unnötige Nachfragen und Tool-Aufrufe, um konkrete Skill- und
-      Entwicklerverbesserungen vorzuschlagen.
-- [x] **Developer als Hauptseite:** steht für Admins direkt in der Sidebar
-      wie Shopping und RemNote. Roadmap und Deployment-Steuerung verwenden
-      ein eigenes großes, dockbares Fenster; Settings → Developer leitet
-      dorthin weiter. Der bestehende Panel-Code wird verschoben statt
-      dupliziert.
-- [x] **Roadmap-Build-Pipeline:** Listen-/Board-Ansicht, strukturierte
-      Feature-Definitionen, Modellwahl, verknüpfte Builder-Chats,
-      Build-Status und Beta-Abnahme.
-- [x] **RemNote-Hauptseite und Offline-Puffer:** Bridge-Status, gepufferte
-      Karten, erneutes Senden, Bearbeiten und Debug-Informationen direkt
-      in Odysseus.
-- [x] **Notes-WYSIWYG:** Markdown-Roundtrip, Listen und Checklisten,
-      Überschriften, Trennlinien, Live-LaTeX-Inseln und filterbewusstes
-      Quick-Add.
-- [x] **Chat-/UI-Politur:** Quote-and-Ask übernimmt wieder die originale
-      LaTeX-Quelle, New Chat löst das aktive Projekt korrekt und minimierte
-      Fensterchips sind sortierbar und an benannte Positionen andockbar.
-- [x] **Release-Prüfung:** Beta #35/#36 auf Desktop und Mobile geprüft;
-      17 fokussierte Tests sowie Syntaxchecks grün. Gesamtlauf:
-      4610 bestanden, 3 übersprungen; 9 bekannte unabhängige Alt-Fehler
-      unverändert.
-
-### Chat-Chaining & Token-Effizienz
-- [ ] **Chat-Chaining / kompakte Delegation:** Chats bzw. spezialisierte Worker können Aufgaben übernehmen; an den Hauptchat gehen nur Ergebnis, Belege und ein kompaktes Hand-off statt des vollständigen Verlaufs zurück.
-- [ ] **Token-Budget & Kontext-Effizienz:** Budgets pro Aufgabe, komprimierte Übergaben, Code-/Projekt-Map, gezielte Ausgaben, Caching häufiger Architektur-/Git-/Testinformationen und günstige Worker für Extraktion, Suche und Review. **Erste Ausbaustufe gebaut:** Delegate-Worker begrenzt Task- und Antwortbudget, kürzt große Hand-offs transparent und zeigt beide Budgets in Settings → Delegate Worker; weiter offen: projektweite Maps/Caches und Worker-Routing.
-
-### Weiter offen nach Release
-- [ ] **RemNote-Puffer-Flush als Scheduled Task:** den vorhandenen Task über die UI anlegen (kein Code; Prompt im Setup-Repo).
-- [ ] **Agent-Modus-Bug:** Neuer Chat mit aktivem Agent-Modus meldet gelegentlich „kein Agent-Modus"; Reproduktion mit Screenshot, Wortlaut und Ablauf sammeln.
-- [ ] **Doppelte Chat-Module:** `chat.js` und `chatRenderer.js` werden einmal über Root-Script-Tags mit Query und zusätzlich per Import geladen; Verhalten prüfen und doppelte Modulinstanzen entfernen.
-- [ ] **Altbestand-Tests prüfen:** `test_email_linkify_security_js`, `test_security_regressions::test_email_thread_rendering_sanitizes_body_html`, `test_preset_local_storage_js` und `test_security_regressions::test_gmail_mcp_preset_uses_contained_oauth_paths` — echte Regression oder veraltete Tests klären.
-
-### Neue Features
-- [ ] **Server-Live-Ansicht für Nicht-Admins:** Die sichere CPU-/RAM-/Disk-
-      Ansicht ist in v3.10 auf der Developer-Seite für Admins umgesetzt.
-      Offen bleibt eine reduzierte, rollenbasierte Ansicht für Nicht-Admins.
-- [ ] **Modell-/API-Preisvergleich:** Kosten und Eignung der integrierten Modelle/Anbieter (z. B. Gemini, Claude, ChatGPT) transparent vergleichen, besonders für Physik/Mathe.
-- [x] **RemNote-Offlinespeicher:** als RemNote-Hauptseite mit Bridge-Status,
-      Offline-Puffer und gezieltem erneutem Senden umgesetzt.
-
-## v3.10 — BETA / TESTBEREIT 2026-07-29
-
-- [!] **Developer-Live-Status und Roadmap-Politur:** CPU/RAM/Hoststatus sicher
-      und live anzeigen (5-Sekunden-Aktualisierung plus Refresh), Board-/Listen-
-      Werkzeugleiste dynamisch gestalten und die Erledigt-Spalte auf die letzten
-      zehn Einträge begrenzen.
-- [!] **Roadmap-Versionen und Workflow:** Zielversion pro Eintrag bearbeitbar
-      machen, alle geplanten Einträge gesammelt einer Version zuweisen und einen
-      gestarteten Build sofort als „In Arbeit“ markieren.
-- [!] **Minimierte Fenster im Chat halten:** frei verschiebbare Fensterchips
-      ausschließlich innerhalb des Chatbereichs platzieren, bei Layoutänderungen
-      neu begrenzen und Abstände sowie Reaktionszeit beim Minimieren korrigieren.
-- [!] **Notes-Tags auswählbar machen:** vorhandene Tags als Mehrfachauswahl und
-      Chips anbieten sowie neue Tags direkt hinzufügen, ohne das kompatible
-      gespeicherte Label-Format zu verändern.
-- [!] **Kompakter Pomodoro-Fokusmodus nach TickTick:** Always-on-top-PiP als
-      kleines Fokusfenster mit Start/Pause, Restzeit, Tages-/Wochenfokus und
-      einklappbarer Minimalansicht; bei fehlender Fensterpositionierungs-
-      Berechtigung einen kompakten Browser-Fallback verwenden.
-
-Gate 1: Implementierung und Code-Review abgeschlossen (`f31ad16` bis
-`639e268`). Beta 3.10.0 ist über Tailscale HTTPS erreichbar. Auf dem
-aktuellen Beta-Stand sind 45 relevante UI-, Backend- und
-MCP-Regressionstests grün. Der zuletzt vollständige Lauf auf `f31ad16`
-bestand 4.641 Tests und übersprang 4; sechs unabhängige
-Alt-/Umgebungstests bleiben separat zu prüfen. Bedienung, Architektur,
-Deployment, Rollback und Testcheckliste stehen in
-[`docs/v3.10-beta.md`](docs/v3.10-beta.md).
-
-## Später / Ideen-Speicher
-- [ ] **Selbst-Loop-Retry:** Odysseus-Entwickler soll eine Runde bevorzugt selbst bauen lassen; zuvor verworfen, weil der Selbst-Loop die Arbeit wirklich selbst leisten soll.
+## v4.1 (offenes Paket)
+- [?] Bug (Altbestand): chat.js und chatRenderer.js werden DOPPELT
+      <!-- ody:id=rm-e7e7df2e-efc -->
+      **Beschreibung:** geladen — einmal als Root-Script-Tag mit ?v=20260630…-Query,
+      einmal nackt über Imports anderer Module = ZWEI Modul-Instanzen
+      (Seiteneffekte laufen doppelt). Fix wäre: stale ?v=-Queries von
+      den Tags entfernen (Verhalten vorher prüfen!). Die
+      modulepreload-Liste bildet den Ist-Zustand ab (beide URLs).
+      **Version:** v4
+- [?] Tests (Altbestand, schlagen schon auf dev fehl):
+      <!-- ody:id=rm-a4e5227f-d3b -->
+      **Beschreibung:** test_email_linkify_security_js (href-Escaping),
+      test_security_regressions::test_email_thread_rendering_sanitizes_
+      body_html, test_preset_local_storage_js,
+      test_security_regressions::test_gmail_mcp_preset_uses_contained_
+      oauth_paths — prüfen: echte Regression oder veralteter Test.
+      (Volle Suite auf Windows-PC hat zusätzlich ~129 Umgebungs-Fails
+      — maßgeblich ist der Lauf im Container.)
+      **Version:** v4
+- [?] Aus v3.6 weiter offen: RemNote-Puffer-Flush-Task in der UI
+      <!-- ody:id=rm-6807d51d-0e8 -->
+      **Beschreibung:** anlegen; vager Agent-Modus-Bug (Repro sammeln).
+      **Version:** v4
+- [?] **Feature:** preis verglaich von api, also wie integlietn, wie interligent in pyhsi wie viel kosten das modell, also zwischen gemini claude und chapgt (2026-07-22)
+      <!-- ody:id=rm-18e2110b-4ca -->
+      **Version:** v4
+- [?] **Feature:** developer road map delit butten fals ich eine feuter nicht machen will
+      <!-- ody:id=rm-ea3ed91d-6f2 -->
+      **Version:** v4
+- [ ] **Check-Ritual findet keine undefinierten Variablen**: `node --check`
+      <!-- ody:id=rm-bd587e07-14e -->
+      **Beschreibung:** prüft nur Syntax — der `modal is not defined`-Bug lebte deshalb
+      unbemerkt im Repo. Vorschlag: ESLint mit `no-undef` (nur diese Regel,
+      keine Style-Diskussion) in `dev.sh check` aufnehmen. Ein Lauf hätte
+      diesen Bug und seine Geschwister sofort gezeigt.
+      **Version:** v4
+- [ ] **Keine Tests für notesRichEditor**: der Roundtrip md → Editor-HTML
+      <!-- ody:id=rm-1da50488-6e7 -->
+      **Beschreibung:** → md ist gut automatisierbar (Stabilität über N Zyklen, Mathe/
+      Checkboxen/Fences verbatim). Wäre die billigste Absicherung gegen
+      Datenverlust in Notizen.
+      **Version:** v4
+- [ ] **Mobile ungetestet** in dieser Runde: Insel-Quellbearbeitung und
+      <!-- ody:id=rm-29a3957b-016 -->
+      **Beschreibung:** die Dock-Anker auf Touch (Desktop im Browser verifiziert, 30+ Checks
+      grün). Screenshots vom Handy willkommen.
+      chat.js/chatRenderer.js, die 4 Alt-Test-Fails. Nicht angefasst.
+      **Version:** v4
+- [ ] **Abstände** (Alessio: „die ui mehr platz von unten haben auch auf
+      <!-- ody:id=rm-5153a73d-a6c -->
+      **Beschreibung:** dem handy oben und unten"): Composer klebte am Viewport-Rand → 10 px
+      Luft; auf Mobile wird die Notch-Safe-Area zur ÄUSSEREN Lücke statt
+      das Eingabefeld dicker zu machen, plus etwas mehr Luft zur
+      Titelzeile. Abhaken nach Beta-Test.
+      **Version:** v4
+- [?] **Feature:** Testpunkte direkt an der Roadmap-Karte abhaken (Alessio 2026-07-31)
+      <!-- ody:id=rm-v41-testpunkte -->
+      **Beschreibung:** Statt einer PDF/Datei pro Runde trägt jede Karte ihre eigenen
+      Testpunkte. Der Agent füllt sie beim Erreichen von [!], Alessio hakt sie an der
+      Karte ab. Neues Detailfeld (**Test:** pro Zeile, analog zu Akzeptanzkriterien),
+      Fortschritts-Chip (3/5), Häkchen wird in ROADMAP.md persistiert.
+      **Ziel:** Übersichtlicher als eine separate Datei, die man suchen muss.
+      **Version:** v4.1
+- [?] **Feature:** Server-Live-Ansicht auch für Nicht-Admins
+      <!-- ody:id=rm-v41-serverview-nonadmin -->
+      **Beschreibung:** Die CPU-/RAM-/Disk-Karte ist seit v3.10 für Admins da. Offen
+      bleibt eine reduzierte, rollenbasierte Ansicht.
+      **Version:** v4.1
+- [?] **Bug:** numpy 2.4.6 aus data/local überschattet 2.5.1 aus dem Image
+      <!-- ody:id=rm-v41-numpy-shadow -->
+      **Beschreibung:** /app/.local steht vor den System-site-packages im sys.path des
+      App-Users (27 aktive Mappings, alle numpy). Letzter aktiver Rest des
+      Cookbook-Unfalls vom 08.07. Fix: numpy* aus data/local löschen, Container
+      neu starten, Smoke-Test. NICHT mitten in einer Runde.
+      **Version:** v4.1
 
 ## Eingang (unsortiert — Alessio wirft hier rein)
+
+## Später / Ideen-Speicher
+- [?] Selbst-Loop-Retry: der Odysseus-Entwickler baut eine Runde bevorzugt selbst.
+      <!-- ody:id=rm-later-selfloop -->
+      **Version:** später
+
+## Ausgeliefert — RELEASED (Details im Setup-Repo README 6a–6l)
+- [x] **v4.0** (2026-07-31) Developer-Cycle mit zwei Tracks, Downgrade-Sicherheit + Gate D,
+      Anbieter-Parität ChatGPT/Gemini (Bilder, Tools, Skills), Roadmap-Board mit 5 Zuständen.
+- [x] **v3.10** (2026-07-29) Developer-Live-Status, Roadmap-Versionen, Notes-Tags, Pomodoro-PiP.
+- [x] **v3.9** (2026-07-28) Notes-WYSIWYG, Developer als Hauptseite, Roadmap-Build-Pipeline,
+      RemNote-Hauptseite mit Offline-Puffer, Get-better-Aktion, Chip-Dock, Quote-Ask-LaTeX.
+- [x] **v3.8** (2026-07-23) SRS-/Flashcard-Modul, separate Accounts, Pomodoro-UI-Redesign,
+      Upstream-Merge-Check als Runden-Routine.
+- [x] **v3.7** (2026-07-22) Code-Qualitäts-Runde, modulepreload, Notes-Sortierung,
+      Fenster-Positionen, Pomodoro-Presets + Wasser-Tracker, Skill-Paket.
+- [x] **v3.6** (2026-07-21) Notes-Master-Detail, Shopping & Recipes, Delegate, ntfy,
+      PDF-Markierungen, Simple-UI-Modus, i18n EN/DE.
+- [x] **v3.5** (2026-07-17) Parallele Tool-Calls, Kontext-Kompaktierung, Quote-and-Ask,
+      Korrektur-Memories, Persona „Entwickler".
+- [x] **v3.4** (2026-07-16) Switcher-Warnung bei alten Zielen.
+- [x] **v3.3** (2026-07-16) Beta-Start/Stop-Knöpfe, Version-Switcher, Reload-Banner.
+- [x] **v3.2** (2026-07-16) Entwickler-Seite, Projekt-Panel, Pomodoro-Statistik, Task-Fixes.
+- [x] **v3.1** (2026-07-15) Versionierung + Kanal-Badge, System-Karte, Anthropic-Caching.
+- [x] **v3.0** (2026-07-14) Self-Improvement-Workflow (WP5), LaTeX, Pomodoro, Projekte.
