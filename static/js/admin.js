@@ -3040,12 +3040,38 @@ const _RM_DETAIL_LABELS = {
   abhängigkeiten: 'dependencies',
   abhaengigkeiten: 'dependencies',
   notizen: 'notes',
+  testpunkte: 'tests',
+  tests: 'tests',
 };
+
+// A test point carries its own checkbox inside the roadmap line:
+//   - [x] Open the Developer page, the board loads
+// Alessio 2026-07-31: "bei den einzelnen Features beim Testen grad Todos machen
+// können was ich testen muss damit ich die dann abhaken kann — ist
+// übersichtlicher als eine Datei immer." Keeping the tick in ROADMAP.md means
+// the developer agent reads the same state Alessio sees, and a pre-4.1 Odysseus
+// still shows the points as an ordinary list instead of losing them.
+const _RM_TEST_RE = /^-?\s*\[([ xX])\]\s*(.*)$/;
+
+function _rmTestPoint(line) {
+  const m = String(line).match(_RM_TEST_RE);
+  if (m) return { text: m[2].trim(), done: m[1].toLowerCase() === 'x' };
+  return { text: String(line).replace(/^-\s+/, '').trim(), done: false };
+}
+
+// Carry ticks across an edit by matching on the text, not the position — the
+// alternative (index) silently moves a tick to a different point as soon as
+// somebody reorders or inserts a line.
+function _mergeTestPoints(next, previous) {
+  const wasDone = new Map((previous || []).map(t => [t.text, t.done]));
+  return next.filter(t => t.text).map(t => ({ text: t.text, done: wasDone.get(t.text) === true }));
+}
 
 function _roadmapDetails(item) {
   const details = {
     id: '', description: '', goal: '', acceptance: '',
-    version: '', priority: 'Normal', dependencies: '', notes: '', screenshots: [],
+    version: '', priority: 'Normal', dependencies: '', notes: '',
+    tests: [], screenshots: [],
   };
   let field = '';
   const legacy = [];
@@ -3060,11 +3086,17 @@ function _roadmapDetails(item) {
       field = _RM_DETAIL_LABELS[label[1].trim().toLowerCase()] || '';
       if (field) {
         const value = label[2].trim();
-        if (value) details[field] = value;
+        if (field === 'tests') {
+          if (value) details.tests.push(_rmTestPoint(value));
+        } else if (value) {
+          details[field] = value;
+        }
         continue;
       }
     }
-    if (field) {
+    if (field === 'tests') {
+      details.tests.push(_rmTestPoint(line));
+    } else if (field) {
       const value = line.replace(/^-\s+/, '').trim();
       details[field] += (details[field] ? '\n' : '') + value;
     } else {
@@ -3107,6 +3139,11 @@ function _roadmapItemBlock(mark, title, details, images = []) {
     block.push('      **Akzeptanzkriterien:**');
     for (const criterion of criteria) block.push(`        - ${criterion}`);
   }
+  const tests = Array.isArray(details.tests) ? details.tests.filter(t => t && t.text) : [];
+  if (tests.length) {
+    block.push('      **Testpunkte:**');
+    for (const t of tests) block.push(`        - [${t.done ? 'x' : ' '}] ${String(t.text).trim()}`);
+  }
   addText('Version', details.version);
   addText('Priorität', details.priority && details.priority !== 'Normal' ? details.priority : '');
   addText('Abhängigkeiten', details.dependencies);
@@ -3125,7 +3162,26 @@ async function _saveItemEdit(item, newTitle, details) {
   // Preserve a legacy title-hash as the new stable ID so an existing build
   // association remains reachable after the first structured edit.
   details.id = previous.id || _itemKey(item);
+  // The edit form shows test points as plain lines; the ticks live outside it,
+  // so they have to be carried over here or every edit would clear them.
+  details.tests = _mergeTestPoints(details.tests || [], previous.tests);
   const block = _roadmapItemBlock(mark, newTitle, details, previous.screenshots);
+  lines.splice(item.line, item.endLine - item.line + 1, ...block);
+  const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
+  if (ok) _renderRoadmap();
+  return ok;
+}
+
+// Ticking a box rewrites only that card's block, the same way _setItemStatus
+// rewrites only its marker line — the roadmap file stays the source of truth
+// and two people editing different cards do not clobber each other's lines.
+async function _setTestPoint(item, index, done) {
+  const details = _roadmapDetails(item);
+  if (!details.tests[index]) return false;
+  details.tests[index] = { ...details.tests[index], done };
+  const mark = (_RM_COLS.find(c => c.key === item.status) || { mark: ' ' }).mark;
+  const lines = _roadmapText.split('\n');
+  const block = _roadmapItemBlock(mark, _rmCardText(item), details, details.screenshots);
   lines.splice(item.line, item.endLine - item.line + 1, ...block);
   const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
   if (ok) _renderRoadmap();
@@ -3327,7 +3383,9 @@ function _buildPrompt(item, buildMode) {
       + `1. \`dev.sh start feat/<slug>\`\n`
       + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
       + `3. \`dev.sh ready feat/<slug>\` (pusht auf Beta und hält an).\n`
-      + `4. \`dev.sh roadmap-status ${_itemKey(item)} '!'\`\n`
+      + `4. \`dev.sh roadmap-status ${_itemKey(item)} '!'\` und\n`
+      + `   \`dev.sh roadmap-testpoints ${_itemKey(item)} "..." "..."\` — die\n`
+      + `   Testpunkte gehören an die Karte, damit Alessio sie dort abhakt.\n`
       + `5. Melde Beta-URL und eine kurze Testanleitung — und STOPP.\n`
       + `   Auf der Beta zählt vor allem: stürzt nichts ab, und funktioniert\n`
       + `   der Downgrade-Knopf. Alles andere findet Alessio live auf main.\n`
@@ -3341,6 +3399,7 @@ function _buildPrompt(item, buildMode) {
     + section('Beschreibung', d.description)
     + section('Ziel / Problem', d.goal)
     + section('Akzeptanzkriterien', d.acceptance)
+    + section('Testpunkte', (d.tests || []).map(t => t.text).join('\n'))
     + section('Zielversion', d.version)
     + section('Priorität', d.priority)
     + section('Abhängigkeiten', d.dependencies)
@@ -3458,6 +3517,7 @@ function _cardEditFormHtml(it) {
       <label class="rm-edit-field"><span>Description</span><textarea class="rm-edit-desc" rows="3" placeholder="What should happen?">${esc(d.description)}</textarea></label>
       <label class="rm-edit-field"><span>Goal / Problem</span><textarea class="rm-edit-goal" rows="2" placeholder="Why do we need this?">${esc(d.goal)}</textarea></label>
       <label class="rm-edit-field"><span>Done when …</span><textarea class="rm-edit-acceptance" rows="3" placeholder="One checkable criterion per line">${esc(d.acceptance)}</textarea></label>
+      <label class="rm-edit-field"><span>Test points</span><textarea class="rm-edit-tests" rows="3" placeholder="One thing to click through per line">${esc(d.tests.map(t => t.text).join('\n'))}</textarea></label>
       <div class="rm-edit-grid">
         <label class="rm-edit-field"><span>Priority</span><select class="settings-select rm-edit-priority">
           ${[['Niedrig', 'Low'], ['Normal', 'Normal'], ['Hoch', 'High'], ['Kritisch', 'Critical']].map(([v, label]) => `<option value="${v}"${d.priority === v ? ' selected' : ''}>${label}</option>`).join('')}
@@ -3483,6 +3543,9 @@ function _detailsFromForm(root, prefix = '.rm-edit-') {
     priority: value('priority') || 'Normal',
     dependencies: value('dependencies'),
     notes: value('notes'),
+    // Plain lines in, structured points out. Ticks are merged back in
+    // _saveItemEdit, which is the only place that knows the previous state.
+    tests: value('tests').split('\n').map(_rmTestPoint).filter(t => t.text),
   };
 }
 
@@ -3576,6 +3639,8 @@ function _openDoneView(sections) {
       versionChip.textContent = details.version;
       meta.appendChild(versionChip);
     }
+    const doneTestChip = _testProgressChip(details);
+    if (doneTestChip) meta.appendChild(doneTestChip);
     card.appendChild(meta);
     _appendScreenshots(card, details);
 
@@ -3595,6 +3660,54 @@ function _openDoneView(sections) {
     list.appendChild(card);
   }
   modal.style.display = 'flex';
+}
+
+// One builder for both render sites. Screenshots were once lost precisely
+// because a card detail was built inline in only one of them.
+function _testProgressChip(details) {
+  const tests = details.tests || [];
+  if (!tests.length) return null;
+  const done = tests.filter(t => t.done).length;
+  const chip = document.createElement('span');
+  chip.className = 'rm-chip rm-chip-tests';
+  if (done === tests.length) chip.classList.add('rm-chip-tests-done');
+  chip.textContent = `${done}/${tests.length} tested`;
+  chip.title = tests.map(t => `${t.done ? '✓' : '○'} ${t.text}`).join('\n');
+  return chip;
+}
+
+// Alessio ticks these off while clicking through a finished build, so they sit
+// on the card itself. Real checkboxes rather than click-anywhere rows: the card
+// is draggable between columns, and a stray drag must not tick a test.
+function _appendTestPoints(card, item, details) {
+  const tests = details.tests || [];
+  if (!tests.length) return;
+  const box = document.createElement('div');
+  box.className = 'rm-card-tests';
+  box.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
+  tests.forEach((t, i) => {
+    const row = document.createElement('label');
+    row.className = 'rm-test-row' + (t.done ? ' rm-test-row-done' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!t.done;
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', async () => {
+      cb.disabled = true;
+      // On failure put the box back where it was — a tick that did not reach
+      // ROADMAP.md must not look like it did.
+      if (!await _setTestPoint(item, i, cb.checked)) {
+        cb.checked = !cb.checked;
+        cb.disabled = false;
+      }
+    });
+    const text = document.createElement('span');
+    text.textContent = t.text;
+    row.appendChild(cb);
+    row.appendChild(text);
+    box.appendChild(row);
+  });
+  card.appendChild(box);
 }
 
 // Screenshots used to render only in the list view. With that view gone they
@@ -3694,6 +3807,8 @@ function _renderRoadmapBoard(list, sections) {
           criteriaChip.textContent = `${details.acceptance.split('\n').filter(Boolean).length} criteria`;
           meta.appendChild(criteriaChip);
         }
+        const testChip = _testProgressChip(details);
+        if (testChip) meta.appendChild(testChip);
         if (build) {
           const buildChip = document.createElement('button');
           buildChip.type = 'button';
@@ -3731,6 +3846,7 @@ function _renderRoadmapBoard(list, sections) {
         }
         meta.appendChild(moves);
         card.appendChild(meta);
+        _appendTestPoints(card, it, details);
         _appendScreenshots(card, details);
       };
 
@@ -4258,7 +4374,7 @@ function initDeveloper() {
     });
     fi.click();
   });
-  if (input) input.addEventListener('paste', async (e) => {
+  const _onRoadmapPaste = async (e) => {
     const items = e.clipboardData?.items || [];
     for (const it of items) {
       if (it.kind === 'file' && it.type.startsWith('image/')) {
@@ -4273,7 +4389,18 @@ function initDeveloper() {
         return;
       }
     }
-  });
+  };
+  // Alessio: "grundsaetzlich ueberall [...] copy paste von Bildern zulassen."
+  // Every field of the new-item popup takes a screenshot, not just the title
+  // line — a bug report is usually typed into Description, and pasting there
+  // used to do nothing at all.
+  if (input) input.addEventListener('paste', _onRoadmapPaste);
+  for (const id of [
+    'dev-roadmap-description', 'dev-roadmap-goal', 'dev-roadmap-acceptance',
+    'dev-roadmap-tests', 'dev-roadmap-dependencies', 'dev-roadmap-notes',
+  ]) {
+    el(id)?.addEventListener('paste', _onRoadmapPaste);
+  }
   const doAdd = async () => {
     const text = (input.value || '').trim();
     if (!text && !pendingImgs.length) return;
@@ -4299,6 +4426,7 @@ function initDeveloper() {
       priority: el('dev-roadmap-priority')?.value || 'Normal',
       dependencies: el('dev-roadmap-dependencies')?.value?.trim() || '',
       notes: el('dev-roadmap-notes')?.value?.trim() || '',
+      tests: (el('dev-roadmap-tests')?.value || '').split('\n').map(_rmTestPoint).filter(t => t.text),
     };
     const title = `**${kind}:** ${text || '(Screenshot)'}`;
     // The chosen column decides the marker. Default is Under consideration:
@@ -4326,6 +4454,7 @@ function initDeveloper() {
       for (const id of [
         'dev-roadmap-description', 'dev-roadmap-goal', 'dev-roadmap-acceptance',
         'dev-roadmap-version', 'dev-roadmap-dependencies', 'dev-roadmap-notes',
+        'dev-roadmap-tests',
       ]) {
         const control = el(id);
         if (control) control.value = '';

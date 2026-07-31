@@ -41875,6 +41875,22 @@ body.theme-frosted .modal {
   cursor: zoom-in; opacity: 0.75;
 }
 .rm-card-shot:hover { opacity: 1; }
+/* Test points sit on the card so Alessio can tick them off while clicking
+   through a build, instead of hunting for a checklist file. */
+.rm-card-tests { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
+.rm-test-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 10px;
+  line-height: 1.35;
+  opacity: 0.8;
+  cursor: pointer;
+}
+.rm-test-row input { margin: 1px 0 0; width: 11px; height: 11px; accent-color: var(--accent, var(--red)); cursor: pointer; }
+.rm-test-row-done span { text-decoration: line-through; opacity: 0.55; }
+.rm-chip-tests { border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border)); opacity: 0.75; }
+.rm-chip-tests-done { color: var(--accent, var(--red)); opacity: 1; }
 /* Done view — a flat history list, not a fifth column. */
 .rm-done-list { display: flex; flex-direction: column; gap: 6px; }
 .rm-done-list .rm-card { cursor: default; }
