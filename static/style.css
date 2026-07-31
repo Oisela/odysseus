@@ -398,6 +398,29 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0; opacity: 0.5;
     }
+    /* Doc indicator dropdown (#doc-indicator-btn / #doc-indicator-menu) reuses
+       .export-dropdown-menu for the shared panel chrome (position, border,
+       shadow, closeAllPopups() integration) but rows get their own class
+       instead of .export-dropdown-item — that class is swept by i18n.js's
+       exact-match text translator (ROOTS list), and document titles are user
+       content, not UI copy that should ever be translated. */
+    .doc-indicator-item {
+      padding: 6px 8px; font-size: 11px; cursor: pointer;
+      border-radius: 6px; color: var(--fg); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 240px;
+      display: flex; align-items: center; gap: 10px;
+      transition: background 0.1s;
+    }
+    .doc-indicator-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .doc-indicator-item .dropdown-icon {
+      width: 14px; height: 14px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; opacity: 0.5;
+    }
+    .doc-indicator-item.doc-indicator-empty {
+      cursor: default; opacity: 0.55;
+    }
+    .doc-indicator-item.doc-indicator-empty:hover { background: none; }
     /* On mobile the chat-header export dropdown was cramped — items
        were 11px font with 6px padding. Bump to readable touch targets:
        larger min-width, taller rows, bigger icons + text. */

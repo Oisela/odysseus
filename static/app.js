@@ -2020,12 +2020,90 @@ function initializeEventListeners() {
     });
   }
 
-  // Document indicator button (shown outside overflow when docs exist)
+  // Document indicator button (shown outside overflow when docs exist).
+  // Deliberately does NOT delegate to overflow-doc-btn.click() (which just
+  // pops the panel open on the last-active doc) — a session switch must
+  // never yank the panel open uninvited (see the restoreMode contract in
+  // document.js loadSessionDocs). Instead this opens a picker, mirroring
+  // #export-dl-btn / #export-dropdown-menu exactly: same fixed positioning,
+  // same closeAllPopups()/Escape/outside-click integration. The user's click
+  // on a row is the one explicit "open" action.
   const docIndicatorBtn = el('doc-indicator-btn');
-  if (docIndicatorBtn) {
-    docIndicatorBtn.addEventListener('click', () => {
-      const ob = el('overflow-doc-btn');
-      if (ob) ob.click();
+  const docIndicatorMenu = el('doc-indicator-menu');
+  if (docIndicatorBtn && docIndicatorMenu) {
+    const _docRowIcon = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>';
+
+    // The internal docs map (documentModule.getDocs()) is normally kept in
+    // sync by loadSessionDocs(), but that only runs 300ms after a session
+    // switch (sessions.js) — the indicator button itself becomes `.visible`
+    // synchronously off session-list metadata, so a fast click can beat the
+    // timer and find the map empty or stale for this session. Refresh it
+    // straight from the documents API before rendering, via addDocToTabs()
+    // (the same helper loadSessionDocs uses) so we don't duplicate entries
+    // and don't touch panel-open state or the active doc.
+    async function _refreshDocIndicatorMap(sessionId) {
+      if (!sessionId || !documentModule.addDocToTabs || !documentModule.getDocs) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/documents/${sessionId}`);
+        const allDocs = await res.json();
+        const docsMap = documentModule.getDocs();
+        for (const doc of allDocs) {
+          if (doc.is_active && !docsMap.has(doc.id)) documentModule.addDocToTabs(doc, sessionId);
+        }
+      } catch (e) {
+        console.warn('Failed to refresh doc indicator list:', e);
+      }
+    }
+
+    function _renderDocIndicatorMenu(sessionId) {
+      docIndicatorMenu.innerHTML = '';
+      const docsMap = documentModule.getDocs ? documentModule.getDocs() : new Map();
+      const rows = [...docsMap.values()].filter(d => !sessionId || d.sessionId === sessionId);
+      if (rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'doc-indicator-item doc-indicator-empty';
+        empty.textContent = 'No files in this chat';
+        docIndicatorMenu.appendChild(empty);
+        return;
+      }
+      rows.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'doc-indicator-item';
+        item.innerHTML = _docRowIcon + `<span>${uiModule.esc(doc.title || 'Untitled')}</span>`;
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          docIndicatorMenu.classList.remove('open');
+          if (documentModule.openPanel) documentModule.openPanel();
+          if (documentModule.switchToDoc) documentModule.switchToDoc(doc.id);
+        });
+        docIndicatorMenu.appendChild(item);
+      });
+    }
+
+    docIndicatorBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (docIndicatorMenu.classList.contains('open')) {
+        docIndicatorMenu.classList.remove('open');
+        return;
+      }
+      window.closeAllPopups();
+      const sessionId = sessionModule.getCurrentSessionId();
+      await _refreshDocIndicatorMap(sessionId);
+      _renderDocIndicatorMenu(sessionId);
+      // Move to body so it's not affected by ancestor transforms, same as
+      // the export dropdown.
+      if (docIndicatorMenu.parentElement !== document.body) document.body.appendChild(docIndicatorMenu);
+      const rect = docIndicatorBtn.getBoundingClientRect();
+      docIndicatorMenu.style.top = (rect.bottom + 4) + 'px';
+      docIndicatorMenu.style.left = 'auto';
+      docIndicatorMenu.style.right = (window.innerWidth - rect.right) + 'px';
+      docIndicatorMenu.classList.add('open');
+    });
+    document.addEventListener('click', () => docIndicatorMenu.classList.remove('open'));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && docIndicatorMenu.classList.contains('open')) {
+        docIndicatorMenu.classList.remove('open');
+      }
     });
   }
 
