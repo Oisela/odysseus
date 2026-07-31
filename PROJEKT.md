@@ -20,5 +20,8 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
 ## Stand
 
 - Versionierung: APP_VERSION auf dev = offenes Paket; Alessio zählt 3.1, 3.2, …
+- Developer → Direct bugfix erstellt einen vorbereiteten Builder-Chat, der
+  den bestehenden Bug-Track (`fix/*` → `dev.sh bugfix` → `finish`) ohne Beta
+  nutzt; die Gate-Frage bleibt im Chat sichtbar.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).

@@ -4437,8 +4437,63 @@ function _initBetaButtons() {
   });
 }
 
+function _initDirectMainButton() {
+  const btn = el('dev-direct-main-btn');
+  const input = el('dev-direct-main-summary');
+  const msg = el('dev-direct-main-msg');
+  if (!btn || !input) return;
+  const setMsg = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = ok ? 'admin-success' : 'admin-error';
+  };
+  const submit = async () => {
+    const summary = input.value.trim();
+    if (summary.length < 3) {
+      setMsg('Enter a short bugfix summary first.', false);
+      input.focus();
+      return;
+    }
+    btn.disabled = input.disabled = true;
+    setMsg('', true);
+    try {
+      const projectsMod = await import('./projects.js');
+      if (!projectsMod.ensureDeveloperProject || !projectsMod.startProjectChat) {
+        throw new Error('Developer chat setup is unavailable');
+      }
+      const builder = await projectsMod.ensureDeveloperProject();
+      settingsModule.close();
+      await projectsMod.startProjectChat(builder.id);
+      if (typeof window.__odysseusPrepareDeveloperMode !== 'function') {
+        throw new Error('Developer mode controls are not ready');
+      }
+      window.__odysseusPrepareDeveloperMode();
+      const prompt = `Behebe diesen Bug an Odysseus und rolle ihn über den BUG-Track direkt auf main aus: ${summary}\n\n`
+        + `Arbeite autonom bis zur Gate-Frage. Nutze fix/<slug>, dev.sh check und relevante pytest. `
+        + `Frage mich dann genau einmal: "Bugfix <slug> direkt auf main?" Erst nach meinem Ja `
+        + `dev.sh bugfix fix/<slug>, danach dev.sh finish und den Roadmap-Status aktualisieren. Keine Beta.`;
+      const chatMod = await import('./chat.js');
+      const textarea = el('message-input');
+      if (!textarea || !chatMod.handleChatSubmit) throw new Error('Chat composer is unavailable');
+      textarea.value = prompt;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      await chatMod.handleChatSubmit();
+      input.value = '';
+      if (uiModule?.showToast) uiModule.showToast('Direct bugfix sent to the Builder.');
+    } catch (error) {
+      setMsg('Could not start the direct bugfix: ' + error.message, false);
+      btn.disabled = input.disabled = false;
+    }
+  };
+  btn.addEventListener('click', submit);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); submit(); }
+  });
+}
+
 function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
+  _initDirectMainButton();
   const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
   const imgBtn = el('dev-roadmap-img');
   const detailsBtn = el('dev-roadmap-details'), detailsPanel = el('dev-roadmap-new-details');
