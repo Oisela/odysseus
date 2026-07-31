@@ -2876,7 +2876,7 @@ function initializeEventListeners() {
   // (Alessio 2026-07-21).
   const UI_SIMPLE_OFF = [
     'projects-section', 'email-section', 'models-section',
-    'tool-pomodoro', 'tool-compare', 'tool-cookbook', 'tool-research',
+    'tool-pomodoro', 'tool-remnote', 'tool-compare', 'tool-cookbook', 'tool-research',
     'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks',
     'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
     'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
