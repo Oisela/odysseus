@@ -20,5 +20,11 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
 ## Stand
 
 - Versionierung: APP_VERSION auf dev = offenes Paket; Alessio zählt 3.1, 3.2, …
+- Developer → Direct bugfix erstellt einen vorbereiteten Builder-Chat, der
+  den bestehenden Bug-Track (`fix/*` → `dev.sh bugfix` → `finish`) ohne Beta
+  nutzt; die Gate-Frage bleibt im Chat sichtbar.
+- Roadmap → Build bietet denselben direkten Bugfix als dritte Workflow-Option
+  „Fix bug directly on main“ an; sie erzwingt den Bug-Track auch für falsch
+  oder noch als Feature klassifizierte Karten.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).

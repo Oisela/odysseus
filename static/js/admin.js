@@ -3368,10 +3368,11 @@ function _buildPrompt(item, buildMode) {
   const kind = _rmItemKind(item);
   const track = _rmTrackForKind(kind);
   const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
+  const directBugfix = buildMode === 'direct-bugfix';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
     : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
-  const workflow = track === 'bug'
+  const workflow = (directBugfix || track === 'bug')
     ? `**Track BUG — direkt auf main, ohne Beta.**\n`
       + `1. \`dev.sh start fix/<slug>\`\n`
       + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
@@ -3499,6 +3500,7 @@ function _cardBuildFormHtml() {
       <label class="rm-field"><span>Workflow</span>
         <select class="settings-select rm-build-mode">
           <option value="build">Build autonomously up to beta</option>
+          <option value="direct-bugfix">Fix bug directly on main</option>
           <option value="plan">Plan and ask first</option>
         </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
@@ -4437,8 +4439,63 @@ function _initBetaButtons() {
   });
 }
 
+function _initDirectMainButton() {
+  const btn = el('dev-direct-main-btn');
+  const input = el('dev-direct-main-summary');
+  const msg = el('dev-direct-main-msg');
+  if (!btn || !input) return;
+  const setMsg = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.className = ok ? 'admin-success' : 'admin-error';
+  };
+  const submit = async () => {
+    const summary = input.value.trim();
+    if (summary.length < 3) {
+      setMsg('Enter a short bugfix summary first.', false);
+      input.focus();
+      return;
+    }
+    btn.disabled = input.disabled = true;
+    setMsg('', true);
+    try {
+      const projectsMod = await import('./projects.js');
+      if (!projectsMod.ensureDeveloperProject || !projectsMod.startProjectChat) {
+        throw new Error('Developer chat setup is unavailable');
+      }
+      const builder = await projectsMod.ensureDeveloperProject();
+      settingsModule.close();
+      await projectsMod.startProjectChat(builder.id);
+      if (typeof window.__odysseusPrepareDeveloperMode !== 'function') {
+        throw new Error('Developer mode controls are not ready');
+      }
+      window.__odysseusPrepareDeveloperMode();
+      const prompt = `Behebe diesen Bug an Odysseus und rolle ihn über den BUG-Track direkt auf main aus: ${summary}\n\n`
+        + `Arbeite autonom bis zur Gate-Frage. Nutze fix/<slug>, dev.sh check und relevante pytest. `
+        + `Frage mich dann genau einmal: "Bugfix <slug> direkt auf main?" Erst nach meinem Ja `
+        + `dev.sh bugfix fix/<slug>, danach dev.sh finish und den Roadmap-Status aktualisieren. Keine Beta.`;
+      const chatMod = await import('./chat.js');
+      const textarea = el('message-input');
+      if (!textarea || !chatMod.handleChatSubmit) throw new Error('Chat composer is unavailable');
+      textarea.value = prompt;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      await chatMod.handleChatSubmit();
+      input.value = '';
+      if (uiModule?.showToast) uiModule.showToast('Direct bugfix sent to the Builder.');
+    } catch (error) {
+      setMsg('Could not start the direct bugfix: ' + error.message, false);
+      btn.disabled = input.disabled = false;
+    }
+  };
+  btn.addEventListener('click', submit);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); submit(); }
+  });
+}
+
 function initDeveloper() {
   if (!el('settings-dev-status-card')) return;
+  _initDirectMainButton();
   const addBtn = el('dev-roadmap-add'), input = el('dev-roadmap-new'), typeSel = el('dev-roadmap-type');
   const imgBtn = el('dev-roadmap-img');
   const detailsBtn = el('dev-roadmap-details'), detailsPanel = el('dev-roadmap-new-details');
