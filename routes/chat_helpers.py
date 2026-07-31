@@ -393,7 +393,10 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
         try:
             from src.tool_execution import _resolve_tool_path
 
-            return _resolve_tool_path(path) == os.path.realpath(path)
+            # write=False mirrors read_file exactly: this predicate exists to
+            # promise the model a path it can open, so it has to move with the
+            # read rules, not the stricter write ones.
+            return _resolve_tool_path(path, write=False) == os.path.realpath(path)
         except Exception:
             return False
 

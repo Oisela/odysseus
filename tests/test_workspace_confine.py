@@ -112,17 +112,72 @@ async def test_read_write_edit_confined_e2e(ws, admin):
     with open(os.path.join(ws, "f.txt")) as f:
         assert f.read() == "baz bar"
 
-    # outside the workspace is rejected, and nothing is created
+    # writing outside the workspace is rejected, and nothing is created
     outside = tempfile.mkdtemp()
-    of = os.path.join(outside, "secret.txt")
-    with open(of, "w") as f:
-        f.write("nope")
-    _, r = await execute_tool_block(_block("read_file", of), owner="a", workspace=ws)
-    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
     escape = os.path.join(outside, "_esc.txt")
     _, r = await execute_tool_block(_block("write_file", f"{escape}\nx"), owner="a", workspace=ws)
     assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
     assert not os.path.exists(escape)
+
+    # reading outside every root is still refused — opening reads to the data
+    # dir (v4.1) widened the read roots, it did not remove them.
+    _, r = await execute_tool_block(_block("read_file", "/etc/hosts"), owner="a", workspace=ws)
+    assert r["exit_code"] == 1
+
+
+@pytest.fixture
+def data_dir(monkeypatch, tmp_path):
+    """A stand-in DATA_DIR holding two sibling project folders.
+
+    _tool_path_roots imports DATA_DIR inside the function, so patching the
+    constant is enough to redirect the allowlist for a test.
+    """
+    root = tmp_path / "data"
+    (root / "projectA").mkdir(parents=True)
+    (root / "projectB").mkdir(parents=True)
+    monkeypatch.setattr("src.constants.DATA_DIR", str(root))
+    return root
+
+
+@pytest.mark.asyncio
+async def test_a_project_reads_its_neighbours_but_writes_only_at_home(data_dir, admin):
+    """Alessio: assigned folders must not wall a project off from the files.
+
+    Reading reaches the whole data dir; writing stays in the workspace. Read
+    access is deliberately not a foothold — edit_file is a write.
+    """
+    home = str(data_dir / "projectA")
+    other = data_dir / "projectB" / "shared.md"
+    other.write_text("from the other project")
+
+    _, r = await execute_tool_block(_block("read_file", str(other)), owner="a", workspace=home)
+    assert r["exit_code"] == 0 and "from the other project" in r["output"]
+
+    created = data_dir / "projectB" / "new.md"
+    _, r = await execute_tool_block(_block("write_file", f"{created}\nx"), owner="a", workspace=home)
+    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+    assert not created.exists()
+
+    _, r = await execute_tool_block(
+        _block("edit_file", json.dumps(
+            {"path": str(other), "old_string": "other", "new_string": "OTHER"})),
+        owner="a", workspace=home,
+    )
+    assert r["exit_code"] == 1
+    assert other.read_text() == "from the other project"
+
+
+@pytest.mark.asyncio
+async def test_a_relative_read_still_means_my_own_folder(data_dir, admin):
+    """Relative paths must not silently resolve against the server's cwd once
+    reads are allowed to leave the workspace — same base the shell gets."""
+    (data_dir / "projectA" / "mine.md").write_text("home file")
+    (data_dir / "projectB" / "mine.md").write_text("neighbour file")
+
+    _, r = await execute_tool_block(
+        _block("read_file", "mine.md"), owner="a", workspace=str(data_dir / "projectA")
+    )
+    assert r["exit_code"] == 0 and "home file" in r["output"]
 
 
 @pytest.mark.asyncio
@@ -131,13 +186,13 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
         f.write("hello workspace\n")
     _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "hello"})), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "doc.txt" in r["output"]
-    outside = tempfile.mkdtemp()
-    _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "x", "path": outside})), owner="a", workspace=ws)
-    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+    # The default search root is still the workspace — that is what keeps an
+    # unqualified grep about the project instead of about everything. Only a
+    # path the model names explicitly may reach further (read semantics).
     _, r = await execute_tool_block(_block("ls", ""), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "doc.txt" in r["output"]
-    _, r = await execute_tool_block(_block("ls", outside), owner="a", workspace=ws)
-    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+    _, r = await execute_tool_block(_block("ls", "/etc"), owner="a", workspace=ws)
+    assert r["exit_code"] == 1
 
 
 @pytest.mark.asyncio

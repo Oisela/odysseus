@@ -144,7 +144,9 @@ class ReadFileTool:
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
         try:
-            path = _resolve_tool_path(raw_path)
+            # write=False: a project chat may read the whole data dir, not just
+            # its assigned folder. write_file/edit_file keep the default.
+            path = _resolve_tool_path(raw_path, write=False)
         except ValueError as e:
             return {"error": f"read_file: {e}", "exit_code": 1}
         try:
