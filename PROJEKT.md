@@ -26,5 +26,7 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
 - Roadmap → Build bietet denselben direkten Bugfix als dritte Workflow-Option
   „Fix bug directly on main“ an; sie erzwingt den Bug-Track auch für falsch
   oder noch als Feature klassifizierte Karten.
+- Der Chat-Composer behandelt die iPhone-Return-Taste bei nichtleerem Text als
+  Senden; während eines laufenden Streams wird der Text wie bisher eingereiht.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).

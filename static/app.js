@@ -73,7 +73,7 @@ function _isForegroundChatBusy() {
     || (sendBtn && (sendBtn.title || '').toLowerCase().includes('stop'));
 }
 
-function _shouldQueueFromMobileEnter(e, input) {
+function _shouldSubmitFromMobileEnter(e, input) {
   return e.key === 'Enter'
     && !e.shiftKey
     && !e.ctrlKey
@@ -81,7 +81,6 @@ function _shouldQueueFromMobileEnter(e, input) {
     && !e.altKey
     && !e.isComposing
     && _isMobileChatInput()
-    && _isForegroundChatBusy()
     && !!(input && input.value && input.value.trim());
 }
 
@@ -3591,7 +3590,7 @@ function initializeEventListeners() {
     textarea.addEventListener('keydown', (e) => {
       const isMobile = _isMobileChatInput();
 
-      if (_shouldQueueFromMobileEnter(e, textarea) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
+      if (_shouldSubmitFromMobileEnter(e, textarea) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -4217,7 +4216,7 @@ function startOdysseusApp() {
       if (e.defaultPrevented) return;
       const isMobile = _isMobileChatInput();
 
-      if (_shouldQueueFromMobileEnter(e, messageInput) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
+      if (_shouldSubmitFromMobileEnter(e, messageInput) || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile)) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

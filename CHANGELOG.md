@@ -3,6 +3,14 @@
 Alle wichtigen Änderungen dieses Odysseus-Forks werden hier in
 veröffentlichungsnaher Form dokumentiert.
 
+## [Unreleased]
+
+### Behoben
+
+- Die Return-Taste der iPhone-Tastatur sendet nichtleere Chatnachrichten nun
+  wie der Send-Button; während eines laufenden Streams bleibt das Einreihen
+  weiterer Nachrichten erhalten.
+
 ## [3.10.0-beta] - 2026-07-29
 
 ### Hinzugefügt
