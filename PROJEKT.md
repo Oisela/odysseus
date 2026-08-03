@@ -28,5 +28,10 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
   oder noch als Feature klassifizierte Karten.
 - Der Chat-Composer behandelt die iPhone-Return-Taste bei nichtleerem Text als
   Senden; während eines laufenden Streams wird der Text wie bisher eingereiht.
+- Mobile Browser dürfen eine veraltete Modell-Endpoint-ID behalten: Beim
+  Erstellen einer Session fällt Odysseus kontrolliert auf die übermittelte URL
+  zurück; die bestehende Berechtigungsprüfung für rohe URLs bleibt aktiv.
+- Mobile Toasts berücksichtigen die obere und rechte iPhone-Safe-Area, damit
+  Statusmeldungen nicht von Dynamic Island oder Systemstatus überdeckt werden.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).

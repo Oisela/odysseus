@@ -10,6 +10,11 @@ veröffentlichungsnaher Form dokumentiert.
 - Die Return-Taste der iPhone-Tastatur sendet nichtleere Chatnachrichten nun
   wie der Send-Button; während eines laufenden Streams bleibt das Einreihen
   weiterer Nachrichten erhalten.
+- Veraltete Modell-Endpoint-IDs aus mobilen Browserdaten blockieren das
+  Erstellen eines Chats nicht mehr; der sichere URL-Fallback bleibt weiterhin
+  an die bestehende Endpoint-Berechtigungsprüfung gebunden.
+- Mobile Statusmeldungen halten Abstand zur iPhone-Safe-Area und werden nicht
+  mehr von Dynamic Island oder Statussymbolen überdeckt.
 
 ## [3.10.0-beta] - 2026-07-29
 
