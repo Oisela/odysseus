@@ -603,8 +603,7 @@ def setup_chat_routes(
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
         owner = effective_user(request)
-        if _clear_orphaned_session_endpoint(sess, owner=owner):
-            raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+        _clear_orphaned_session_endpoint(sess, owner=owner)
 
         # Empty model: project default first (deliberate choice), then the
         # cached-endpoint recovery for the setup race (Issue #587) — both
@@ -863,8 +862,7 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = effective_user(request)
-            if _clear_orphaned_session_endpoint(sess, owner=owner):
-                raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            _clear_orphaned_session_endpoint(sess, owner=owner)
             # Issue #587: picker shows a model from the endpoint cache but
             # s.model never made it onto the DB row (first-send race after
             # endpoint setup, or a previous endpoint delete/recreate). Pull
