@@ -4305,8 +4305,9 @@ body.bg-pattern-sparkles {
     body:has(.notes-pane.modal-right-docked) .toast.exiting { transform: translateX(120%); }
     @media (max-width: 768px) {
       .toast {
-        top: 12px;
-        right: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
+        right: calc(12px + env(safe-area-inset-right, 0px));
+        left: auto;
         max-width: calc(100vw - 24px);
         /* Receive touches so the swipe-to-dismiss gesture works (desktop keeps
            pointer-events:none so the toast never blocks clicks). Horizontal pan

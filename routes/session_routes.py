@@ -156,6 +156,28 @@ def _reject_raw_endpoint_url_for_non_admin(
         raise HTTPException(403, "Choose a registered model endpoint")
 
 
+def _resolve_saved_endpoint(endpoint_id: str, user: str | None):
+    """Return an enabled, owner-scoped model endpoint or None.
+
+    Mobile browsers can keep a stale model choice across endpoint changes.
+    Callers may safely fall back to the submitted URL when the stale id no
+    longer resolves; the normal raw-URL permission check still applies.
+    """
+    from core.database import ModelEndpoint
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == endpoint_id.strip(),
+            ModelEndpoint.is_enabled == True,
+        )
+        if user:
+            q = owner_filter(q, ModelEndpoint, user)
+        return q.first()
+    finally:
+        db.close()
+
+
 def _persist_session_headers(session_id: str, headers: dict | None) -> None:
     """Persist endpoint auth headers for DB-backed session metadata."""
     db = SessionLocal()
@@ -341,27 +363,17 @@ def setup_session_routes(
         user = effective_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
-        _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+        endpoint_row = None
         if endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
-            from src.auth_helpers import owner_filter
+            endpoint_row = _resolve_saved_endpoint(endpoint_id, user)
+            if not endpoint_row:
+                endpoint_id = ""
+        _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+        if endpoint_row:
             from src.endpoint_resolver import build_chat_url, normalize_base
-            _db = SessionLocal()
-            try:
-                q = _db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == endpoint_id.strip(),
-                    ModelEndpoint.is_enabled == True,
-                )
-                if user:
-                    q = owner_filter(q, ModelEndpoint, user)
-                endpoint_row = q.first()
-                if not endpoint_row:
-                    raise HTTPException(400, "Model endpoint no longer exists")
-                endpoint_base_url = endpoint_row.base_url or ""
-                endpoint_api_key = endpoint_row.api_key or ""
-                endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
-            finally:
-                _db.close()
+            endpoint_base_url = endpoint_row.base_url or ""
+            endpoint_api_key = endpoint_row.api_key or ""
+            endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
 
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")

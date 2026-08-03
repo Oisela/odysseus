@@ -6,7 +6,10 @@ from fastapi import HTTPException
 
 # Import the route helper during collection so sibling session tests that use
 # partial import stubs do not become the first loader of core.session_manager.
-from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
+from routes.session_routes import (
+    _reject_raw_endpoint_url_for_non_admin,
+    _resolve_saved_endpoint,
+)
 
 
 def _request(user, *, admin=False):
@@ -42,6 +45,26 @@ def test_admin_and_registered_endpoint_can_use_endpoint_url():
         "",
         "http://127.0.0.1:8000/v1/chat/completions",
     )
+
+
+def test_stale_saved_endpoint_resolves_to_none(monkeypatch):
+    class _Query:
+        def filter(self, *args):
+            return self
+
+        def first(self):
+            return None
+
+    class _Db:
+        def query(self, *args):
+            return _Query()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("routes.session_routes.SessionLocal", lambda: _Db())
+
+    assert _resolve_saved_endpoint("deleted-endpoint", "alice") is None
 
 
 def test_chat_endpoint_recovery_paths_are_owner_scoped():
