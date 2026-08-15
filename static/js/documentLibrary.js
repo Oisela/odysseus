@@ -55,6 +55,11 @@ let _libraryTotal = 0;
 let _libraryOffset = 0;
 let _docsVisibleLimit = 20;  // chunked reveal (matches the Chats tab's 20)
 let _libraryLanguages = {};
+// Collections, the same free-text grouping Notes already uses for its lists.
+// Documents were a flat pile, which is why a project's files were impossible to
+// find among everything else (Alessio 2026-08-15).
+let _libraryLabels = [];
+let _libraryActiveLabel = null;   // null = all, '__none__' = unfiled only
 let _librarySessionCount = 0;
 let _libraryActiveLanguage = null;
 let _librarySort = 'recent';
@@ -324,6 +329,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     });
     if (_librarySearch) params.set('search', _librarySearch);
     if (_libraryActiveLanguage) params.set('language', _libraryActiveLanguage);
+    if (_libraryActiveLabel) params.set('label', _libraryActiveLabel);
     if (_libraryArchivedView) params.set('archived', 'true');
 
     try {
@@ -339,9 +345,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       _libraryTotal = data.total;
       _libraryLanguages = data.languages;
+      _libraryLabels = data.labels || [];
       _librarySessionCount = data.session_count;
 
       libraryRenderStats();
+      libraryRenderCollectionChips();
       libraryRenderLangChips();
       libraryRenderGrid();
       libraryRenderLoadMore();
@@ -358,6 +366,45 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       el.textContent = `${_libraryTotal} of ${totalAll} document${totalAll !== 1 ? 's' : ''}`;
     } else {
       el.textContent = `${totalAll} document${totalAll !== 1 ? 's' : ''}`;
+    }
+  }
+
+  // Collections get their own row above the language chips: this is how a
+  // project is navigated, while language is a technical facet. Mixing them into
+  // one row made "Ritteressen" compete with "markdown" for the same attention.
+  function libraryRenderCollectionChips() {
+    const wrap = document.getElementById('doclib-collections');
+    if (!wrap) return;
+    wrap.textContent = '';
+    // Nothing filed anywhere yet — an empty row of controls teaches nothing.
+    if (!_libraryLabels.length) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+
+    const chip = (label, text, title) => {
+      const b = document.createElement('button');
+      b.className = 'memory-cat-chip' + (_libraryActiveLabel === label ? ' active' : '');
+      b.textContent = text;
+      if (title) b.title = title;
+      b.addEventListener('click', () => {
+        // Second click on the active collection clears the filter, so you can
+        // always get back out without hunting for an "all" chip.
+        _libraryActiveLabel = _libraryActiveLabel === label ? null : label;
+        libraryFetch(false);
+      });
+      wrap.appendChild(b);
+      return b;
+    };
+
+    const filed = _libraryLabels.reduce((n, l) => n + (l.count || 0), 0);
+    const allChip = chip(null, 'all', 'Every document');
+    allChip.classList.toggle('active', !_libraryActiveLabel);
+    for (const { label, count } of _libraryLabels) chip(label, `${label} (${count})`);
+    const unfiled = Math.max(0, (_libraryTotal || 0) - filed);
+    if (unfiled > 0 || _libraryActiveLabel === '__none__') {
+      chip('__none__', 'no collection', 'Documents not filed into a collection');
     }
   }
 
@@ -1294,6 +1341,44 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
   }
 
+  // Filing a project's documents one at a time is the work nobody does, so the
+  // collection is set in bulk: select them, name the collection once.
+  async function libraryBulkSetLabel() {
+    if (_librarySelectedIds.size === 0) return;
+    const known = _libraryLabels.map(l => l.label).join(', ');
+    const answer = window.prompt(
+      known
+        ? `Move ${_librarySelectedIds.size} document(s) to which collection?\nExisting: ${known}\n(empty = remove from its collection)`
+        : `Move ${_librarySelectedIds.size} document(s) to which collection?\n(empty = remove from its collection)`,
+      _libraryActiveLabel && _libraryActiveLabel !== '__none__' ? _libraryActiveLabel : '',
+    );
+    if (answer === null) return;   // cancelled — leave everything alone
+    const label = answer.trim();
+
+    const ids = [..._librarySelectedIds];
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      try {
+        const res = await fetch(`${API_BASE}/api/document/${id}`, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label }),
+        });
+        if (res.ok) done++; else failed++;
+      } catch { failed++; }
+    }
+    libraryExitSelectMode();
+    await libraryFetch(false);   // refresh the chips: a new collection just appeared
+    if (uiModule) {
+      const where = label ? `“${label}”` : 'no collection';
+      const msg = failed > 0
+        ? `Moved ${done} to ${where} · ${failed} failed`
+        : `Moved ${done} document${done !== 1 ? 's' : ''} to ${where}`;
+      (failed > 0 ? uiModule.showError : uiModule.showToast)(msg);
+    }
+  }
+
   async function libraryBulkExport() {
     if (_librarySelectedIds.size === 0) return;
     // More than 5 → one server-built .zip (mirrors the gallery's bulk export;
@@ -1713,6 +1798,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 <button class="memory-toolbar-btn" id="doclib-tidy-btn" title="Tidy: remove empty / junk / duplicate documents">Tidy</button>
               </div>
               <input type="text" id="doclib-search" placeholder="Search titles &amp; content\u2026" class="memory-search-input" />
+              <div id="doclib-collections" class="doclib-lang-chips doclib-collection-chips"></div>
               <div id="doclib-chips" class="doclib-lang-chips"></div>
             </div>
             <input type="file" id="doclib-file-input" multiple style="display:none" />
@@ -3348,6 +3434,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         return;
       }
       _showLibDropdown(e.currentTarget, [
+        { label: 'Move to collection…', icon: 'open', action: libraryBulkSetLabel },
         { label: _libraryArchivedView ? 'Restore' : 'Archive', icon: _libraryArchivedView ? 'restore' : 'archive', action: libraryBulkArchive },
         { label: 'Clone', icon: 'clone', action: libraryBulkClone },
         { label: 'Export', icon: 'open', action: libraryBulkExport },
