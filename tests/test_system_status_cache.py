@@ -17,6 +17,7 @@ from routes import system_routes
 PROBE_OUTPUT = (
     "commit=cf14443\n"
     "beta_http=1\n"
+    "beta_exposed=1\n"
     "beta_branch=beta-v4.0\n"
     "beta_commit=3edcd91ca\n"
     "beta_in_dev=1\n"
@@ -89,9 +90,47 @@ def test_status_probe_is_one_round_trip_and_never_fetches(monkeypatch):
         "beta_branch": "beta-v4.0",
         "beta_commit": "3edcd91ca",
         "beta_in_dev": True,
+        "beta_exposed": True,
         "dev_version": "4.0.0",
         "reachable": True,
     }
+
+
+def test_a_beta_that_answers_the_host_can_still_be_unreachable(monkeypatch):
+    """Container up, `tailscale serve --https=7001` off — the silent case.
+
+    beta-stop.sh drops that serve and any abort inside downgrade-roundtrip.sh
+    leaves it dropped. The host curl on 127.0.0.1:7001 stays green throughout,
+    so before `beta_exposed` the UI reported a healthy beta while every browser
+    got connection refused (2026-07-20, and unnoticed again on 2026-08-15).
+    """
+    calls = []
+    monkeypatch.setattr(
+        system_routes,
+        "_ssh_script",
+        _fake_probe(calls, output=PROBE_OUTPUT.replace("beta_exposed=1", "beta_exposed=0")),
+    )
+
+    snap = system_routes._host_status_snapshot()
+
+    assert snap["beta_active"] is True
+    assert snap["beta_exposed"] is False
+
+
+def test_a_parked_beta_is_off_not_unexposed(monkeypatch):
+    """No warning for a beta nobody started — only for one that lies."""
+    calls = []
+    monkeypatch.setattr(
+        system_routes,
+        "_ssh_script",
+        _fake_probe(calls, output="commit=cf14443\nbeta_http=0\nbeta_exposed=0\n"),
+    )
+
+    snap = system_routes._host_status_snapshot()
+
+    assert snap["beta_active"] is False
+    assert snap["beta_exposed"] is False
+    assert snap["beta_branch"] is None
 
 
 def test_status_snapshot_reuses_cache_and_refresh_bypasses_it(monkeypatch):

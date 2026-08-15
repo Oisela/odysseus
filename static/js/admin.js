@@ -4147,6 +4147,43 @@ function _devVersionStaleness(d) {
     : ` · last synced ${Math.round(minutes / 60)} h ago`;
 }
 
+// The beta row, in the three states it can actually be in. Until this existed
+// the row printed `branch @ commit` and nothing else — the address was in no
+// file anywhere, so the only way in was to remember it. `odysseus-beta:7001`
+// (2026-08-15) is what guessing looks like.
+//
+// The middle state is the one worth the code: container answering, tailscale
+// serve off. The host probe says healthy, the browser says connection refused.
+function _renderBetaRow(node, d) {
+  node.textContent = '';
+  node.title = '';
+  if (!d.beta_active) {
+    node.textContent = 'not running';
+    return;
+  }
+  const label = `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}`;
+  if (d.beta_exposed && d.beta_url) {
+    const link = document.createElement('a');
+    link.className = 'dev-beta-link';
+    link.href = d.beta_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = label;
+    link.title = `Open the beta — ${d.beta_url}`;
+    node.appendChild(link);
+    return;
+  }
+  node.textContent = label;
+  const warn = document.createElement('span');
+  warn.className = 'admin-error';
+  warn.style.marginLeft = '6px';
+  warn.style.marginTop = '0';
+  warn.textContent = 'running, not shared on :7001';
+  warn.title = 'The container answers on the host but tailscale serve is off, '
+    + 'so no browser can reach it. Run the System check to fix it.';
+  node.appendChild(warn);
+}
+
 async function _loadDevStatus() {
   const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta'), upd = el('dev-update');
   if (!pkg) return;
@@ -4171,7 +4208,7 @@ async function _loadDevStatus() {
       upd.textContent = 'test here, then Update on prod';
     } else {
       prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
-      beta.textContent = d.beta_active ? `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}` : 'not running';
+      _renderBetaRow(beta, d);
       if (d.promotable) {
         upd.textContent = 'ready — press Update on the System card';
       } else if (d.dev_version && d.dev_version !== d.version) {
@@ -4394,6 +4431,25 @@ function _initBetaButtons() {
     msg.textContent = text;
     msg.className = ok ? 'admin-success' : 'admin-error';
   };
+  // Every path that reports a live beta ends by handing over the address. The
+  // status row carries it too, but the person who just pressed Start is looking
+  // HERE, and sending them hunting is how the round stalls.
+  const sayWithLink = async (text) => {
+    say(text, true);
+    if (!msg) return;
+    try {
+      const d = await fetch(`/api/system/status`, { credentials: 'same-origin' }).then(r => r.json());
+      if (!d.beta_url) return;
+      msg.appendChild(document.createTextNode(' '));
+      const link = document.createElement('a');
+      link.className = 'dev-beta-link';
+      link.href = d.beta_url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = d.beta_url.replace(/^https?:\/\//, '');
+      msg.appendChild(link);
+    } catch (_) { /* the sentence alone is still useful */ }
+  };
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
     say('', true);
@@ -4401,14 +4457,24 @@ function _initBetaButtons() {
       const res = await fetch(`/api/system/beta-start`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'already_running') {
-        say('Beta is already running on :7001.', true);
+        await sayWithLink('Beta is already running on :7001 —');
       } else if (res.ok && d && d.status === 'beta_start_requested') {
         say('Beta is starting on dev — the first build takes 2–4 minutes; the status refreshes every 30s (or hit Refresh).', true);
         // Poll until the Beta row flips to live (build can take minutes);
         // stop after ~8 min so an aborted build doesn't poll forever.
+        // Once it IS live, hand over the address instead of making the person
+        // who just waited four minutes go looking for it.
         let polls = 0;
-        const iv = setInterval(() => {
-          _loadDevStatus();
+        const iv = setInterval(async () => {
+          await _loadDevStatus();
+          try {
+            const s = await fetch(`/api/system/status`, { credentials: 'same-origin' }).then(r => r.json());
+            if (s.beta_active) {
+              clearInterval(iv);
+              await sayWithLink('Beta is up —');
+              return;
+            }
+          } catch (_) { /* keep polling */ }
           if (++polls >= 16) clearInterval(iv);
         }, 30000);
       } else {

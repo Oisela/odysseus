@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from core.database import SessionLocal, RoadmapBuild
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
-from src.constants import APP_VERSION, DATA_DIR
+from src.constants import APP_VERSION, BETA_PUBLIC_URL, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,21 @@ df -Pk / | awk 'NR == 2 { print "disk_total_kb=" $2; print "disk_used_kb=" $3 }'
 # the Developer page polls it every 30 s. Every line is guarded so one missing
 # checkout or a dead beta degrades that single key instead of the whole probe.
 #
+# `beta_exposed` is a SECOND question from the same round trip, and the two
+# disagree in exactly the case that keeps biting: the container answers on
+# 127.0.0.1:7001 while `tailscale serve --https=7001` is off, so the host looks
+# healthy and the browser says "connection refused". beta-stop.sh drops that
+# serve, and any abort inside downgrade-roundtrip.sh leaves it dropped
+# (2026-07-20, and again unnoticed since).
+#
 # Deliberately NO `git fetch` here — the two fetches that used to live in the
 # request path were synchronous calls to GitHub and were the 2-second floor all
 # by themselves. `_maybe_refresh_origin` does that in the background now.
 _HOST_STATUS_SCRIPT = f"""
 git -C {_PROD_DIR} rev-parse --short HEAD 2>/dev/null | head -1 | sed 's/^/commit=/'
 curl -fsS -m 3 {_BETA_URL} >/dev/null 2>&1 && echo beta_http=1 || echo beta_http=0
+tailscale serve status 2>/dev/null | grep -q ':7001' \
+  && echo beta_exposed=1 || echo beta_exposed=0
 git -C {_BETA_DIR} rev-parse --abbrev-ref HEAD 2>/dev/null | head -1 | sed 's/^/beta_branch=/'
 git -C {_BETA_DIR} rev-parse --short HEAD 2>/dev/null | head -1 | sed 's/^/beta_commit=/'
 git -C {_BETA_DIR} merge-base --is-ancestor HEAD origin/dev 2>/dev/null \
@@ -311,6 +320,9 @@ def _host_status_snapshot(force: bool = False) -> dict:
             "beta_branch": (values.get("beta_branch") or None) if beta_active else None,
             "beta_commit": (values.get("beta_commit") or None) if beta_active else None,
             "beta_in_dev": beta_active and values.get("beta_in_dev") == "1",
+            # Reachable from a browser, not just from the host. Only meaningful
+            # while the beta is up; a parked beta is not "unexposed", it is off.
+            "beta_exposed": beta_active and values.get("beta_exposed") == "1",
             "dev_version": values.get("dev_version") or None,
             "reachable": bool(values),
         }
@@ -489,6 +501,11 @@ def setup_system_routes() -> APIRouter:
             "beta_branch": snap["beta_branch"],
             "beta_commit": snap["beta_commit"],
             "beta_in_dev": snap["beta_in_dev"],
+            "beta_exposed": snap["beta_exposed"],
+            # The address a human types. Only sent while a beta is actually up,
+            # so the UI can render a link without first deciding whether it
+            # leads anywhere.
+            "beta_url": BETA_PUBLIC_URL if snap["beta_active"] else None,
             # Promote is only safe/honest when a beta is live AND its commit is
             # already merged into origin/dev (what prod will actually build).
             "promotable": bool(snap["beta_active"] and snap["beta_in_dev"]),

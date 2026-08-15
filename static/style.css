@@ -15561,6 +15561,14 @@ span[id$="-logo"] svg:not([width]) {
 /* Status messages */
 .admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
 .admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+/* Same look as the inline links in the settings cards, as a class: the beta
+   address is rendered from JS in two places and repeating the inline style
+   would be the third copy. */
+.dev-beta-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  font-weight: 600;
+}
 .admin-empty {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
   font-size: 12px;
