@@ -2974,6 +2974,14 @@ function _initPromoteButton(prefix = 'sys-', msgId = null) {
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
         say('Update started. Prod will rebuild and restart shortly — close and REOPEN the app window once it is back.', true);
+        // Both copies, not just the one that was pressed. Otherwise you press
+        // here, switch panels, and press the still-enabled twin — two
+        // promote.sh units rebuilding prod over each other. The server rejects
+        // the second one too (409), but a dead button says it before the click.
+        for (const other of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+          other.disabled = true;
+          other.title = 'A deployment is already running';
+        }
       } else {
         say((d && (d.detail || d.message)) || `Update failed (status ${res.status})`, false);
         btn.disabled = false;

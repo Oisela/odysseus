@@ -1230,6 +1230,23 @@ def setup_system_routes() -> APIRouter:
         if not live:
             raise HTTPException(409, "No beta is running on :7001 — nothing to promote.")
 
+        # Never two deployments at once. /switch has checked this since v4.0;
+        # /promote never did, and it stopped mattering the moment Update
+        # appeared on a second page (v4.9): press it here, switch panels, press
+        # it there, and two promote.sh units rebuild prod over each other. The
+        # client's disabled state cannot be trusted for this — only the host
+        # knows what is actually running.
+        try:
+            pre = _parse_kv_lines(_ssh_script(_SWITCH_PREFLIGHT_SCRIPT, timeout=10).stdout)
+        except Exception:
+            pre = {}
+        if (pre.get("build_active") or "0") != "0":
+            raise HTTPException(
+                409,
+                "A deployment is already running — wait for it to finish before "
+                "starting another.",
+            )
+
         # systemd-run (via sudo, per sudoers) so the promotion survives the
         # prod rebuild that restarts this very process. Unique unit name.
         unit = "odysseus-promote-ui-$(date +%s)"

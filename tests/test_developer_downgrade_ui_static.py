@@ -15,7 +15,9 @@ INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 
 def _switcher_source():
     start = ADMIN_JS.index("async function _initVersionSwitcher")
-    end = ADMIN_JS.index("function initSystemStatus")
+    # Ends at the next function, not at initSystemStatus: anything inserted
+    # between them would silently be judged as part of the switcher.
+    end = ADMIN_JS.index("function _initPromoteButton")
     return ADMIN_JS[start:end]
 
 
@@ -42,10 +44,29 @@ def test_developer_page_has_the_switcher_markup():
     assert card > panel
 
 
-def test_promote_button_stays_on_the_system_card_only():
-    """Two Update buttons would let one promotion be started twice."""
+def test_two_update_buttons_cannot_start_two_promotions():
+    """Was: "the promote button stays on the System card only".
+
+    Alessio asked for Update on the Developer page too (2026-08-15) — that is
+    where he decides a round is done, and since the rebuild became his call it
+    is the button he reaches for most. The old test forbade the second button
+    because two of them let one promotion be started twice. That danger is
+    real, so it is now closed where it actually lives instead of by leaving
+    the button out:
+
+      - the server refuses a second concurrent deployment (409), the same
+        guard /switch has had since v4.0, and
+      - pressing either button disables both.
+    """
     assert INDEX_HTML.count('id="sys-promoteBtn"') == 1
-    assert 'id="dev-promoteBtn"' not in INDEX_HTML
+    assert INDEX_HTML.count('id="dev-promoteBtn"') == 1
+
+    routes = (ROOT / "routes" / "system_routes.py").read_text(encoding="utf-8")
+    promote = routes[routes.index("def promote_beta(request: Request):"):]
+    assert "_SWITCH_PREFLIGHT_SCRIPT" in promote
+    assert "A deployment is already running" in promote
+
+    assert "#sys-promoteBtn, #dev-promoteBtn" in ADMIN_JS
 
 
 def test_listeners_are_attached_once_per_mount():
