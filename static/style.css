@@ -42290,9 +42290,55 @@ body.theme-frosted .modal {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 14%, transparent);
 }
 .dev-live-dot.is-live {
-  background: #48a868;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #48a868 18%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
+
+.dev-storage-card {
+  --storage-cache: var(--accent);
+  --storage-images: color-mix(in srgb, var(--accent) 68%, var(--fg));
+  --storage-data: color-mix(in srgb, var(--accent) 38%, var(--fg));
+  --storage-other: color-mix(in srgb, var(--fg) 22%, var(--card));
+}
+.dev-storage-total {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.dev-storage-total strong { font: 600 20px/1.2 var(--mono, monospace); }
+.dev-storage-total span { font-size: 11px; opacity: .58; }
+.dev-storage-bar {
+  height: 11px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--storage-segments, var(--storage-other) 0% 100%));
+}
+.dev-storage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+.dev-storage-breakdown > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+  font-size: 10px;
+}
+.dev-storage-breakdown strong {
+  grid-column: 2;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.dev-storage-swatch { width: 7px; height: 7px; border-radius: 2px; }
+.storage-cache { background: var(--storage-cache); }
+.storage-images { background: var(--storage-images); }
+.storage-data { background: var(--storage-data); }
+.storage-other { background: var(--storage-other); }
 
 /* ── Developer main window ── */
 .developer-modal-content {
@@ -42344,7 +42390,8 @@ body.theme-frosted .modal {
   .developer-body { padding: 10px; }
   .dev-card-heading { align-items: stretch; flex-direction: column; }
   .dev-card-heading .admin-btn-sm { align-self: flex-start; }
-  .dev-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dev-metrics,
+  .dev-storage-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .remnote-card {

@@ -4652,6 +4652,57 @@ function _startServerMetricsPolling() {
   }, 5000);
 }
 
+let _storageLoading = false;
+
+async function _loadStorage() {
+  if (_storageLoading || !el('dev-storage-breakdown')) return;
+  _storageLoading = true;
+  const refresh = el('dev-storage-refresh');
+  const status = el('dev-storage-status');
+  const dot = el('dev-storage-dot');
+  if (refresh) refresh.disabled = true;
+  try {
+    const response = await fetch('/api/system/storage', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.available) throw new Error('No storage data available');
+    const filesystem = data.filesystem || {};
+    const breakdown = data.breakdown || {};
+    el('dev-storage-used').textContent = _formatMetricBytes(filesystem.used_bytes);
+    el('dev-storage-total').textContent =
+      `used of ${_formatMetricBytes(filesystem.total_bytes)} · ${_formatMetricBytes(filesystem.available_bytes)} free`;
+    const categories = [
+      ['cache', breakdown.docker_build_cache_bytes],
+      ['images', breakdown.docker_images_bytes],
+      ['data', breakdown.odysseus_data_bytes],
+      ['other', breakdown.other_bytes],
+    ];
+    categories.forEach(([name, bytes]) => {
+      el(`dev-storage-${name}`).textContent = _formatMetricBytes(bytes);
+    });
+    const used = Number(filesystem.used_bytes) || 1;
+    el('dev-storage-bar').style.setProperty(
+      '--storage-segments',
+      categories.map(([name, bytes], index) => {
+        const start = categories.slice(0, index).reduce((sum, item) => sum + (Number(item[1]) || 0), 0) / used * 100;
+        const end = start + (Number(bytes) || 0) / used * 100;
+        return `var(--storage-${name}) ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+      }).join(', '),
+    );
+    status.textContent = data.source === 'server' ? 'Odysseus-Server' : data.source;
+    dot?.classList.add('is-live');
+  } catch (error) {
+    if (status) status.textContent = `Not reachable · ${error.message}`;
+    dot?.classList.remove('is-live');
+  } finally {
+    _storageLoading = false;
+    if (refresh) refresh.disabled = false;
+  }
+}
+
 function _renderRoadmapFreshness(rm) {
   const box = el('dev-roadmap-stale');
   if (!box) return;
@@ -5591,8 +5642,14 @@ export function initDeveloperPage() {
   _loadDevStatus();
   _loadServerMetrics();
   _startServerMetricsPolling();
+  const storageRefresh = el('dev-storage-refresh');
+  if (storageRefresh && !storageRefresh._storageWired) {
+    storageRefresh._storageWired = true;
+    storageRefresh.addEventListener('click', _loadStorage);
+  }
+  _loadStorage();
   _loadRoadmap();
-_initBuildQueue();
+  _initBuildQueue();
   _initSelfcheck();
   _initVersionSwitcher('dev-');
 }
