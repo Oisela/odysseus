@@ -89,6 +89,8 @@ git -C {_BETA_DIR} merge-base --is-ancestor HEAD origin/dev 2>/dev/null \
   && echo beta_in_dev=1 || echo beta_in_dev=0
 git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null \
   | grep -m1 APP_VERSION | cut -d'"' -f2 | head -1 | sed 's/^/dev_version=/'
+echo "deploy_active=$(systemctl list-units --state=active --no-legend \
+  'odysseus-promote-*' 'odysseus-switch-*' 2>/dev/null | wc -l | tr -d ' ')"
 """
 
 # Everything POST /switch must know before it fires. The switch runs detached,
@@ -409,6 +411,11 @@ def _host_status_snapshot(force: bool = False) -> dict:
             # Reachable from a browser, not just from the host. Only meaningful
             # while the beta is up; a parked beta is not "unexposed", it is off.
             "beta_exposed": beta_active and values.get("beta_exposed") == "1",
+            # A promotion detaches itself, so the browser that started it loses
+            # the thread on the next reload — Alessio pressed Update, reloaded,
+            # and had no way to tell whether it was still running (2026-08-15).
+            # The host knows; the UI only had to ask.
+            "deploy_active": (values.get("deploy_active") or "0") != "0",
             "dev_version": values.get("dev_version") or None,
             "reachable": bool(values),
         }
@@ -859,6 +866,7 @@ def setup_system_routes() -> APIRouter:
             "beta_commit": snap["beta_commit"],
             "beta_in_dev": snap["beta_in_dev"],
             "beta_exposed": snap["beta_exposed"],
+            "deploy_active": snap["deploy_active"],
             # The address a human types. Only sent while a beta is actually up,
             # so the UI can render a link without first deciding whether it
             # leads anywhere.
@@ -1249,9 +1257,22 @@ def setup_system_routes() -> APIRouter:
 
         # systemd-run (via sudo, per sudoers) so the promotion survives the
         # prod rebuild that restarts this very process. Unique unit name.
+        # --uid=deploy is NOT optional, and its absence was not harmless.
+        #
+        # Without it systemd-run starts promote.sh as root, and every git
+        # command inside it re-owns part of /opt/odysseus. That is where the
+        # 2663 root-owned files found on 2026-08-15 came from — .git had
+        # belonged to root since 2026-08-03, the date of the last release run
+        # through this button. Prod was quietly un-promotable from the CLI for
+        # six weeks because the UI kept taking the checkout away from `deploy`.
+        #
+        # Repairing the ownership then exposed the cause: root now trips git's
+        # dubious-ownership guard, so the Update button failed at 128 while
+        # still answering 200 to the browser. beta-start has always passed the
+        # flag; only this route did not.
         unit = "odysseus-promote-ui-$(date +%s)"
         cmd = (
-            f"sudo systemd-run --unit={unit} --collect "
+            f"sudo systemd-run --unit={unit} --collect --uid=deploy "
             f"bash {_PROMOTE}"
         )
         try:

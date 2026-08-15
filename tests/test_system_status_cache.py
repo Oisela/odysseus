@@ -91,6 +91,7 @@ def test_status_probe_is_one_round_trip_and_never_fetches(monkeypatch):
         "beta_commit": "3edcd91ca",
         "beta_in_dev": True,
         "beta_exposed": True,
+        "deploy_active": False,
         "dev_version": "4.0.0",
         "reachable": True,
     }

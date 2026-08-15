@@ -3425,6 +3425,23 @@ function _roundBlockReason() {
 
 // A disabled button with only a tooltip is a mystery. The banner says which
 // round holds the clone and what to do about it.
+// "Update running -> v4.9.0", from server state rather than a variable the
+// reload threw away. Also greys the Update buttons while it runs, so a second
+// press cannot even be attempted (the server would 409 it anyway).
+function _renderDeployBanner(d) {
+  const el_ = el('dev-deploy-banner');
+  const running = !!(d && d.deploy_active);
+  for (const b of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+    if (running) { b.disabled = true; b.title = 'A deployment is already running'; }
+  }
+  if (!el_) return;
+  if (!running) { el_.style.display = 'none'; el_.textContent = ''; return; }
+  el_.style.display = '';
+  const target = d.dev_version ? `v${d.dev_version}` : 'the version on dev';
+  el_.textContent = `Update running — rebuilding production to ${target}. `
+    + 'Takes about 90 seconds; close and REOPEN the app window once it is back.';
+}
+
 function _renderActiveRoundBanner() {
   const el_ = el('dev-active-round');
   if (!el_) return;
@@ -4713,6 +4730,11 @@ async function _loadDevStatus() {
         upd.textContent = 'up to date';
       }
     }
+    // A promotion detaches itself, so a reload loses the "Update started"
+    // message the browser was holding. The host still knows, so the state
+    // survives the reload — Alessio pressed Update, reloaded, and could not
+    // tell whether it was still running (2026-08-15).
+    _renderDeployBanner(d);
     // Same gate as the System card: only a live beta whose commit is already
     // in dev may be promoted, because prod builds from dev — anything else
     // would ship a different tree than the one that was tested.
