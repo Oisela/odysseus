@@ -42156,6 +42156,17 @@ body.theme-frosted .modal {
 /* Build queue — the In progress column, restated as an ordered run list.
    Deliberately the same borders/radius/gaps as .rm-card so the queue reads as
    the same object as the board it mirrors, not a second kind of list. */
+/* Brief flash when the board jumps you up to the Build queue — a silent
+   scroll leaves you wondering what just happened. */
+@keyframes dev-card-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); }
+  100% { box-shadow: 0 0 0 6px transparent; }
+}
+.dev-card-flash {
+  animation: dev-card-flash 1.2s ease-out;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+
 .dev-queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .dev-queue-row {
   display: flex;

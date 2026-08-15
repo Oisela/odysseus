@@ -4362,6 +4362,40 @@ function _renderBuildQueue(sections) {
   });
   form.style.display = '';
   _syncQueueStartButton(items);
+  _syncBuildAllShortcut(items);
+}
+
+// The queue card sits at the top of the Developer page; the roadmap board is
+// four cards below it. Alessio worked in the board, reached for the per-card
+// Build button because it was the one in front of him, and started several
+// rounds at once (2026-08-15) — while the control that does exactly what he
+// wanted was off-screen. So the board gets a pointer to it.
+//
+// Deliberately a jump, not a second Start: duplicating the batch logic here
+// would mean two places to keep the model picker and the round lock honest.
+function _syncBuildAllShortcut(items) {
+  const btn = el('dev-roadmap-build-all');
+  if (!btn) return;
+  const n = (items || []).length;
+  if (!n || _channelIsBeta) {
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  btn.textContent = `Build all in progress (${n})`;
+  if (!btn._wired) {
+    btn._wired = true;
+    btn.addEventListener('click', () => {
+      const card = el('settings-dev-queue-card');
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // A silent scroll leaves you wondering what just happened; the flash
+      // says "this is the thing you were looking for".
+      card.classList.add('dev-card-flash');
+      setTimeout(() => card.classList.remove('dev-card-flash'), 1200);
+      el('dev-queue-ep')?.focus();
+    });
+  }
 }
 
 function _syncQueueStartButton(items) {
