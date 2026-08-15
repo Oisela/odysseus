@@ -3381,6 +3381,51 @@ function _rmCardText(item) {
 let _roadmapBuilds = null;   // Map item_key -> build record, or null = not loaded
 let _channelIsBeta = null;
 
+// The round currently holding the developer clone, or null when it is free.
+//
+// There is exactly ONE clone, one beta channel and one cycle-state file, so
+// two agents cannot build at the same time — they check out different branches
+// under each other. On 2026-08-15 that mixed one feature's uncommitted work
+// into another feature's commit and stalled a third round outright. Alessio
+// started several Build buttons expecting parallelism; nothing said no.
+//
+// The Build queue is how several cards get built: one chat, one after another.
+let _activeRound = null;
+
+function _roundBlockReason() {
+  if (!_activeRound) return '';
+  return `Round "${_activeRound.branch}" is still in flight (${_activeRound.phase}). `
+    + 'Only one round can hold the developer clone — finish it, or use the '
+    + 'Build queue to run several cards in one chat.';
+}
+
+// A disabled button with only a tooltip is a mystery. The banner says which
+// round holds the clone and what to do about it.
+function _renderActiveRoundBanner() {
+  const el_ = el('dev-active-round');
+  if (!el_) return;
+  if (!_activeRound) {
+    el_.style.display = 'none';
+    el_.textContent = '';
+    return;
+  }
+  el_.style.display = '';
+  el_.textContent = `Round "${_activeRound.branch}" is in flight (${_activeRound.phase}). `
+    + 'New builds wait: there is only one developer clone, and a second agent '
+    + 'in it overwrites the first one\'s branch.';
+}
+
+async function _loadActiveRound() {
+  try {
+    const d = await fetch('/api/system/status', { credentials: 'same-origin' }).then(r => r.json());
+    _activeRound = d.active_round && d.active_round.branch ? d.active_round : null;
+  } catch (_) {
+    // Unknown is not the same as free, but blocking every build because the
+    // status call hiccuped would be worse than the race it prevents.
+    _activeRound = null;
+  }
+}
+
 async function _loadRoadmapBuilds() {
   try {
     const res = await fetch('/api/system/roadmap/builds', { credentials: 'same-origin' });
@@ -3389,6 +3434,7 @@ async function _loadRoadmapBuilds() {
   } catch (_) {
     _roadmapBuilds = new Map();
   }
+  await _loadActiveRound();
   if (_channelIsBeta === null) {
     try {
       const v = await fetch('/api/version', { credentials: 'same-origin' }).then(r => r.json());
@@ -4143,8 +4189,16 @@ function _renderRoadmapBoard(list, sections) {
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
-        buildBtn.title = _channelIsBeta ? 'Start on Prod so the builder can reach the server repo' : 'Build this feature in a linked agent chat';
+        // Blocked while another round owns the clone. The card whose own round
+        // is in flight keeps its button — reopening that build is not a second
+        // agent, it is the same one.
+        const blockedByRound = !!_activeRound && !build;
+        buildBtn.title = _channelIsBeta
+          ? 'Start on Prod so the builder can reach the server repo'
+          : (blockedByRound ? _roundBlockReason() : 'Build this feature in a linked agent chat');
         buildBtn.textContent = build ? 'Rebuild' : 'Build';
+        buildBtn.disabled = blockedByRound;
+        if (blockedByRound) buildBtn.classList.add('rm-build-blocked');
         buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
         meta.appendChild(buildBtn);
         const moves = document.createElement('span');
@@ -4374,6 +4428,15 @@ function _syncQueueStartButton(items) {
     btn.title = 'Only Prod can reach the server repo';
     return;
   }
+  // The queue is the sanctioned way to build several cards, but it still runs
+  // ONE agent in the ONE clone — so it waits for a round in flight like
+  // everything else.
+  if (_activeRound) {
+    btn.disabled = true;
+    btn.textContent = `Waiting for "${_activeRound.branch}"`;
+    btn.title = _roundBlockReason();
+    return;
+  }
   btn.disabled = n === 0;
   btn.textContent = n === 1 ? 'Start batch (1 item)' : `Start batch (${n} items)`;
   btn.title = '';
@@ -4547,6 +4610,12 @@ async function _loadDevStatus() {
       }
     }
     _renderRoadmapFreshness(d.roadmap);
+    // Same payload, so the lock costs no extra call. Re-render the board when
+    // it flips, or the buttons would stay disabled until the next full reload.
+    const wasBlocked = !!_activeRound;
+    _activeRound = d.active_round && d.active_round.branch ? d.active_round : null;
+    _renderActiveRoundBanner();
+    if (wasBlocked !== !!_activeRound && _roadmapText) _renderRoadmap();
   } catch (e) {
     pkg.textContent = prod.textContent = beta.textContent = 'error';
     if (upd) upd.textContent = '—';

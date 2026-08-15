@@ -458,6 +458,35 @@ def _cycle_state() -> dict:
         return {}
 
 
+# Phases that mean an agent still owns the developer clone. `done` and a
+# missing file are the only free states.
+_ROUND_BUSY_PHASES = ("building", "awaiting-go", "promoting")
+
+
+def _active_round() -> dict:
+    """The round currently holding the developer clone, or {} if none.
+
+    There is exactly ONE clone at data/dev/odysseus, one beta channel and one
+    cycle-state file. Two agents in there check out different branches under
+    each other, which on 2026-08-15 mixed one feature's uncommitted work into
+    another's commit and stalled a third round outright. This is what the UI
+    reads to stop a second build from being started at all.
+
+    `awaiting-go` counts as busy on purpose: that round is parked mid-flight
+    and expects its branch back when the go-word arrives.
+    """
+    cycle = _cycle_state()
+    phase = (cycle.get("phase") or "").strip()
+    if phase not in _ROUND_BUSY_PHASES:
+        return {}
+    return {
+        "branch": cycle.get("branch") or "?",
+        "phase": phase,
+        "track": cycle.get("track") or "",
+        "since": cycle.get("since") or "",
+    }
+
+
 def _selfcheck_findings(force: bool = False) -> list:
     """Everything the deployment can be wrong about, as one ranked list.
 
@@ -840,6 +869,10 @@ def setup_system_routes() -> APIRouter:
             # Roadmap freshness is a local file read — never cache it, or an
             # edit would not clear the banner for up to a cache TTL.
             "roadmap": _roadmap_freshness(dev_version or APP_VERSION),
+            # Empty dict = the developer clone is free. Local file read, so it
+            # must not be cached either: a build that just finished has to
+            # unlock the buttons on the next poll, not a cache TTL later.
+            "active_round": _active_round(),
             "fetch_age_seconds": _fetch_age_seconds(),
         }
 
