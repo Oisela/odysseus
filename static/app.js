@@ -1140,6 +1140,16 @@ function initializeEventListeners() {
     });
   }
 
+  // Server live is visible to every signed-in role. Its module contains only
+  // aggregate metrics and no deployment or administration controls.
+  const toolServerLiveBtn = el('tool-server-live-btn');
+  if (toolServerLiveBtn) {
+    toolServerLiveBtn.addEventListener('click', async () => {
+      const m = await import('./js/serverLive.js');
+      m.openServerLive();
+    });
+  }
+
   // Developer is a first-class sidebar page. Its existing settings panel is
   // moved into the dedicated window on first open, keeping one source of truth
   // for the roadmap and deployment controls.

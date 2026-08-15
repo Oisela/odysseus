@@ -47,6 +47,20 @@ awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 }
 awk '{ print "uptime_seconds=" $1 }' /proc/uptime
 df -Pk / | awk 'NR == 2 { print "disk_total_kb=" $2; print "disk_used_kb=" $3 }'
 """
+_STORAGE_DATA_DIR = f"{_PROD_DIR}/data"
+_HOST_STORAGE_SCRIPT = f"""
+df -B1 / | awk 'NR == 2 {{ print "filesystem_total=" $2; print "filesystem_used=" $3; print "filesystem_available=" $4 }}'
+docker system df --format '{{{{json .}}}}' 2>/dev/null | python3 -c '
+import json, sys
+for line in sys.stdin:
+    row = json.loads(line)
+    kind = row.get("Type")
+    size = row.get("Size", "0B")
+    if kind == "Images": print("docker_images_raw=" + size)
+    if kind == "Build Cache": print("docker_build_cache_raw=" + size)
+'
+du -sb {_STORAGE_DATA_DIR} 2>/dev/null | awk '{{ print "odysseus_data=" $1 }}'
+"""
 
 # Everything /status needs about the deployment, in ONE round trip. This used to
 # be six sequential `_ssh` calls; each one pays the full ConnectTimeout=6 SSH
@@ -444,6 +458,35 @@ def _cycle_state() -> dict:
         return {}
 
 
+# Phases that mean an agent still owns the developer clone. `done` and a
+# missing file are the only free states.
+_ROUND_BUSY_PHASES = ("building", "awaiting-go", "promoting")
+
+
+def _active_round() -> dict:
+    """The round currently holding the developer clone, or {} if none.
+
+    There is exactly ONE clone at data/dev/odysseus, one beta channel and one
+    cycle-state file. Two agents in there check out different branches under
+    each other, which on 2026-08-15 mixed one feature's uncommitted work into
+    another's commit and stalled a third round outright. This is what the UI
+    reads to stop a second build from being started at all.
+
+    `awaiting-go` counts as busy on purpose: that round is parked mid-flight
+    and expects its branch back when the go-word arrives.
+    """
+    cycle = _cycle_state()
+    phase = (cycle.get("phase") or "").strip()
+    if phase not in _ROUND_BUSY_PHASES:
+        return {}
+    return {
+        "branch": cycle.get("branch") or "?",
+        "phase": phase,
+        "track": cycle.get("track") or "",
+        "since": cycle.get("since") or "",
+    }
+
+
 def _selfcheck_findings(force: bool = False) -> list:
     """Everything the deployment can be wrong about, as one ranked list.
 
@@ -698,6 +741,59 @@ def _server_metrics_snapshot(force: bool = False) -> dict:
         return payload
 
 
+def _size_to_bytes(raw: str) -> int:
+    """Parse Docker's compact size strings without exposing arbitrary output."""
+    match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?b)\s*", raw, re.I)
+    if not match:
+        return 0
+    powers = {"b": 0, "kb": 1, "mb": 2, "gb": 3, "tb": 4, "pb": 5}
+    return int(float(match.group(1)) * (1000 ** powers[match.group(2).lower()]))
+
+
+def _storage_payload(output: str, source: str) -> dict:
+    values = _parse_metric_lines(output)
+    total = int(max(0, values.get("filesystem_total", 0)))
+    used = int(max(0, values.get("filesystem_used", 0)))
+    available = int(max(0, values.get("filesystem_available", 0)))
+    build_cache = int(max(0, values.get("docker_build_cache", 0)))
+    images = int(max(0, values.get("docker_images", 0)))
+    data = int(max(0, values.get("odysseus_data", 0)))
+    for line in output.splitlines():
+        key, separator, raw = line.partition("=")
+        if not separator:
+            continue
+        if key == "docker_build_cache_raw":
+            build_cache = _size_to_bytes(raw)
+        elif key == "docker_images_raw":
+            images = _size_to_bytes(raw)
+    return {
+        "available": bool(total),
+        "source": source,
+        "filesystem": {
+            "total_bytes": total,
+            "used_bytes": used,
+            "available_bytes": available,
+        },
+        "breakdown": {
+            "docker_build_cache_bytes": build_cache,
+            "docker_images_bytes": images,
+            "odysseus_data_bytes": data,
+            "other_bytes": max(0, used - build_cache - images - data),
+        },
+    }
+
+
+def _server_storage_snapshot() -> dict:
+    """Return the host storage categories in one bounded SSH round trip."""
+    try:
+        result = _ssh_script(_HOST_STORAGE_SCRIPT, timeout=20)
+        if result.returncode == 0:
+            return _storage_payload(result.stdout, "server")
+    except Exception as exc:
+        logger.debug("system/storage: host probe unavailable: %s", exc)
+    return _storage_payload("", "server")
+
+
 def _read_releases(force: bool = False) -> list:
     """Parse the host's release ledger (version<TAB>commit<TAB>date).
 
@@ -773,6 +869,10 @@ def setup_system_routes() -> APIRouter:
             # Roadmap freshness is a local file read — never cache it, or an
             # edit would not clear the banner for up to a cache TTL.
             "roadmap": _roadmap_freshness(dev_version or APP_VERSION),
+            # Empty dict = the developer clone is free. Local file read, so it
+            # must not be cached either: a build that just finished has to
+            # unlock the buttons on the next poll, not a cache TTL later.
+            "active_round": _active_round(),
             "fetch_age_seconds": _fetch_age_seconds(),
         }
 
@@ -783,15 +883,26 @@ def setup_system_routes() -> APIRouter:
 
     @router.get("/metrics")
     def get_metrics(request: Request, refresh: bool = False):
-        """Small, admin-only host health snapshot for the Developer page.
+        """Privacy-preserving host health snapshot for every signed-in user.
 
-        The fixed probe returns aggregate counters only: no process names,
-        command lines, network addresses or host identity. On beta/dev, where
-        host SSH is intentionally unavailable, report the app container and
-        label that scope explicitly.
+        This is the deliberately reduced, role-safe system view: the fixed
+        probe exposes aggregate counters only — no deployment controls,
+        process names, command lines, network addresses or host identity.
+        The surrounding Developer routes remain admin-only. On beta/dev,
+        where host SSH is intentionally unavailable, report the app container
+        and label that scope explicitly.
         """
-        require_admin(request)
+        if os.getenv("AUTH_ENABLED", "true").lower() != "false":
+            user = get_current_user(request)
+            if not user:
+                raise HTTPException(401, "Authentication required")
         return _server_metrics_snapshot(force=refresh)
+
+    @router.get("/storage")
+    def get_storage(request: Request):
+        """Host filesystem usage split into the categories shown by dev.sh disk."""
+        require_admin(request)
+        return _server_storage_snapshot()
 
     @router.get("/roadmap")
     def get_roadmap(request: Request):

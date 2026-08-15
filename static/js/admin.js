@@ -3381,6 +3381,51 @@ function _rmCardText(item) {
 let _roadmapBuilds = null;   // Map item_key -> build record, or null = not loaded
 let _channelIsBeta = null;
 
+// The round currently holding the developer clone, or null when it is free.
+//
+// There is exactly ONE clone, one beta channel and one cycle-state file, so
+// two agents cannot build at the same time — they check out different branches
+// under each other. On 2026-08-15 that mixed one feature's uncommitted work
+// into another feature's commit and stalled a third round outright. Alessio
+// started several Build buttons expecting parallelism; nothing said no.
+//
+// The Build queue is how several cards get built: one chat, one after another.
+let _activeRound = null;
+
+function _roundBlockReason() {
+  if (!_activeRound) return '';
+  return `Round "${_activeRound.branch}" is still in flight (${_activeRound.phase}). `
+    + 'Only one round can hold the developer clone — finish it, or use the '
+    + 'Build queue to run several cards in one chat.';
+}
+
+// A disabled button with only a tooltip is a mystery. The banner says which
+// round holds the clone and what to do about it.
+function _renderActiveRoundBanner() {
+  const el_ = el('dev-active-round');
+  if (!el_) return;
+  if (!_activeRound) {
+    el_.style.display = 'none';
+    el_.textContent = '';
+    return;
+  }
+  el_.style.display = '';
+  el_.textContent = `Round "${_activeRound.branch}" is in flight (${_activeRound.phase}). `
+    + 'New builds wait: there is only one developer clone, and a second agent '
+    + 'in it overwrites the first one\'s branch.';
+}
+
+async function _loadActiveRound() {
+  try {
+    const d = await fetch('/api/system/status', { credentials: 'same-origin' }).then(r => r.json());
+    _activeRound = d.active_round && d.active_round.branch ? d.active_round : null;
+  } catch (_) {
+    // Unknown is not the same as free, but blocking every build because the
+    // status call hiccuped would be worse than the race it prevents.
+    _activeRound = null;
+  }
+}
+
 async function _loadRoadmapBuilds() {
   try {
     const res = await fetch('/api/system/roadmap/builds', { credentials: 'same-origin' });
@@ -3389,6 +3434,7 @@ async function _loadRoadmapBuilds() {
   } catch (_) {
     _roadmapBuilds = new Map();
   }
+  await _loadActiveRound();
   if (_channelIsBeta === null) {
     try {
       const v = await fetch('/api/version', { credentials: 'same-origin' }).then(r => r.json());
@@ -4143,8 +4189,16 @@ function _renderRoadmapBoard(list, sections) {
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
-        buildBtn.title = _channelIsBeta ? 'Start on Prod so the builder can reach the server repo' : 'Build this feature in a linked agent chat';
+        // Blocked while another round owns the clone. The card whose own round
+        // is in flight keeps its button — reopening that build is not a second
+        // agent, it is the same one.
+        const blockedByRound = !!_activeRound && !build;
+        buildBtn.title = _channelIsBeta
+          ? 'Start on Prod so the builder can reach the server repo'
+          : (blockedByRound ? _roundBlockReason() : 'Build this feature in a linked agent chat');
         buildBtn.textContent = build ? 'Rebuild' : 'Build';
+        buildBtn.disabled = blockedByRound;
+        if (blockedByRound) buildBtn.classList.add('rm-build-blocked');
         buildBtn.addEventListener('click', (e) => { e.stopPropagation(); renderBuild(); });
         meta.appendChild(buildBtn);
         const moves = document.createElement('span');
@@ -4362,6 +4416,40 @@ function _renderBuildQueue(sections) {
   });
   form.style.display = '';
   _syncQueueStartButton(items);
+  _syncBuildAllShortcut(items);
+}
+
+// The queue card sits at the top of the Developer page; the roadmap board is
+// four cards below it. Alessio worked in the board, reached for the per-card
+// Build button because it was the one in front of him, and started several
+// rounds at once (2026-08-15) — while the control that does exactly what he
+// wanted was off-screen. So the board gets a pointer to it.
+//
+// Deliberately a jump, not a second Start: duplicating the batch logic here
+// would mean two places to keep the model picker and the round lock honest.
+function _syncBuildAllShortcut(items) {
+  const btn = el('dev-roadmap-build-all');
+  if (!btn) return;
+  const n = (items || []).length;
+  if (!n || _channelIsBeta) {
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  btn.textContent = `Build all in progress (${n})`;
+  if (!btn._wired) {
+    btn._wired = true;
+    btn.addEventListener('click', () => {
+      const card = el('settings-dev-queue-card');
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // A silent scroll leaves you wondering what just happened; the flash
+      // says "this is the thing you were looking for".
+      card.classList.add('dev-card-flash');
+      setTimeout(() => card.classList.remove('dev-card-flash'), 1200);
+      el('dev-queue-ep')?.focus();
+    });
+  }
 }
 
 function _syncQueueStartButton(items) {
@@ -4372,6 +4460,15 @@ function _syncQueueStartButton(items) {
     btn.disabled = true;
     btn.textContent = 'Start on Prod only';
     btn.title = 'Only Prod can reach the server repo';
+    return;
+  }
+  // The queue is the sanctioned way to build several cards, but it still runs
+  // ONE agent in the ONE clone — so it waits for a round in flight like
+  // everything else.
+  if (_activeRound) {
+    btn.disabled = true;
+    btn.textContent = `Waiting for "${_activeRound.branch}"`;
+    btn.title = _roundBlockReason();
     return;
   }
   btn.disabled = n === 0;
@@ -4547,6 +4644,12 @@ async function _loadDevStatus() {
       }
     }
     _renderRoadmapFreshness(d.roadmap);
+    // Same payload, so the lock costs no extra call. Re-render the board when
+    // it flips, or the buttons would stay disabled until the next full reload.
+    const wasBlocked = !!_activeRound;
+    _activeRound = d.active_round && d.active_round.branch ? d.active_round : null;
+    _renderActiveRoundBanner();
+    if (wasBlocked !== !!_activeRound && _roadmapText) _renderRoadmap();
   } catch (e) {
     pkg.textContent = prod.textContent = beta.textContent = 'error';
     if (upd) upd.textContent = '—';
@@ -4650,6 +4753,57 @@ function _startServerMetricsPolling() {
     const modal = el('developer-modal');
     if (modal && modal.style.display !== 'none') _loadServerMetrics();
   }, 5000);
+}
+
+let _storageLoading = false;
+
+async function _loadStorage() {
+  if (_storageLoading || !el('dev-storage-breakdown')) return;
+  _storageLoading = true;
+  const refresh = el('dev-storage-refresh');
+  const status = el('dev-storage-status');
+  const dot = el('dev-storage-dot');
+  if (refresh) refresh.disabled = true;
+  try {
+    const response = await fetch('/api/system/storage', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.available) throw new Error('No storage data available');
+    const filesystem = data.filesystem || {};
+    const breakdown = data.breakdown || {};
+    el('dev-storage-used').textContent = _formatMetricBytes(filesystem.used_bytes);
+    el('dev-storage-total').textContent =
+      `used of ${_formatMetricBytes(filesystem.total_bytes)} · ${_formatMetricBytes(filesystem.available_bytes)} free`;
+    const categories = [
+      ['cache', breakdown.docker_build_cache_bytes],
+      ['images', breakdown.docker_images_bytes],
+      ['data', breakdown.odysseus_data_bytes],
+      ['other', breakdown.other_bytes],
+    ];
+    categories.forEach(([name, bytes]) => {
+      el(`dev-storage-${name}`).textContent = _formatMetricBytes(bytes);
+    });
+    const used = Number(filesystem.used_bytes) || 1;
+    el('dev-storage-bar').style.setProperty(
+      '--storage-segments',
+      categories.map(([name, bytes], index) => {
+        const start = categories.slice(0, index).reduce((sum, item) => sum + (Number(item[1]) || 0), 0) / used * 100;
+        const end = start + (Number(bytes) || 0) / used * 100;
+        return `var(--storage-${name}) ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+      }).join(', '),
+    );
+    status.textContent = data.source === 'server' ? 'Odysseus-Server' : data.source;
+    dot?.classList.add('is-live');
+  } catch (error) {
+    if (status) status.textContent = `Not reachable · ${error.message}`;
+    dot?.classList.remove('is-live');
+  } finally {
+    _storageLoading = false;
+    if (refresh) refresh.disabled = false;
+  }
 }
 
 function _renderRoadmapFreshness(rm) {
@@ -5591,8 +5745,14 @@ export function initDeveloperPage() {
   _loadDevStatus();
   _loadServerMetrics();
   _startServerMetricsPolling();
+  const storageRefresh = el('dev-storage-refresh');
+  if (storageRefresh && !storageRefresh._storageWired) {
+    storageRefresh._storageWired = true;
+    storageRefresh.addEventListener('click', _loadStorage);
+  }
+  _loadStorage();
   _loadRoadmap();
-_initBuildQueue();
+  _initBuildQueue();
   _initSelfcheck();
   _initVersionSwitcher('dev-');
 }
