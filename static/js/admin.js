@@ -3184,8 +3184,67 @@ async function _setTestPoint(item, index, done) {
   const block = _roadmapItemBlock(mark, _rmCardText(item), details, details.screenshots);
   lines.splice(item.line, item.endLine - item.line + 1, ...block);
   const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
-  if (ok) _renderRoadmap();
+  if (ok) {
+    _renderRoadmap();
+    // Ticking the last point IS the go-word (Alessio 2026-08-15). Only after
+    // the save: a promotion must never start from a tick that did not land.
+    if (done) _maybeSignalGoWord(item, details);
+  }
   return ok;
+}
+
+// The go-word, delivered by checkbox.
+//
+// It is sent as a normal message into the build chat rather than through a new
+// promotion endpoint, on purpose: the agent stopped after `dev.sh ready` and is
+// watching that conversation, so this stays the SAME path a typed "push to
+// main" takes, with every check that lives in the agent's workflow intact. A
+// second, silent promotion route would bypass all of them.
+const _GO_WORD_DELAY_MS = 8000;
+let _goWordTimer = null;
+
+function _maybeSignalGoWord(item, details) {
+  const tests = details.tests || [];
+  if (!tests.length || !tests.every(t => t.done)) return;
+  // Only a card that is actually waiting for a go-word. [!] is the state
+  // `dev.sh ready` leaves behind; anything else has no agent standing by.
+  if (item.status !== 'review') return;
+  const build = _roadmapBuilds?.get(_itemKey(item));
+  if (!build?.session_id) return;
+  if (_goWordTimer) return;   // one in flight is enough
+
+  const title = _rmCardText(item);
+  // Not a confirmation dialog — Alessio asked for fewer questions, not more.
+  // Just a window to catch the mis-click, since the other end of this is a
+  // production rebuild.
+  const cancel = () => {
+    clearTimeout(_goWordTimer);
+    _goWordTimer = null;
+    if (uiModule?.showToast) uiModule.showToast('Promotion cancelled — the ticks stay.');
+  };
+  if (uiModule?.showToast) {
+    uiModule.showToast(
+      `All test points ticked — promoting "${title}" in 8s.`,
+      // duration matches the window: an Undo button that disappears before the
+      // action fires is worse than none.
+      { action: 'Undo', onAction: cancel, duration: _GO_WORD_DELAY_MS },
+    );
+  }
+  _goWordTimer = setTimeout(async () => {
+    _goWordTimer = null;
+    try {
+      const chatMod = await import('./chat.js');
+      await chatMod.sendToSession(
+        build.session_id,
+        'push to main — alle Testpunkte sind abgehakt.',
+      );
+      if (uiModule?.showToast) uiModule.showToast('Go-word sent to the build chat.');
+    } catch (e) {
+      // Say it out loud. A silently dropped go-word looks exactly like an
+      // agent that decided not to promote, and Alessio would wait for nothing.
+      if (uiModule?.showError) uiModule.showError('Could not send the go-word: ' + e.message);
+    }
+  }, _GO_WORD_DELAY_MS);
 }
 
 async function _saveRoadmap(text, msgEl) {
