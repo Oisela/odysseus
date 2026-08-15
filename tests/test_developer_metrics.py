@@ -2,6 +2,9 @@
 
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from routes import system_routes
 
 
@@ -67,6 +70,28 @@ def test_metrics_payload_uses_cpu_delta_and_aggregate_values_only():
         "disk",
         "uptime_seconds",
     }
+
+
+def _metrics_handler():
+    router = system_routes.setup_system_routes()
+    return next(route.endpoint for route in router.routes if route.path == "/api/system/metrics")
+
+
+def test_metrics_route_allows_authenticated_non_admin(monkeypatch):
+    expected = {"available": True}
+    monkeypatch.setattr(system_routes, "get_current_user", lambda _request: "member")
+    monkeypatch.setattr(system_routes, "_server_metrics_snapshot", lambda force=False: expected)
+
+    assert _metrics_handler()(request=object()) is expected
+
+
+def test_metrics_route_rejects_anonymous_user(monkeypatch):
+    monkeypatch.setattr(system_routes, "get_current_user", lambda _request: None)
+
+    with pytest.raises(HTTPException) as exc:
+        _metrics_handler()(request=object())
+
+    assert exc.value.status_code == 401
 
 
 def test_server_snapshot_reuses_short_cache(monkeypatch):
