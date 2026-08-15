@@ -2833,6 +2833,7 @@ async function _loadSystemStatus() {
     } else {
       bEl.textContent = 'not running';
     }
+    _renderDeployBanner(d);
     btn.disabled = !d.promotable;
     if (!d.beta_active) {
       btn.title = 'No beta running on :7001';
@@ -3441,18 +3442,56 @@ const _DEPLOY_STAGES = {
   failed:      { pct: 100, label: 'Failed' },
 };
 
+// While a deployment runs, both cards refresh every few seconds; when none is
+// running this costs nothing. Without it the bar would freeze on whichever
+// stage happened to be current when the page loaded — a progress bar that does
+// not progress is worse than none, because it looks like a hang.
+let _deployPollTimer = null;
+function _syncDeployPoll(running) {
+  if (running && !_deployPollTimer) {
+    _deployPollTimer = setInterval(async () => {
+      try {
+        // refresh=1 on purpose: the status snapshot is cached for 20 s, and in
+        // the measured run rebuild -> healthcheck took 6. Polling a cache that
+        // stale would show a bar frozen a stage behind reality. One SSH round
+        // trip every 5 s, bounded by the ~90 s a promotion lasts, and only
+        // while one is running.
+        const d = await fetch('/api/system/status?refresh=1', { credentials: 'same-origin' })
+          .then(r => r.json());
+        _renderDeployBanner(d);
+        // The rebuild restarts this very server, so a failed fetch mid-poll is
+        // expected, not an error — the next tick picks it back up.
+      } catch (_) { /* server is restarting */ }
+    }, 5000);
+  } else if (!running && _deployPollTimer) {
+    clearInterval(_deployPollTimer);
+    _deployPollTimer = null;
+    // One last full refresh so version, commit and buttons settle on the truth.
+    _loadDevStatus();
+    if (el('sys-promoteBtn')) _loadSystemStatus();
+  }
+}
+
 function _renderDeployBanner(d) {
-  const box = el('dev-deploy-banner');
+  // Both cards: Update sits on the System card AND on the Developer page, and
+  // Alessio pressed it on the System card — where the progress bar was not
+  // (2026-08-15). Feedback belongs wherever the button is.
+  if (d && d.deploy_active) {
+    for (const b of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+      b.disabled = true;
+      b.title = 'A deployment is already running';
+    }
+  }
+  _syncDeployPoll(!!(d && d.deploy_active));
+  for (const id of ['dev-deploy-banner', 'sys-deploy-banner']) _paintDeployBanner(el(id), d);
+}
+
+function _paintDeployBanner(box, d) {
+  if (!box) return;
   const stage = (d && d.deploy_stage) || '';
-  const running = !!(d && d.deploy_active);
   // `failed` must show even after the unit is gone — that is the whole point:
   // a promotion that died at git used to leave the page saying nothing at all.
-  const show = running || stage === 'failed';
-
-  for (const b of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
-    if (running) { b.disabled = true; b.title = 'A deployment is already running'; }
-  }
-  if (!box) return;
+  const show = !!(d && d.deploy_active) || stage === 'failed';
   if (!show) { box.style.display = 'none'; box.textContent = ''; return; }
 
   const info = _DEPLOY_STAGES[stage] || { pct: 5, label: 'Working' };
