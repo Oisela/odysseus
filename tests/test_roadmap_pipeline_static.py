@@ -181,6 +181,17 @@ def test_screenshots_survived_the_list_view_removal():
     )
 
 
+def test_roadmap_screenshot_parser_accepts_cache_busting_query_strings():
+    """Uploaded-image URLs may carry cache-busting query parameters.
+
+    The roadmap parser must keep the complete URL; otherwise the Markdown
+    remains in the card title and no screenshot thumbnail is extracted.
+    """
+    markdown = (ROOT / "static" / "js" / "markdown.js").read_text()
+    source = markdown.split("export const UPLOAD_IMAGE_MD_SOURCE = ", 1)[1].split(";", 1)[0]
+    assert "(?:\\\\?[^\\\\s)]*)?" in source
+
+
 def test_server_metrics_card_has_manual_and_five_second_refresh():
     assert 'id="dev-server-metrics"' in INDEX
     assert 'id="dev-server-refresh"' in INDEX
