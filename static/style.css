@@ -42156,6 +42156,13 @@ body.theme-frosted .modal {
 /* Build queue — the In progress column, restated as an ordered run list.
    Deliberately the same borders/radius/gaps as .rm-card so the queue reads as
    the same object as the board it mirrors, not a second kind of list. */
+/* A build blocked by another round reads as unavailable, not as broken —
+   same muting the rest of the board uses for disabled controls. */
+.rm-build-btn.rm-build-blocked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .dev-queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .dev-queue-row {
   display: flex;
