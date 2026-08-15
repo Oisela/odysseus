@@ -4879,6 +4879,20 @@ statt ersatzweise etwas anderes zu bauen.`;
     }
   }
 
+  /**
+   * Send one message into a background chat and let its agent turn run.
+   *
+   * Used by the roadmap board to deliver a go-word into the build chat that is
+   * waiting for it: the agent stopped after `dev.sh ready` and watches this
+   * conversation, so the promotion path stays the SAME tested path a typed
+   * "push to main" takes. Inventing a second, silent promotion route would
+   * bypass every check that lives in the agent's own workflow.
+   */
+  export async function sendToSession(sessionId, text) {
+    if (!sessionId || !text) throw new Error('sendToSession needs a session and a message');
+    await _runBackgroundAgentTurn(sessionId, text);
+  }
+
   export async function getBetterFrom(aiMsgElement) {
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId || aiMsgElement.dataset.getBetterStarting === 'true') return;
@@ -5700,6 +5714,7 @@ statt ersatzweise etwas anderes zu bauen.`;
     regenerateFrom,
     forkFrom,
     getBetterFrom,
+    sendToSession,
     editUserMessage,
     editAIMessage,
     resendUserMessage,
