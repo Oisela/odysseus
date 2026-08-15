@@ -2949,31 +2949,55 @@ async function _initVersionSwitcher(prefix = 'sys-') {
   });
 }
 
-function initSystemStatus() {
-  const btn = el('sys-promoteBtn');
-  if (!btn) return;
-  _initVersionSwitcher();
+// Prefixed like _initVersionSwitcher, and for the same reason: the control
+// belongs where the work happens. Since v4.8 the production rebuild is Alessio's
+// to trigger (it restarts every running agent), so Update is the button he
+// reaches for most — and it sat only in Settings → System, one panel away from
+// the Developer page where he decides that a round is done. The Package status
+// card even told him to go there.
+function _initPromoteButton(prefix = 'sys-', msgId = null) {
+  const btn = el(prefix + 'promoteBtn');
+  if (!btn || btn._promoteWired) return;
+  btn._promoteWired = true;
   btn.addEventListener('click', async () => {
-    const msg = el('sys-statusMsg');
+    const msg = el(msgId || (prefix + 'statusMsg'));
     if (!confirm('Update production to the released version? This rebuilds prod from dev and restarts the server.')) return;
-    btn.disabled = true; btn.textContent = 'Updating...'; msg.textContent = ''; msg.className = '';
+    btn.disabled = true; btn.textContent = 'Updating...';
+    if (msg) { msg.textContent = ''; msg.className = ''; }
+    const say = (text, ok) => {
+      if (!msg) return;
+      msg.textContent = text;
+      msg.className = ok ? 'admin-success' : 'admin-error';
+    };
     try {
       const res = await fetch(`/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
-        msg.textContent = 'Update started. Prod will rebuild and restart shortly — reload with Ctrl+Shift+R once it is back.';
-        msg.className = 'admin-success';
+        say('Update started. Prod will rebuild and restart shortly — close and REOPEN the app window once it is back.', true);
+        // Both copies, not just the one that was pressed. Otherwise you press
+        // here, switch panels, and press the still-enabled twin — two
+        // promote.sh units rebuilding prod over each other. The server rejects
+        // the second one too (409), but a dead button says it before the click.
+        for (const other of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+          other.disabled = true;
+          other.title = 'A deployment is already running';
+        }
       } else {
-        msg.textContent = (d && (d.detail || d.message)) || `Update failed (status ${res.status})`;
-        msg.className = 'admin-error';
+        say((d && (d.detail || d.message)) || `Update failed (status ${res.status})`, false);
         btn.disabled = false;
       }
     } catch (e) {
-      msg.textContent = 'Update failed: ' + e.message; msg.className = 'admin-error';
+      say('Update failed: ' + e.message, false);
       btn.disabled = false;
     }
     btn.textContent = 'Update';
   });
+}
+
+function initSystemStatus() {
+  if (!el('sys-promoteBtn')) return;
+  _initVersionSwitcher();
+  _initPromoteButton('sys-', 'sys-statusMsg');
   _loadSystemStatus();
 }
 
@@ -4636,12 +4660,24 @@ async function _loadDevStatus() {
       prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
       _renderBetaRow(beta, d);
       if (d.promotable) {
-        upd.textContent = 'ready — press Update on the System card';
+        upd.textContent = 'ready — press Update';
       } else if (d.dev_version && d.dev_version !== d.version) {
         upd.textContent = `v${d.dev_version} in development`;
       } else {
         upd.textContent = 'up to date';
       }
+    }
+    // Same gate as the System card: only a live beta whose commit is already
+    // in dev may be promoted, because prod builds from dev — anything else
+    // would ship a different tree than the one that was tested.
+    const promoteBtn = el('dev-promoteBtn');
+    if (promoteBtn) {
+      promoteBtn.disabled = channel === 'beta' || !d.promotable;
+      promoteBtn.title = channel === 'beta'
+        ? 'Only available on the main instance'
+        : !d.beta_active ? 'No beta running on :7001'
+        : !d.beta_in_dev ? 'Beta commit is not in origin/dev — prod builds from dev, so it would not ship this beta'
+        : 'Merge dev → build & restart prod';
     }
     _renderRoadmapFreshness(d.roadmap);
     // Same payload, so the lock costs no extra call. Re-render the board when
@@ -5381,6 +5417,7 @@ function initDeveloper() {
   _loadRoadmap();
 _initBuildQueue();
   _initSelfcheck();
+  _initPromoteButton('dev-', 'dev-chat-msg');
   _initBuilderLink();
 }
 
@@ -5754,6 +5791,7 @@ export function initDeveloperPage() {
   _loadRoadmap();
   _initBuildQueue();
   _initSelfcheck();
+  _initPromoteButton('dev-', 'dev-chat-msg');
   _initVersionSwitcher('dev-');
 }
 
