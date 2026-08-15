@@ -6,8 +6,10 @@ not inside this container — `/app` is the built image copy and has no `.git`.
 So we reach the host over the pre-configured `odysseus-host` SSH alias, exactly
 like the beta-deploy / promote scripts do.
 """
+import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import threading
@@ -89,6 +91,69 @@ echo "build_active=$(systemctl list-units --state=active --no-legend \
   'odysseus-promote-*' 'odysseus-switch-*' 'odysseus-beta-start-*' 2>/dev/null \
   | wc -l | tr -d ' ')"
 """
+
+# The self-check probe. Everything the Developer page's "System check" cannot
+# answer from local files, in one round trip.
+#
+# The skill folder is the LIVE copy the agent runs from (it is bind-mounted out
+# of the app container); /home/deploy holds the host-side copies the API and the
+# systemd units invoke. Those two drifting apart is not theoretical: on
+# 2026-08-15 dev.sh was 23 KB in the skill folder and a 15-July 7 KB copy on the
+# host, and `doctor` — the command whose whole job is drift — did not check it.
+_SKILL_DIR = f"{_PROD_DIR}/data/skills/werkzeuge/odysseus-entwickler"
+_HOST_SCRIPT_DIR = "/home/deploy/odysseus-entwickler"
+_SYNCED_SCRIPTS = (
+    "dev.sh", "promote.sh", "beta-deploy.sh", "beta-stop.sh",
+    "switch-version.sh", "downgrade-roundtrip.sh",
+)
+_CLONE_DIR = f"{_PROD_DIR}/data/dev/odysseus"
+
+_SELFCHECK_SCRIPT = f"""
+for f in {' '.join(_SYNCED_SCRIPTS)}; do
+  a=$(sha256sum {_SKILL_DIR}/$f 2>/dev/null | cut -d' ' -f1)
+  b=$(sha256sum {_HOST_SCRIPT_DIR}/$f 2>/dev/null | cut -d' ' -f1)
+  if [ -z "$a" ] || [ -z "$b" ]; then echo "drift_missing=$f";
+  elif [ "$a" != "$b" ]; then echo "drift_differs=$f"; fi
+done
+echo "clone_branch=$(git -C {_CLONE_DIR} branch --show-current 2>/dev/null)"
+echo "clone_dirty=$(git -C {_CLONE_DIR} status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+git -C {_PROD_DIR} branch -r --merged origin/dev 2>/dev/null \
+  | sed 's/^ *//' | grep '^origin/' | grep -v -e 'origin/dev$' -e 'origin/main$' -e '->' \
+  | sed 's|^origin/|merged_branch=|'
+echo "disk_avail_kb=$(df --output=avail / | tail -1 | tr -d ' ')"
+echo "build_cache=$(docker system df --format '{{{{.Type}}}}={{{{.Size}}}}' 2>/dev/null \
+  | sed -n 's/^Build Cache=//p' | head -1)"
+echo "released_version=$(tail -1 {_RELEASES} 2>/dev/null | cut -f1)"
+"""
+
+# Only these may be triggered from the browser. A self-check that can run any
+# command is a remote shell with a friendly name.
+_SELFCHECK_FIXES = {
+    "beta-expose": (
+        "sudo systemd-run --collect --unit=odysseus-beta-expose-$(date +%s) "
+        "tailscale serve --bg --https=7001 http://127.0.0.1:7001"
+    ),
+    "script-sync": (
+        f"cp {_SKILL_DIR}/dev.sh {_SKILL_DIR}/promote.sh {_SKILL_DIR}/beta-deploy.sh "
+        f"{_SKILL_DIR}/beta-stop.sh {_SKILL_DIR}/switch-version.sh "
+        f"{_SKILL_DIR}/downgrade-roundtrip.sh {_HOST_SCRIPT_DIR}/ "
+        f"&& chmod +x {_HOST_SCRIPT_DIR}/*.sh"
+    ),
+    "disk-prune": (
+        # Deliberately NOT `docker system prune -a`: that drops the images prod
+        # and beta were built from, and then the downgrade button — the one
+        # thing that must stay fast — has to rebuild from scratch.
+        "docker builder prune -f --filter until=168h >/dev/null "
+        "&& docker image prune -f >/dev/null && echo pruned"
+    ),
+}
+
+# Free space below this bricks a docker build; build cache above this is just
+# uncollected layers from past deploys (7 GB measured 2026-07-31).
+_SELFCHECK_MIN_FREE_KB = 5 * 1024 * 1024
+_SELFCHECK_MAX_CACHE_GB = 5.0
+# A round that has not moved in this long is not in flight, it is abandoned.
+_SELFCHECK_CYCLE_STALE_H = 24
 
 # A docker build needs room; below this the build bricks more than itself.
 # switch-version.sh enforces the same number, but only AFTER the UI has already
@@ -183,6 +248,13 @@ class RoadmapBuildBody(BaseModel):
 
 class SwitchBody(BaseModel):
     commit: str = Field(..., min_length=6, max_length=40, pattern=r"^[0-9a-f]+$")
+
+
+class SelfcheckFixBody(BaseModel):
+    # Pattern first, whitelist second. The route rejects anything not in
+    # _SELFCHECK_FIXES anyway, but a shell-metacharacter-free field means a
+    # future careless `f"...{fix}"` cannot become an injection either.
+    fix: str = Field(..., min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9-]*$")
 
 
 def _ssh(*args: str, timeout: int = 8) -> subprocess.CompletedProcess:
@@ -328,6 +400,195 @@ def _host_status_snapshot(force: bool = False) -> dict:
         }
         _STATUS_CACHE.update(at=time.monotonic(), snapshot=snapshot)
         return snapshot
+
+
+def _collect_repeated(text: str, key: str) -> list:
+    """All values for a probe key that legitimately repeats.
+
+    `_parse_kv_lines` keeps one value per key, which is right for the status
+    probe and wrong here: drift and stale branches are lists, and keeping only
+    the last one would report a single file while five had moved.
+    """
+    prefix = f"{key}="
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            value = line[len(prefix):].strip()
+            if value:
+                out.append(value)
+    return out
+
+
+def _parse_size_gb(raw: str):
+    """`2.855GB` / `812.4MB` -> float GB. Docker prints for humans, not us."""
+    m = re.match(r"^\s*([0-9.]+)\s*([KMGT]?)i?B\s*$", str(raw or ""), re.I)
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+    except ValueError:
+        return None
+    return value * {"": 1 / 1024**3, "K": 1 / 1024**2, "M": 1 / 1024, "G": 1, "T": 1024}[
+        m.group(2).upper()
+    ]
+
+
+def _cycle_state() -> dict:
+    """The developer round in flight, as dev.sh last wrote it."""
+    path = os.path.join(DATA_DIR, "dev", "cycle-state.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except Exception:
+        return {}
+
+
+def _selfcheck_findings(force: bool = False) -> list:
+    """Everything the deployment can be wrong about, as one ranked list.
+
+    Alessio 2026-08-15: "ein cleanup button der einfach schaut ob alles
+    uptodate ist und da ist wo es sein sollte." Each finding either carries a
+    `fix` id from the whitelist or is report-only — nothing here decides on its
+    own to change the system.
+
+    Never raises: a check that cannot run reports itself as unknown. A blank
+    page would be indistinguishable from "all good".
+    """
+    findings = []
+
+    def add(ident, label, state, detail, fix=None):
+        findings.append({
+            "id": ident, "label": label, "state": state,
+            "detail": detail, "fix": fix,
+        })
+
+    snap = _host_status_snapshot(force=force)
+    if not snap["reachable"]:
+        add("host", "Deploy host", "fail",
+            "Cannot reach odysseus-host over SSH — every host-side check below is blind.")
+        return findings
+
+    raw = ""
+    try:
+        r = _ssh_script(_SELFCHECK_SCRIPT, timeout=25)
+        if r.returncode == 0:
+            raw = r.stdout
+        else:
+            logger.warning("system/selfcheck: probe rc=%s err=%s",
+                           r.returncode, (r.stderr or "").strip()[:200])
+    except Exception:
+        logger.exception("system/selfcheck: probe failed")
+    values = _parse_kv_lines(raw)
+
+    # ── Beta ────────────────────────────────────────────────────────────────
+    if snap["beta_active"] and not snap["beta_exposed"]:
+        add("beta-exposed", "Beta reachable", "fail",
+            "The beta container answers on the host, but tailscale serve :7001 is "
+            "off — no browser can open it.",
+            fix="beta-expose")
+    elif snap["beta_active"]:
+        add("beta-exposed", "Beta reachable", "ok",
+            f"{snap['beta_branch'] or '?'} @ {snap['beta_commit'] or '?'} on {BETA_PUBLIC_URL}")
+    else:
+        add("beta-exposed", "Beta reachable", "ok", "Parked — nothing to reach.")
+
+    if snap["beta_active"] and not snap["beta_in_dev"]:
+        add("beta-in-dev", "Beta commit in origin/dev", "warn",
+            "The beta runs a commit that is not merged into dev, so promoting now "
+            "would ship something else than what you tested.")
+
+    # ── Scripts ─────────────────────────────────────────────────────────────
+    differs = _collect_repeated(raw, "drift_differs")
+    missing = _collect_repeated(raw, "drift_missing")
+    if differs or missing:
+        parts = []
+        if differs:
+            parts.append("differ: " + ", ".join(differs))
+        if missing:
+            parts.append("missing on one side: " + ", ".join(missing))
+        add("script-drift", "Deploy scripts in sync", "fail",
+            "Skill folder and /home/deploy disagree — " + "; ".join(parts)
+            + ". The API and the systemd units run the host copies.",
+            fix="script-sync" if differs and not missing else None)
+    elif raw:
+        add("script-drift", "Deploy scripts in sync", "ok",
+            f"{len(_SYNCED_SCRIPTS)} scripts identical in both places.")
+
+    # ── The round in flight ─────────────────────────────────────────────────
+    cycle = _cycle_state()
+    phase = cycle.get("phase") or ""
+    if phase and phase not in ("done",):
+        age_h = None
+        try:
+            since = datetime.fromisoformat(cycle.get("since") or "")
+            age_h = (datetime.now(timezone.utc) - since).total_seconds() / 3600
+        except Exception:
+            pass
+        if age_h is not None and age_h > _SELFCHECK_CYCLE_STALE_H:
+            add("cycle-stale", "Developer round", "warn",
+                f"'{cycle.get('branch') or '?'}' has been in phase '{phase}' for "
+                f"{int(age_h)} h. Either it is waiting for you, or the agent is gone.",
+                fix="cycle-reset")
+        else:
+            add("cycle-stale", "Developer round", "ok",
+                f"'{cycle.get('branch') or '?'}' in phase '{phase}'.")
+    else:
+        add("cycle-stale", "Developer round", "ok", "None in flight.")
+
+    dirty = values.get("clone_dirty") or "0"
+    if dirty.isdigit() and int(dirty) > 0:
+        add("clone-dirty", "Developer clone", "warn",
+            f"{dirty} uncommitted change(s) on '{values.get('clone_branch') or '?'}'. "
+            "A deploy would not include them.")
+    elif "clone_dirty" in values:
+        add("clone-dirty", "Developer clone", "ok",
+            f"Clean on '{values.get('clone_branch') or '?'}'.")
+
+    stale = _collect_repeated(raw, "merged_branch")
+    if stale:
+        add("stale-branches", "Merged branches", "warn",
+            "Already merged into dev and still on the remote: " + ", ".join(stale[:8])
+            + ("…" if len(stale) > 8 else ""))
+
+    # ── Disk ────────────────────────────────────────────────────────────────
+    avail = values.get("disk_avail_kb") or ""
+    if avail.isdigit():
+        free_gb = int(avail) / 1024 / 1024
+        if int(avail) < _SELFCHECK_MIN_FREE_KB:
+            add("disk", "Disk space", "fail",
+                f"{free_gb:.1f} GB free — a docker build needs 5 GB and will abort.",
+                fix="disk-prune")
+        else:
+            cache_gb = _parse_size_gb(values.get("build_cache"))
+            if cache_gb and cache_gb > _SELFCHECK_MAX_CACHE_GB:
+                add("disk", "Disk space", "warn",
+                    f"{free_gb:.1f} GB free, but {cache_gb:.1f} GB is docker build "
+                    "cache nobody collects — every beta ship and promote adds layers.",
+                    fix="disk-prune")
+            else:
+                add("disk", "Disk space", "ok", f"{free_gb:.1f} GB free.")
+
+    # ── Versions ────────────────────────────────────────────────────────────
+    released = values.get("released_version") or ""
+    if released and released != APP_VERSION:
+        add("prod-version", "Prod version", "warn",
+            f"Serving v{APP_VERSION}, but the release ledger ends at v{released}. "
+            "A promotion probably did not finish — try `dev.sh finish`.")
+    elif released:
+        add("prod-version", "Prod version", "ok", f"v{APP_VERSION}, matching the ledger.")
+
+    roadmap = _roadmap_freshness(snap["dev_version"] or APP_VERSION)
+    if not roadmap.get("current"):
+        add("roadmap-gap", "Roadmap", "warn",
+            f"No section for {roadmap.get('expected_section') or 'the open package'} — "
+            "the developer plans from this file on every start.")
+    else:
+        add("roadmap-gap", "Roadmap", "ok", "Has a section for the open package.")
+
+    order = {"fail": 0, "warn": 1, "ok": 2}
+    findings.sort(key=lambda f: order.get(f["state"], 3))
+    return findings
 
 
 def _cpu_percent(source: str, total: float, idle: float):
@@ -674,6 +935,62 @@ def setup_system_routes() -> APIRouter:
             logger.error("system/beta-stop rc=%s err=%s", r.returncode, r.stderr.strip())
             raise HTTPException(500, f"Beta stop failed: {r.stderr.strip() or 'ssh error'}")
         return {"status": "beta_stopped"}
+
+    @router.get("/selfcheck")
+    def selfcheck(request: Request, refresh: bool = False):
+        """Is everything up to date and where it should be? (Alessio, 2026-08-15)
+
+        Read-only. Every finding either names a whitelisted fix or is
+        report-only — nothing here changes the system by being looked at.
+        """
+        require_admin(request)
+        findings = _selfcheck_findings(force=refresh)
+        return {
+            "findings": findings,
+            "worst": next((f["state"] for f in findings if f["state"] != "ok"), "ok"),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @router.post("/selfcheck/fix")
+    def selfcheck_fix(body: SelfcheckFixBody, request: Request):
+        """Apply ONE named fix from the whitelist.
+
+        The whitelist is the security boundary: a self-check that can run an
+        arbitrary command is a remote shell with a friendly name. Anything not
+        in it is a 400, including a fix id that a future finding invents.
+        """
+        require_admin(request)
+        fix_id = body.fix
+
+        # Local file, no host involved: reset a round nobody is running any more.
+        # dev.sh reads this file to know where it stands, so a stale one sends
+        # the next agent down the wrong branch of `dev.sh next`.
+        if fix_id == "cycle-reset":
+            path = os.path.join(DATA_DIR, "dev", "cycle-state.json")
+            try:
+                if os.path.exists(path):
+                    os.replace(path, path + ".abandoned")
+            except Exception as e:
+                logger.exception("system/selfcheck/fix: cycle reset failed")
+                raise HTTPException(500, f"Could not reset the round: {e}")
+            return {"ok": True, "fix": fix_id, "detail": "Round cleared (kept as .abandoned)."}
+
+        cmd = _SELFCHECK_FIXES.get(fix_id)
+        if not cmd:
+            raise HTTPException(400, f"Unknown fix '{fix_id}'.")
+        try:
+            r = _ssh_script(cmd, timeout=180)
+        except Exception as e:
+            logger.exception("system/selfcheck/fix: %s failed to launch", fix_id)
+            raise HTTPException(500, f"Fix failed: {e}")
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout or "").strip()[:300] or "ssh error"
+            logger.error("system/selfcheck/fix %s rc=%s err=%s", fix_id, r.returncode, detail)
+            raise HTTPException(500, f"Fix failed: {detail}")
+        # The next check must not answer from a cache written before the fix.
+        with _STATUS_REFRESH_LOCK:
+            _STATUS_CACHE.update(at=0.0, snapshot=None)
+        return {"ok": True, "fix": fix_id, "detail": (r.stdout or "").strip()[:300]}
 
     @router.get("/releases")
     def list_releases(request: Request, refresh: bool = False):
