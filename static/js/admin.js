@@ -4463,16 +4463,62 @@ function _syncBuildAllShortcut(items) {
   btn.textContent = `Build all in progress (${n})`;
   if (!btn._wired) {
     btn._wired = true;
-    btn.addEventListener('click', () => {
-      const card = el('settings-dev-queue-card');
-      if (!card) return;
-      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      // A silent scroll leaves you wondering what just happened; the flash
-      // says "this is the thing you were looking for".
-      card.classList.add('dev-card-flash');
-      setTimeout(() => card.classList.remove('dev-card-flash'), 1200);
-      el('dev-queue-ep')?.focus();
-    });
+    btn.addEventListener('click', () => _runBuildAllShortcut(btn));
+  }
+}
+
+// The button does what its label says: it builds.
+//
+// It first only scrolled to the Build queue, which reads as nothing happening —
+// Alessio pressed a button called "Build all in progress (9)" twice and
+// reported "passiert nichts, geht nur nach oben" (2026-08-15). A label that
+// promises an action has to perform it; jumping to a second button is
+// indirection, not a feature.
+//
+// It still calls _startBatchBuild, so there is exactly one batch
+// implementation. What it adds is picking up the queue's current
+// endpoint/model — and scrolling there only when there is nothing to pick up.
+async function _runBuildAllShortcut(btn) {
+  const card = el('settings-dev-queue-card');
+  const epSel = el('dev-queue-ep');
+  const modelSel = el('dev-queue-model');
+  const modeSel = el('dev-queue-mode');
+
+  const jumpToQueue = (why) => {
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    card.classList.add('dev-card-flash');
+    setTimeout(() => card.classList.remove('dev-card-flash'), 1200);
+    epSel?.focus();
+    if (why && uiModule?.showToast) uiModule.showToast(why);
+  };
+
+  if (_activeRound) { jumpToQueue(_roundBlockReason()); return; }
+
+  const items = _queueItems(_roadmapSections(_roadmapText).sections)
+    .filter(it => !_queueSkipped.has(_itemKey(it)));
+  if (!items.length) { jumpToQueue('Nothing selected in the Build queue.'); return; }
+
+  const endpointId = epSel?.value, model = modelSel?.value;
+  // No model chosen yet — that is the one case where sending you to the queue
+  // is the honest answer, because the choice is genuinely still missing.
+  if (!endpointId || !model) { jumpToQueue('Pick an endpoint and a model first.'); return; }
+
+  const epLabel = epSel.options[epSel.selectedIndex]?.textContent || endpointId;
+  const modelLabel = modelSel.options[modelSel.selectedIndex]?.textContent || model;
+  // One confirm, because the far end is N agent turns on a paid model.
+  if (!confirm(`Build ${items.length} item${items.length !== 1 ? 's' : ''} in one chat with ${modelLabel}?`)) return;
+
+  btn.disabled = true;
+  const before = btn.textContent;
+  btn.textContent = 'Starting…';
+  try {
+    await _startBatchBuild(items, endpointId, model, `${epLabel} · ${modelLabel}`, modeSel?.value || 'build');
+    _queueSkipped = new Set();
+  } catch (err) {
+    if (uiModule?.showError) uiModule.showError('Could not start the batch: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = before;
   }
 }
 

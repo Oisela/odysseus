@@ -47,21 +47,48 @@ def test_it_hides_when_there_is_nothing_to_build():
     assert "btn.style.display = 'none'" in fn
 
 
-def test_it_jumps_to_the_queue_instead_of_starting_a_second_batch():
-    """One Start, one model picker, one round lock — not two of each."""
-    fn = _shortcut()
-    assert "scrollIntoView" in fn
-    assert "settings-dev-queue-card" in fn
-    assert "_startBatchBuild" not in fn, "must not duplicate the batch logic"
+def _runner() -> str:
+    return ADMIN[ADMIN.index("async function _runBuildAllShortcut(btn)"):
+                 ADMIN.index("function _syncQueueStartButton(items)")]
 
 
-def test_the_jump_is_visible():
-    fn = _shortcut()
-    assert "dev-card-flash" in fn
-    assert "dev-queue-ep')?.focus()" in fn
+def test_the_button_builds_instead_of_scrolling():
+    """Was: it only scrolled to the Build queue.
+
+    Alessio pressed "Build all in progress (9)" twice and reported "passiert
+    nichts, geht nur nach oben" (2026-08-15). A label that promises an action
+    has to perform it — jumping to a second button is indirection, not a
+    feature.
+    """
+    runner = _runner()
+    assert "_startBatchBuild(" in runner, "the button must actually build"
+    # Still ONE batch implementation, reused rather than copied.
+    assert ADMIN.count("async function _startBatchBuild") == 1
+
+
+def test_it_reuses_the_queues_model_choice():
+    runner = _runner()
+    assert "el('dev-queue-ep')" in runner
+    assert "el('dev-queue-model')" in runner
+    assert "confirm(" in runner, "N agent turns on a paid model deserve one ask"
+
+
+def test_scrolling_survives_only_where_it_is_the_honest_answer():
+    """A missing model choice is the one case where the queue really is where
+    you have to go."""
+    runner = _runner()
+    assert "jumpToQueue('Pick an endpoint and a model first.')" in runner
+    assert "dev-card-flash" in runner
     assert ".dev-card-flash" in CSS
     block = CSS[CSS.index("@keyframes dev-card-flash"):CSS.index(".dev-queue-list")]
     assert "#" not in block, "no hardcoded colours"
+
+
+def test_it_respects_the_round_lock():
+    """Otherwise this button would be the hole in the lock built hours earlier."""
+    runner = _runner()
+    assert "if (_activeRound)" in runner
+    assert "_roundBlockReason()" in runner
 
 
 def test_the_handler_is_wired_once():
