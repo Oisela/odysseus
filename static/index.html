@@ -1007,6 +1007,12 @@
         </div>
       </div>
 
+      <div class="section section-header-only" id="server-live-section">
+        <div class="section-header-flex">
+          <span class="section-title" id="tool-server-live-btn" style="cursor:pointer;" title="Open server live view"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg><span>Server live</span></span>
+        </div>
+      </div>
+
       <div class="section section-header-only admin-only" id="developer-section" style="display:none">
         <div class="section-header-flex">
           <span class="section-title" id="tool-developer-btn" style="cursor:pointer;" title="Open the developer workspace"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span>Developer</span></span>
@@ -2764,6 +2770,28 @@
               <div class="dev-metric"><span>Uptime</span><strong id="dev-metric-uptime">…</strong><small id="dev-metric-source">Loading…</small></div>
             </div>
             <div class="dev-metrics-foot"><span class="dev-live-dot" id="dev-metrics-dot"></span><span id="dev-metrics-status">Connecting…</span></div>
+          </div>
+
+          <div class="admin-card dev-storage-card" id="settings-dev-storage-card">
+            <div class="dev-card-heading">
+              <div>
+                <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"/></svg>Storage</h2>
+                <div class="admin-toggle-sub">Host disk usage split into Docker build cache, images, Odysseus data, and everything else.</div>
+              </div>
+              <button class="admin-btn-sm" id="dev-storage-refresh" type="button" title="Refresh storage usage now">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Refresh
+              </button>
+            </div>
+            <div class="dev-storage-total"><strong id="dev-storage-used">…</strong><span id="dev-storage-total">Loading…</span></div>
+            <div class="dev-storage-bar" id="dev-storage-bar" aria-hidden="true"></div>
+            <div class="dev-storage-breakdown" id="dev-storage-breakdown" aria-live="polite">
+              <div><span class="dev-storage-swatch storage-cache"></span><span>Build cache</span><strong id="dev-storage-cache">…</strong></div>
+              <div><span class="dev-storage-swatch storage-images"></span><span>Images</span><strong id="dev-storage-images">…</strong></div>
+              <div><span class="dev-storage-swatch storage-data"></span><span>Odysseus data</span><strong id="dev-storage-data">…</strong></div>
+              <div><span class="dev-storage-swatch storage-other"></span><span>Other</span><strong id="dev-storage-other">…</strong></div>
+            </div>
+            <div class="dev-metrics-foot"><span class="dev-live-dot" id="dev-storage-dot"></span><span id="dev-storage-status">Connecting…</span></div>
           </div>
 
           <div class="admin-card" id="settings-dev-roadmap-card">

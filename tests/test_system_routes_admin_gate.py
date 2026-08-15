@@ -20,6 +20,10 @@ def _handlers():
     return [(r.path, r.endpoint) for r in router.routes]
 
 
+def _admin_handlers():
+    return [(path, handler) for path, handler in _handlers() if path != "/api/system/metrics"]
+
+
 def test_router_exposes_the_expected_surface():
     """A canary: if a route appears or vanishes, this test says so out loud."""
     paths = {path for path, _ in _handlers()}
@@ -27,6 +31,7 @@ def test_router_exposes_the_expected_surface():
         "/api/system/status",
         "/api/system/roadmap-freshness",
         "/api/system/metrics",
+        "/api/system/storage",
         "/api/system/roadmap",
         "/api/system/roadmap/builds",
         "/api/system/roadmap/builds/{session_id}",
@@ -41,7 +46,7 @@ def test_router_exposes_the_expected_surface():
     }
 
 
-@pytest.mark.parametrize("path,handler", _handlers(), ids=lambda v: getattr(v, "__name__", v))
+@pytest.mark.parametrize("path,handler", _admin_handlers(), ids=lambda v: getattr(v, "__name__", v))
 def test_every_system_route_calls_require_admin(path, handler):
     """Source-level check: the gate must be the first thing the handler does."""
     source = inspect.getsource(handler)
@@ -62,7 +67,7 @@ def test_non_admin_request_is_refused_by_every_route(monkeypatch):
     monkeypatch.setattr(system_routes, "_ssh", unreachable)
     monkeypatch.setattr(system_routes, "_ssh_script", unreachable)
 
-    for path, handler in _handlers():
+    for path, handler in _admin_handlers():
         params = inspect.signature(handler).parameters
         kwargs = {}
         for name in params:

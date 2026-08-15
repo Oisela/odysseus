@@ -33,5 +33,8 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
   zurück; die bestehende Berechtigungsprüfung für rohe URLs bleibt aktiv.
 - Mobile Toasts berücksichtigen die obere und rechte iPhone-Safe-Area, damit
   Statusmeldungen nicht von Dynamic Island oder Systemstatus überdeckt werden.
+- In Arbeit für v4.3: eine reduzierte „Server live“-Ansicht mit ausschließlich
+  aggregierten CPU-/RAM-/Disk-/Uptime-Werten für angemeldete Nicht-Admins;
+  Deployment- und Developer-Kontrollen bleiben admin-only.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).
