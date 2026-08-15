@@ -15561,6 +15561,42 @@ span[id$="-logo"] svg:not([width]) {
 /* Status messages */
 .admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
 .admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+/* Same look as the inline links in the settings cards, as a class: the beta
+   address is rendered from JS in two places and repeating the inline style
+   would be the third copy. */
+/* System check — traffic-light rows. Same border/radius/padding as
+   .dev-queue-row so the Developer page has one list shape, not three. */
+.dev-check-list { display: flex; flex-direction: column; gap: 4px; }
+.dev-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.dev-check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+  background: var(--color-success);
+}
+.dev-check-warn .dev-check-dot { background: var(--accent, var(--red)); }
+.dev-check-fail .dev-check-dot { background: var(--color-error); }
+.dev-check-fail { border-color: color-mix(in srgb, var(--color-error) 40%, var(--border)); }
+.dev-check-body { flex: 1; min-width: 0; }
+.dev-check-label { font-size: 12px; font-weight: 600; }
+.dev-check-detail { font-size: 11px; opacity: 0.65; line-height: 1.45; }
+.dev-check-fix { flex-shrink: 0; align-self: center; }
+
+.dev-beta-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  font-weight: 600;
+}
 .admin-empty {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
   font-size: 12px;

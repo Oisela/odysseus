@@ -4147,6 +4147,43 @@ function _devVersionStaleness(d) {
     : ` · last synced ${Math.round(minutes / 60)} h ago`;
 }
 
+// The beta row, in the three states it can actually be in. Until this existed
+// the row printed `branch @ commit` and nothing else — the address was in no
+// file anywhere, so the only way in was to remember it. `odysseus-beta:7001`
+// (2026-08-15) is what guessing looks like.
+//
+// The middle state is the one worth the code: container answering, tailscale
+// serve off. The host probe says healthy, the browser says connection refused.
+function _renderBetaRow(node, d) {
+  node.textContent = '';
+  node.title = '';
+  if (!d.beta_active) {
+    node.textContent = 'not running';
+    return;
+  }
+  const label = `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}`;
+  if (d.beta_exposed && d.beta_url) {
+    const link = document.createElement('a');
+    link.className = 'dev-beta-link';
+    link.href = d.beta_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = label;
+    link.title = `Open the beta — ${d.beta_url}`;
+    node.appendChild(link);
+    return;
+  }
+  node.textContent = label;
+  const warn = document.createElement('span');
+  warn.className = 'admin-error';
+  warn.style.marginLeft = '6px';
+  warn.style.marginTop = '0';
+  warn.textContent = 'running, not shared on :7001';
+  warn.title = 'The container answers on the host but tailscale serve is off, '
+    + 'so no browser can reach it. Run the System check to fix it.';
+  node.appendChild(warn);
+}
+
 async function _loadDevStatus() {
   const pkg = el('dev-package'), prod = el('dev-prod'), beta = el('dev-beta'), upd = el('dev-update');
   if (!pkg) return;
@@ -4171,7 +4208,7 @@ async function _loadDevStatus() {
       upd.textContent = 'test here, then Update on prod';
     } else {
       prod.textContent = `v${d.version} @ ${d.commit || '?'}`;
-      beta.textContent = d.beta_active ? `${d.beta_branch || '?'} @ ${d.beta_commit || '?'}` : 'not running';
+      _renderBetaRow(beta, d);
       if (d.promotable) {
         upd.textContent = 'ready — press Update on the System card';
       } else if (d.dev_version && d.dev_version !== d.version) {
@@ -4378,6 +4415,108 @@ async function _initBuilderLink() {
   } catch (e) { /* projects module unavailable — keep button hidden */ }
 }
 
+// ── System check ──
+//
+// Alessio 2026-08-15: "ein cleanup button der einfach schaut ob alles uptodate
+// ist und da ist wo es sein sollte." Deliberately NOT one "fix everything"
+// button: the useful part is seeing WHAT is wrong, and a repair you did not
+// look at first is how a stale beta gets torn down mid-test.
+const _CHECK_STATE_LABEL = { ok: 'OK', warn: 'Check', fail: 'Broken' };
+
+function _renderSelfcheck(data) {
+  const list = el('dev-selfcheck-list');
+  const summary = el('dev-selfcheck-summary');
+  if (!list) return;
+  list.textContent = '';
+  const findings = data?.findings || [];
+  if (summary) {
+    const bad = findings.filter(f => f.state !== 'ok').length;
+    summary.textContent = !findings.length ? ''
+      : bad ? `${bad} of ${findings.length} need a look`
+            : `All ${findings.length} checks clean`;
+  }
+  for (const f of findings) {
+    const row = document.createElement('div');
+    row.className = `dev-check-row dev-check-${f.state}`;
+    const dot = document.createElement('span');
+    dot.className = 'dev-check-dot';
+    dot.title = _CHECK_STATE_LABEL[f.state] || f.state;
+    const body = document.createElement('div');
+    body.className = 'dev-check-body';
+    const label = document.createElement('div');
+    label.className = 'dev-check-label';
+    label.textContent = f.label;
+    const detail = document.createElement('div');
+    detail.className = 'dev-check-detail';
+    detail.textContent = f.detail || '';
+    body.append(label, detail);
+    row.append(dot, body);
+    if (f.fix) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'admin-btn-sm dev-check-fix';
+      btn.textContent = 'Fix';
+      btn.addEventListener('click', () => _runSelfcheckFix(f.fix, btn));
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  }
+}
+
+async function _loadSelfcheck(force = false) {
+  const btn = el('dev-selfcheck-run');
+  const summary = el('dev-selfcheck-summary');
+  const list = el('dev-selfcheck-list');
+  if (!list) return;
+  if (btn) btn.disabled = true;
+  if (summary) summary.textContent = 'checking…';
+  try {
+    const res = await fetch(`/api/system/selfcheck${force ? '?refresh=1' : ''}`, {
+      credentials: 'same-origin', cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _renderSelfcheck(await res.json());
+  } catch (e) {
+    list.textContent = '';
+    if (summary) summary.textContent = 'Check failed: ' + e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _runSelfcheckFix(fixId, btn) {
+  btn.disabled = true;
+  const before = btn.textContent;
+  btn.textContent = 'fixing…';
+  try {
+    const res = await fetch(`/api/system/selfcheck/fix`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fix: fixId }),
+    });
+    const d = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((d && (d.detail || d.message)) || `HTTP ${res.status}`);
+    if (uiModule?.showToast) uiModule.showToast(d?.detail || 'Fixed.');
+    // Re-check with a forced refresh: the cached snapshot predates the fix and
+    // would report the problem as still there.
+    await _loadSelfcheck(true);
+    _loadDevStatus();
+  } catch (e) {
+    if (uiModule?.showError) uiModule.showError('Fix failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = before;
+  }
+}
+
+function _initSelfcheck() {
+  const btn = el('dev-selfcheck-run');
+  if (!btn || btn._checkWired) return;
+  btn._checkWired = true;
+  btn.addEventListener('click', () => _loadSelfcheck(true));
+  // Not on page load: the probe is a 25 s SSH budget and opening Developer is
+  // usually about something else. The button is the trigger.
+}
+
 function _initBetaButtons() {
   const startBtn = el('dev-beta-start'), stopBtn = el('dev-beta-stop'), msg = el('dev-beta-msg');
   if (!startBtn || !stopBtn) return;
@@ -4394,6 +4533,25 @@ function _initBetaButtons() {
     msg.textContent = text;
     msg.className = ok ? 'admin-success' : 'admin-error';
   };
+  // Every path that reports a live beta ends by handing over the address. The
+  // status row carries it too, but the person who just pressed Start is looking
+  // HERE, and sending them hunting is how the round stalls.
+  const sayWithLink = async (text) => {
+    say(text, true);
+    if (!msg) return;
+    try {
+      const d = await fetch(`/api/system/status`, { credentials: 'same-origin' }).then(r => r.json());
+      if (!d.beta_url) return;
+      msg.appendChild(document.createTextNode(' '));
+      const link = document.createElement('a');
+      link.className = 'dev-beta-link';
+      link.href = d.beta_url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = d.beta_url.replace(/^https?:\/\//, '');
+      msg.appendChild(link);
+    } catch (_) { /* the sentence alone is still useful */ }
+  };
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
     say('', true);
@@ -4401,14 +4559,24 @@ function _initBetaButtons() {
       const res = await fetch(`/api/system/beta-start`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'already_running') {
-        say('Beta is already running on :7001.', true);
+        await sayWithLink('Beta is already running on :7001 —');
       } else if (res.ok && d && d.status === 'beta_start_requested') {
         say('Beta is starting on dev — the first build takes 2–4 minutes; the status refreshes every 30s (or hit Refresh).', true);
         // Poll until the Beta row flips to live (build can take minutes);
         // stop after ~8 min so an aborted build doesn't poll forever.
+        // Once it IS live, hand over the address instead of making the person
+        // who just waited four minutes go looking for it.
         let polls = 0;
-        const iv = setInterval(() => {
-          _loadDevStatus();
+        const iv = setInterval(async () => {
+          await _loadDevStatus();
+          try {
+            const s = await fetch(`/api/system/status`, { credentials: 'same-origin' }).then(r => r.json());
+            if (s.beta_active) {
+              clearInterval(iv);
+              await sayWithLink('Beta is up —');
+              return;
+            }
+          } catch (_) { /* keep polling */ }
           if (++polls >= 16) clearInterval(iv);
         }, 30000);
       } else {
@@ -4728,6 +4896,7 @@ function initDeveloper() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initSelfcheck();
   _initBuilderLink();
 }
 
@@ -5093,6 +5262,7 @@ export function initDeveloperPage() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initSelfcheck();
   _initVersionSwitcher('dev-');
 }
 
