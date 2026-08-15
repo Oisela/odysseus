@@ -42121,6 +42121,27 @@ body.theme-frosted .modal {
 .rm-build-msg { font-size: 10px; color: var(--red); line-height: 1.4; }
 .rm-build-warning { color: var(--fg); opacity: 0.65; }
 .rm-hint { font-size: 10.5px; opacity: 0.6; line-height: 1.45; }
+
+/* Build queue — the In progress column, restated as an ordered run list.
+   Deliberately the same borders/radius/gaps as .rm-card so the queue reads as
+   the same object as the board it mirrors, not a second kind of list. */
+.dev-queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.dev-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  cursor: pointer;
+}
+.dev-queue-row:hover { border-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border)); }
+.dev-queue-row input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+/* Tabular figures so the run order lines up as a column, not a ragged edge. */
+.dev-queue-num { opacity: 0.5; min-width: 18px; font-variant-numeric: tabular-nums; }
+.dev-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1050px) {
   .rm-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
