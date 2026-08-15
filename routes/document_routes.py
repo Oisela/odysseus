@@ -335,6 +335,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         request: Request,
         search: Optional[str] = Query(None),
         language: Optional[str] = Query(None),
+        label: Optional[str] = Query(None),
         sort: str = Query("recent"),
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
@@ -369,6 +370,22 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             lang_rows = lang_q.group_by(library_language_expr).all()
             languages = _aggregate_language_facets(lang_rows)
 
+            # Collection facets. Counted over the WHOLE (owner-filtered) set,
+            # not the current filter — a sidebar that renumbered itself as you
+            # clicked through it would be unusable for navigating.
+            label_q = (
+                db.query(Document.label, func.count(Document.id))
+                .outerjoin(DbSession, Document.session_id == DbSession.id)
+                .filter(Document.is_active == True).filter(_arch_cond)
+                .filter(Document.label.isnot(None)).filter(Document.label != "")
+            )
+            label_q = _owner_session_filter(label_q, user)
+            labels = [
+                {"label": name, "count": count}
+                for name, count in sorted(label_q.group_by(Document.label).all(),
+                                          key=lambda r: (r[0] or "").lower())
+            ]
+
             # Session count (owner-filtered)
             sc_q = (
                 db.query(func.count(func.distinct(Document.session_id)))
@@ -397,6 +414,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     q = q.filter(
                         Document.title.ilike(term) | Document.current_content.ilike(term)
                     )
+
+            # Collection filter. The sentinel "__none__" is how the UI asks for
+            # "not filed anywhere yet" — an empty string would be
+            # indistinguishable from "no filter" over a query parameter.
+            if label == "__none__":
+                q = q.filter(or_(Document.label.is_(None), Document.label == ""))
+            elif label:
+                q = q.filter(Document.label == label)
 
             # Language filter. "pdf" is a display language derived from the
             # source marker; "markdown" excludes those wrappers.
@@ -433,6 +458,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "session_name": session_name,
                     "title": doc.title,
                     "language": _library_language_for_document(doc),
+                    "label": doc.label or "",
                     "preview": (doc.current_content or "")[:500],
                     "version_count": doc.version_count,
                     "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
@@ -443,6 +469,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 "documents": documents,
                 "total": total,
                 "languages": languages,
+                "labels": labels,
                 "session_count": session_count,
             }
         except Exception as e:
@@ -718,6 +745,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 doc.title = req.title
             if req.language is not None:
                 doc.language = req.language
+            if req.label is not None:
+                # Empty string files it back under "no collection"; storing NULL
+                # rather than "" keeps one representation of "unfiled", which is
+                # what the __none__ filter and the facet counts both rely on.
+                doc.label = req.label.strip() or None
             if req.session_id is not None:
                 # Empty string = unlink from session
                 if req.session_id:

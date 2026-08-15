@@ -10,6 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
 import markdownModule from './markdown.js';
+import notesRichEditor from './notesRichEditor.js';
 import fileHandlerModule from './fileHandler.js';
 import codeRunnerModule from './codeRunner.js';
 import { langIcon } from './langIcons.js';
@@ -39,6 +40,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   let _emailLocalDraftDebounce = null;
   let _emailRichbodySaveDebounce = null;
   const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
+
+  // Live markdown editing: the notesRichEditor handle while it is mounted over
+  // the source textarea, else null. Declared up here because _syncHeaderActions
+  // reads it and runs long before the definitions further down.
+  let _mdRich = null;
 
   // Diff mode state
   let _diffModeActive = false;
@@ -2536,6 +2542,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   function _syncHeaderActions() {
+    // Catch-all so every path that opens or re-languages a document ends up
+    // with the right editor, without each one having to remember. Mount-only
+    // (no refresh) because this also runs on routine state syncs.
+    if (!_isMarkdownPreviewVisible()) _syncRichEditor('edit');
     const actionBtn = document.getElementById('doc-header-preview-btn');
     const exportBtn = document.getElementById('doc-export-pdf-btn');
     const pdfViewBtn = document.getElementById('doc-pdf-view-btn');
@@ -8933,6 +8943,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   /** Enter diff mode — show line-level diff for review */
   function enterDiffMode(oldContent, newContent) {
     if (_diffModeActive) exitDiffMode(true);
+    // A diff is a line-by-line view of the source; the rich layer has no way
+    // to show one, and leaving it mounted would hide the textarea it paints.
+    _unmountRichEditor();
 
     _diffModeActive = true;
     _diffOldContent = oldContent;
@@ -9273,6 +9286,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     const diffBtn = document.getElementById('doc-diff-toggle-btn');
     if (diffBtn) diffBtn.classList.remove('active');
+
+    // Back to whatever view the doc was in — for a markdown doc in Write that
+    // means the rich editor returns, now showing the accepted result.
+    _syncRichEditor(_isMarkdownPreviewVisible() ? 'preview' : 'edit');
 
     syncHighlighting();
     updateLineNumbers(textarea ? textarea.value : '');
@@ -10221,12 +10238,80 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (mdToolbar?._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
   }
 
+  // ── Live markdown editing ──
+  //
+  // Alessio 2026-08-15, after rejecting a side-by-side split: "entweder wie in
+  // note alles direkt bearbeitbar wie in obsidian oder garnicht." So Write is
+  // now the same rich editor his notes use — you type in the rendered text.
+  //
+  // Nothing about persistence changes: notesRichEditor keeps markdown as the
+  // storage format and mirrors it back into #doc-editor-textarea on every
+  // input, and that textarea is what save, versioning, diffing and the agent
+  // all read. The rich layer sits strictly on top.
+  // (`_mdRich` itself is declared with the other module state near the top —
+  // `_syncHeaderActions` reads it and is hoisted above this point.)
+
+  function _isMarkdownDoc() {
+    const doc = activeDocId && docs.get(activeDocId);
+    const lang = (doc?.language || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+    return lang === 'markdown';
+  }
+
+  function _unmountRichEditor() {
+    if (!_mdRich) return;
+    // Flush first: whatever is on screen but not yet serialised would be lost.
+    try { _mdRich.flush(); } catch (_) {}
+    try { _mdRich.destroy(); } catch (_) {}
+    _mdRich = null;
+    document.getElementById('doc-editor-wrap')?.classList.remove('doc-rich-active');
+    document.getElementById('doc-md-toolbar')?.classList.remove('doc-rich-hidden');
+  }
+
+  function _mountRichEditor() {
+    if (_mdRich) return;
+    const textarea = document.getElementById('doc-editor-textarea');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!textarea || !wrap) return;
+    _mdRich = notesRichEditor.attach(textarea, {});
+    if (!_mdRich) return;
+    // The gutter and the highlight overlay belong to the source view; they are
+    // positioned against the textarea, which is now hidden underneath.
+    wrap.classList.add('doc-rich-active');
+    // One formatting toolbar, not two — the rich editor brings its own.
+    document.getElementById('doc-md-toolbar')?.classList.add('doc-rich-hidden');
+  }
+
+  /** Rich editing applies to markdown in Write mode only.
+   *
+   * Called on tab switch, on the view toggle and after an external edit —
+   * never while typing, which is why re-rendering here cannot eat the cursor.
+   * An already-mounted editor is re-rendered from the textarea, because that
+   * is how switching to another document reaches the rich layer.
+   */
+  function _syncRichEditor(mode, { refresh = false } = {}) {
+    const wanted = mode === 'edit' && _isMarkdownDoc() && !_diffModeActive
+      && docs.get(activeDocId)?.language !== 'email';
+    if (!wanted) { _unmountRichEditor(); return; }
+    const wasMounted = !!_mdRich;
+    _mountRichEditor();
+    // A fresh attach already renders. Re-rendering a surviving one is ONLY
+    // safe at an explicit transition: doing it on a routine state sync would
+    // rebuild the contenteditable mid-keystroke and drop the caret.
+    if (refresh && wasMounted) { try { _mdRich?.refresh(); } catch (_) {} }
+  }
+
   /** Toggle markdown preview */
   function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     const preview = document.getElementById('doc-md-preview');
     const wrap = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
     if (!preview || !wrap || !textarea) return;
+    // Serialise before reading the textarea — in rich mode the visible text
+    // lives in the contenteditable until it is flushed.
+    if (_mdRich && !active) { try { _mdRich.flush(); } catch (_) {} }
+    // Every caller of this is a transition — a tab switch, the view toggle, an
+    // external edit — so the rich layer must re-read the textarea here.
+    _syncRichEditor(active ? 'preview' : 'edit', { refresh: true });
 
     if (active) {
       const md = textarea.value || '';

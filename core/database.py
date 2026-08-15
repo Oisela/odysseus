@@ -331,6 +331,11 @@ class Document(TimestampMixin, Base):
     # SET NULL), orphaning the doc and making it vanish from the owner's
     # Library + search. Owning the row directly is robust against that.
     owner           = Column(String, nullable=True, index=True)
+    # Free-text collection, deliberately the SAME shape as Note.label: one
+    # string, no join table, created by typing a new name. Notes already group
+    # this way ("Ritteressen", "Lernplan") and documents were a flat pile, which
+    # is why they were hard to find (Alessio 2026-08-15).
+    label           = Column(String, nullable=True, index=True)
     tidy_verdict    = Column(String, nullable=True)        # "keep", "junk", or None (not yet reviewed)
     # Provenance: if this document was created by opening an email attachment,
     # these point back to the source email so the "Sign and reply" flow can
@@ -831,6 +836,33 @@ def _migrate_add_session_project_id_column():
             logging.getLogger(__name__).info("Migrated: added 'project_id' to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"sessions.project_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_document_label_column():
+    """Add label to documents (the collection a doc belongs to). Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "label" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN label VARCHAR")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_documents_label ON documents(label)"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'label' to documents")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"documents.label migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -2125,6 +2157,7 @@ def init_db():
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
+    _migrate_add_document_label_column()
     _migrate_add_last_message_at_column()
     _migrate_add_session_project_id_column()
     _migrate_add_session_project_rank_column()
