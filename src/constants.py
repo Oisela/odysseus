@@ -4,7 +4,7 @@ import os
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
-APP_VERSION = "4.9.0"
+APP_VERSION = "4.10.0"
 
 # Where a human reaches the beta channel from a browser. NOT the same address
 # the host probes internally (127.0.0.1:7001): `tailscale serve` publishes 7001
