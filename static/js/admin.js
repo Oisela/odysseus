@@ -3362,12 +3362,34 @@ function _rmTrackForKind(kind) {
   return (kind === 'bug' || kind === 'polish') ? 'bug' : 'feature';
 }
 
-function _buildPrompt(item, buildMode) {
-  const title = _rmCardText(item);
+// Everything the agent needs to know about ONE card. Shared by the single-item
+// prompt and the batch prompt so a field added to the roadmap form reaches both
+// — the batch prompt silently missing "Acceptance criteria" would be invisible
+// until an agent built the wrong thing.
+function _itemBrief(item) {
   const d = _roadmapDetails(item);
+  const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
+  return `**Roadmap-ID:** ${_itemKey(item)}\n`
+    + `**Typ:** ${_rmItemKind(item)}\n`
+    + `**Titel:** ${_rmCardText(item)}\n`
+    + section('Beschreibung', d.description)
+    + section('Ziel / Problem', d.goal)
+    + section('Akzeptanzkriterien', d.acceptance)
+    + section('Testpunkte', (d.tests || []).map(t => t.text).join('\n'))
+    + section('Zielversion', d.version)
+    + section('Priorität', d.priority)
+    + section('Abhängigkeiten', d.dependencies)
+    + section('Technische Notizen / Grenzen', d.notes);
+}
+
+const _RM_STATUS_RULE =
+  'Status IMMER über `dev.sh roadmap-status` setzen — ROADMAP.md nie von '
+  + 'Hand editieren, die stabile ID steht auf einer Folgezeile und ein sed '
+  + 'trifft den falschen Eintrag.';
+
+function _buildPrompt(item, buildMode) {
   const kind = _rmItemKind(item);
   const track = _rmTrackForKind(kind);
-  const section = (label, value) => value?.trim() ? `\n**${label}:**\n${value.trim()}\n` : '';
   const directBugfix = buildMode === 'direct-bugfix';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
@@ -3376,10 +3398,11 @@ function _buildPrompt(item, buildMode) {
     ? `**Track BUG — direkt auf main, ohne Beta.**\n`
       + `1. \`dev.sh start fix/<slug>\`\n`
       + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
-      + `3. EINE Frage an Alessio: "Bugfix <slug> direkt auf main?" Ohne Ja: stopp.\n`
-      + `4. \`dev.sh bugfix fix/<slug>\` (Patch-Bump + Prod-Rebuild, kein Beta).\n`
-      + `5. \`dev.sh verify prod <version>\` — erst wenn das OK sagt, ist es fertig.\n`
-      + `6. \`dev.sh roadmap-status ${_itemKey(item)} x\`\n`
+      + `3. \`dev.sh bugfix fix/<slug>\` (Patch-Bump + Prod-Rebuild, kein Beta).\n`
+      + `   KEINE Rückfrage vorher — Alessios Entscheidung 2026-08-15. Die\n`
+      + `   Prüfung ist \`dev.sh preflight\`, das im Befehl mitläuft.\n`
+      + `4. \`dev.sh verify prod <version>\` — erst wenn das OK sagt, ist es fertig.\n`
+      + `5. \`dev.sh roadmap-status ${_itemKey(item)} x\`\n`
     : `**Track FEATURE — kurz auf Beta, dann warten.**\n`
       + `1. \`dev.sh start feat/<slug>\`\n`
       + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
@@ -3394,21 +3417,51 @@ function _buildPrompt(item, buildMode) {
       + `   "ausrollen", "prod", "go"): \`dev.sh promote-main feat/<slug>\`,\n`
       + `   dann \`dev.sh verify prod <version>\` und roadmap-status x.\n`;
   return `Setze dieses Roadmap-Item aus der ROADMAP.md um.\n\n`
-    + `**Roadmap-ID:** ${_itemKey(item)}\n`
-    + `**Typ:** ${kind}\n`
-    + `**Titel:** ${title}\n`
-    + section('Beschreibung', d.description)
-    + section('Ziel / Problem', d.goal)
-    + section('Akzeptanzkriterien', d.acceptance)
-    + section('Testpunkte', (d.tests || []).map(t => t.text).join('\n'))
-    + section('Zielversion', d.version)
-    + section('Priorität', d.priority)
-    + section('Abhängigkeiten', d.dependencies)
-    + section('Technische Notizen / Grenzen', d.notes)
+    + _itemBrief(item)
     + `\n${approach}\n\n${workflow}\n`
-    + `Status IMMER über \`dev.sh roadmap-status\` setzen — ROADMAP.md nie von `
-    + `Hand editieren, die stabile ID steht auf einer Folgezeile und ein sed `
-    + `trifft den falschen Eintrag.`;
+    + _RM_STATUS_RULE;
+}
+
+// One chat, N cards, strictly one after another. Alessio's decision
+// 2026-08-15: a chat per card paid for the same context build-up every time,
+// and he was doing five of them by hand. One branch per item keeps the
+// rollback granularity — the bundle at the end is a merge, not a squash.
+//
+// The failure rule is the important half. An agent that stops the whole batch
+// on the first hard item leaves four untouched cards marked as in progress,
+// which is worse than four items and one honest "this one did not work".
+function _buildBatchPrompt(items, buildMode) {
+  const approach = buildMode === 'plan'
+    ? `Erstelle pro Item zuerst einen kurzen Umsetzungsplan und warte auf meine `
+      + `Freigabe, bevor du für dieses Item Dateien änderst.`
+    : `Arbeite autonom. Frage nur nach, wenn eine Entscheidung das `
+      + `Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+  const bundleName = `beta-batch-${new Date().toISOString().slice(0, 10)}`;
+  const briefs = items
+    .map((it, i) => `### Item ${i + 1} von ${items.length}\n\n${_itemBrief(it)}`)
+    .join('\n---\n\n');
+  return `Setze diese ${items.length} Roadmap-Items um — STRIKT nacheinander, `
+    + `in der angegebenen Reihenfolge, ein eigener Branch pro Item.\n\n`
+    + `${briefs}\n---\n\n`
+    + `${approach}\n\n`
+    + `**Ablauf pro Item:**\n`
+    + `1. \`dev.sh start feat/<slug>\` (bzw. \`fix/<slug>\`, wenn Typ = Bug)\n`
+    + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
+    + `3. \`dev.sh roadmap-status <rm-id> '!'\` und\n`
+    + `   \`dev.sh roadmap-testpoints <rm-id> "..." "..."\` — die Testpunkte\n`
+    + `   gehören an die Karte, Alessio hakt sie dort ab.\n`
+    + `4. NICHT deployen. Zum nächsten Item.\n\n`
+    + `**Wenn ein Item scheitert:** Branch stehen lassen, \`dev.sh roadmap-status\n`
+    + `<rm-id> ' '\` (zurück auf planned), im Schlussbericht nennen — und mit\n`
+    + `dem nächsten Item weitermachen. Ein hartes Item stoppt den Stapel nicht.\n\n`
+    + `**Erst wenn alle Items durch sind:**\n`
+    + `\`dev.sh bundle ${bundleName} <branch1> <branch2> …\`\n`
+    + `Das mergt die Branches auf einen Integrations-Branch, prüft und schiebt\n`
+    + `EINEN Beta-Build. Bei einem Merge-Konflikt sagt es dir, was schon drin\n`
+    + `ist — löse den Konflikt auf dem betroffenen Branch und ruf bundle erneut.\n\n`
+    + `**Danach EIN Bericht:** pro Item was zu testen ist, plus die Beta-URL.\n`
+    + `Dann STOPP und warte auf Alessio. Kein Promote ohne Go-Wort.\n\n`
+    + _RM_STATUS_RULE;
 }
 
 async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) {
@@ -3483,6 +3536,86 @@ async function _startRoadmapBuild(it, endpointId, model, modelLabel, buildMode) 
       }
     }
     await _setItemStatus(it, 'planned');
+    throw error;
+  }
+}
+
+// The batch hand-off. Same sequence as _startRoadmapBuild, with two
+// differences that matter:
+//  - the items are ALREADY [~] (the queue IS the In progress column), so no
+//    status is written here and none has to be rolled back;
+//  - one session, N build rows. `item_key` is indexed but not unique
+//    (core/database.py), so every card links to the same chat and each card's
+//    chip opens it.
+async function _startBatchBuild(items, endpointId, model, modelLabel, buildMode) {
+  let buildSessionId = '';
+  const written = [];
+  try {
+    const projectsMod = await import('./projects.js');
+    if (!projectsMod.ensureDeveloperProject) throw new Error('Developer project setup is unavailable');
+    const builder = await projectsMod.ensureDeveloperProject();
+
+    const fd = new FormData();
+    fd.append('name', 'Chat');
+    fd.append('endpoint_id', endpointId);
+    fd.append('model', model);
+    fd.append('skip_validation', 'true');
+    const sessRes = await fetch('/api/session', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!sessRes.ok) throw new Error(`Session creation failed (HTTP ${sessRes.status})`);
+    const sess = await sessRes.json();
+    buildSessionId = sess.id;
+
+    const attachRes = await fetch(`/api/projects/${builder.id}/sessions/${sess.id}`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    if (!attachRes.ok) throw new Error(`Could not attach the chat to the Builder project (HTTP ${attachRes.status})`);
+
+    if (!_roadmapBuilds) _roadmapBuilds = new Map();
+    for (const it of items) {
+      const buildRecord = {
+        item_key: _itemKey(it), item_title: _rmCardText(it), session_id: sess.id,
+        endpoint_id: endpointId, model, model_label: modelLabel,
+      };
+      const recordRes = await fetch('/api/system/roadmap/builds', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildRecord),
+      });
+      if (!recordRes.ok) {
+        throw new Error(`Could not link "${buildRecord.item_title}" to the build chat (HTTP ${recordRes.status})`);
+      }
+      _roadmapBuilds.set(buildRecord.item_key, buildRecord);
+      written.push(buildRecord.item_key);
+    }
+
+    const sessionsMod = await import('./sessions.js');
+    await sessionsMod.loadSessions();
+    settingsModule.close();
+    await sessionsMod.selectSession(sess.id, { keepSidebar: true, showLoading: false });
+    if (typeof window.__odysseusPrepareDeveloperMode === 'function') window.__odysseusPrepareDeveloperMode();
+
+    const msgInput = document.getElementById('message');
+    if (!msgInput) throw new Error('Composer not found — cannot send the batch prompt');
+    msgInput.value = _buildBatchPrompt(items, buildMode);
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    const chatMod = await import('./chat.js');
+    await chatMod.handleChatSubmit({ preventDefault() {} });
+
+    if (uiModule?.showToast) {
+      uiModule.showToast(`Batch of ${items.length} started (${modelLabel}) — running in the background.`);
+    }
+  } catch (error) {
+    // Half a batch is the state nobody can reason about: some cards claiming a
+    // chat that never got a prompt. Delete every row this call wrote.
+    if (buildSessionId) {
+      await fetch(`/api/system/roadmap/builds/${encodeURIComponent(buildSessionId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      }).catch(() => {});
+      for (const key of written) {
+        if (_roadmapBuilds?.get(key)?.session_id === buildSessionId) _roadmapBuilds.delete(key);
+      }
+    }
     throw error;
   }
 }
@@ -4099,6 +4232,143 @@ function _renderRoadmap() {
   }
   _renderRoadmapBoard(list, sections);
   _syncDoneButton(sections);
+  _renderBuildQueue(sections);
+}
+
+// ── Build queue ──
+//
+// Alessio 2026-08-15: "ein kopf bei developer wo alle im progress gestarteten
+// änderungen gemacht werden, also mehrere auf einmal statt immer einzeln."
+//
+// The queue deliberately has no membership of its own — it IS the roadmap's
+// In progress column, in board order. Adding an item means moving the card to
+// In progress, which already works by button and by drag. A second, separate
+// selection would be a second source of truth about what is being worked on,
+// and the board would stop meaning what it says.
+//
+// The checkbox is only about THIS run: unticking parks an item for the next
+// batch without moving the card back and losing its place.
+let _queueSkipped = new Set();
+
+function _queueItems(sections) {
+  return (sections || [])
+    .filter(section => !/RELEASED/i.test(section.title))
+    .flatMap(section => section.items)
+    .filter(item => item.status === 'wip');
+}
+
+function _renderBuildQueue(sections) {
+  const list = el('dev-queue-list');
+  const form = el('dev-queue-form');
+  if (!list || !form) return;
+  const items = _queueItems(sections);
+  list.textContent = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.style.opacity = '0.6';
+    empty.textContent = 'Nothing in progress. Move cards to "In progress" on the roadmap below, then start them together here.';
+    list.appendChild(empty);
+    form.style.display = 'none';
+    return;
+  }
+  items.forEach((it, i) => {
+    const key = _itemKey(it);
+    const row = document.createElement('label');
+    row.className = 'dev-queue-row';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !_queueSkipped.has(key);
+    box.addEventListener('change', () => {
+      if (box.checked) _queueSkipped.delete(key); else _queueSkipped.add(key);
+      _syncQueueStartButton(items);
+    });
+    const num = document.createElement('span');
+    num.className = 'dev-queue-num';
+    num.textContent = `${i + 1}.`;
+    const text = document.createElement('span');
+    text.className = 'dev-queue-text';
+    text.textContent = _rmCardText(it);
+    row.append(box, num, text);
+    const build = _roadmapBuilds?.get(key);
+    if (build) {
+      // Already handed over. Say so rather than let it be queued twice — a
+      // second chat on the same card is two agents on one branch name.
+      const chip = document.createElement('span');
+      chip.className = 'rm-chip';
+      chip.textContent = 'in a build chat';
+      chip.title = build.model_label || build.model || '';
+      row.appendChild(chip);
+    }
+    list.appendChild(row);
+  });
+  form.style.display = '';
+  _syncQueueStartButton(items);
+}
+
+function _syncQueueStartButton(items) {
+  const btn = el('dev-queue-start');
+  if (!btn) return;
+  const n = items.filter(it => !_queueSkipped.has(_itemKey(it))).length;
+  if (_channelIsBeta) {
+    btn.disabled = true;
+    btn.textContent = 'Start on Prod only';
+    btn.title = 'Only Prod can reach the server repo';
+    return;
+  }
+  btn.disabled = n === 0;
+  btn.textContent = n === 1 ? 'Start batch (1 item)' : `Start batch (${n} items)`;
+  btn.title = '';
+}
+
+async function _initBuildQueue() {
+  const startBtn = el('dev-queue-start');
+  const epSel = el('dev-queue-ep');
+  const modelSel = el('dev-queue-model');
+  const modeSel = el('dev-queue-mode');
+  const msgBox = el('dev-queue-msg');
+  if (!startBtn || startBtn._queueWired) return;
+  startBtn._queueWired = true;
+
+  const say = (text) => {
+    if (!msgBox) return;
+    msgBox.textContent = text || '';
+    msgBox.style.display = text ? '' : 'none';
+  };
+  try {
+    const endpoints = await fetchModelEndpoints();
+    fillEndpointSelect(epSel, endpoints, '', false);
+    const fillModels = () => {
+      const ep = endpoints.find(e => e.id === epSel.value);
+      fillModelSelect(modelSel, ep ? ep.models : [], '', false);
+    };
+    fillModels();
+    epSel.addEventListener('change', fillModels);
+  } catch (e) {
+    say('Could not load models: ' + e.message);
+  }
+
+  startBtn.addEventListener('click', async () => {
+    if (_channelIsBeta) return;
+    const items = _queueItems(_roadmapSections(_roadmapText).sections)
+      .filter(it => !_queueSkipped.has(_itemKey(it)));
+    if (!items.length) return;
+    const endpointId = epSel.value, model = modelSel.value;
+    if (!endpointId || !model) {
+      say('Pick an endpoint and a model first.');
+      return;
+    }
+    const epLabel = epSel.options[epSel.selectedIndex]?.textContent || endpointId;
+    const modelLabel = modelSel.options[modelSel.selectedIndex]?.textContent || model;
+    startBtn.disabled = true;
+    say('');
+    try {
+      await _startBatchBuild(items, endpointId, model, `${epLabel} · ${modelLabel}`, modeSel.value);
+      _queueSkipped = new Set();
+    } catch (err) {
+      say('Could not start the batch: ' + err.message);
+      startBtn.disabled = false;
+    }
+  });
 }
 
 // The Done button carries the count, so finished work stays visible as a number
@@ -4728,6 +4998,7 @@ function initDeveloper() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initBuildQueue();
   _initBuilderLink();
 }
 
@@ -5093,6 +5364,7 @@ export function initDeveloperPage() {
   _loadServerMetrics();
   _startServerMetricsPolling();
   _loadRoadmap();
+  _initBuildQueue();
   _initVersionSwitcher('dev-');
 }
 
