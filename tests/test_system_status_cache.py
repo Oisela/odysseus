@@ -22,6 +22,8 @@ PROBE_OUTPUT = (
     "beta_commit=3edcd91ca\n"
     "beta_in_dev=1\n"
     "dev_version=4.0.0\n"
+    "deploy_active=0\n"
+    "deploy_stage=done\n"
 )
 
 
@@ -92,6 +94,7 @@ def test_status_probe_is_one_round_trip_and_never_fetches(monkeypatch):
         "beta_in_dev": True,
         "beta_exposed": True,
         "deploy_active": False,
+        "deploy_stage": "done",
         "dev_version": "4.0.0",
         "reachable": True,
     }

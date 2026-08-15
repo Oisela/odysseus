@@ -213,5 +213,8 @@ def test_the_probe_does_not_run_on_page_load():
     init = ADMIN[ADMIN.index("function _initSelfcheck"):ADMIN.index("function _initBetaButtons")]
     assert "_loadSelfcheck" in init
     assert "addEventListener('click'" in init
-    for entry in ("_initSelfcheck();\n  _initBuilderLink();", "_initSelfcheck();\n  _initVersionSwitcher"):
-        assert entry in ADMIN
+    # Wired at BOTH entry points of the Developer page. Asserted by count, not
+    # by what happens to sit on the next line: the original version pinned the
+    # exact neighbour and broke the moment another init was added between them,
+    # which says nothing about the property this test is here for.
+    assert ADMIN.count("_initSelfcheck();") == 2

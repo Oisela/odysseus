@@ -42174,6 +42174,22 @@ body.theme-frosted .modal {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
 }
 
+/* Deployment progress. Driven by promote.sh's real stage transitions, so the
+   width means something — it is not an animation on a timer. */
+.deploy-progress {
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  overflow: hidden;
+  margin-top: 5px;
+}
+.deploy-progress-fill {
+  height: 100%;
+  background: var(--color-success);
+  transition: width 0.6s ease;
+}
+.deploy-progress-fill.deploy-progress-failed { background: var(--color-error); }
+
 .dev-queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .dev-queue-row {
   display: flex;

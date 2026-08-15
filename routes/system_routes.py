@@ -37,6 +37,15 @@ _PROMOTE = "/home/deploy/odysseus-entwickler/promote.sh"
 _BETA_STOP = "/home/deploy/odysseus-entwickler/beta-stop.sh"
 _SWITCH = "/home/deploy/odysseus-entwickler/switch-version.sh"
 _RELEASES = "/home/deploy/odysseus-entwickler/releases.log"
+# Same idea for the promotion, which had no breadcrumbs at all: promote.sh
+# appends one line per stage so a detached run can be followed after a reload.
+_PROMOTE_LOG = "/home/deploy/odysseus-entwickler/promote-last.log"
+# Ordered, so the UI can turn a stage name into a position. The durations are
+# what a promotion actually takes (measured 2026-08-15: ~70 s backup, ~15 s
+# rebuild with a warm cache, ~10 s until prod answers) — the bar is an honest
+# estimate between real stage transitions, not a decoration that moves on a
+# timer with nothing behind it.
+_PROMOTE_STAGES = ("start", "backup", "rebuild", "healthcheck", "done")
 _HOST_METRICS_SCRIPT = r"""
 awk '/^cpu / { total=0; for (i=2; i<=NF; i++) total += $i;
   print "cpu_total=" total; print "cpu_idle=" ($5 + $6) }' /proc/stat
@@ -91,6 +100,7 @@ git -C {_PROD_DIR} show origin/dev:src/constants.py 2>/dev/null \
   | grep -m1 APP_VERSION | cut -d'"' -f2 | head -1 | sed 's/^/dev_version=/'
 echo "deploy_active=$(systemctl list-units --state=active --no-legend \
   'odysseus-promote-*' 'odysseus-switch-*' 2>/dev/null | wc -l | tr -d ' ')"
+tail -1 {_PROMOTE_LOG} 2>/dev/null | cut -f2 | sed 's/^/deploy_stage=/'
 """
 
 # Everything POST /switch must know before it fires. The switch runs detached,
@@ -416,6 +426,7 @@ def _host_status_snapshot(force: bool = False) -> dict:
             # and had no way to tell whether it was still running (2026-08-15).
             # The host knows; the UI only had to ask.
             "deploy_active": (values.get("deploy_active") or "0") != "0",
+            "deploy_stage": values.get("deploy_stage") or "",
             "dev_version": values.get("dev_version") or None,
             "reachable": bool(values),
         }
@@ -867,6 +878,7 @@ def setup_system_routes() -> APIRouter:
             "beta_in_dev": snap["beta_in_dev"],
             "beta_exposed": snap["beta_exposed"],
             "deploy_active": snap["deploy_active"],
+            "deploy_stage": snap["deploy_stage"],
             # The address a human types. Only sent while a beta is actually up,
             # so the UI can render a link without first deciding whether it
             # leads anywhere.

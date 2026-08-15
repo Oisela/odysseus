@@ -111,6 +111,46 @@ def test_a_running_deployment_greys_both_update_buttons():
     assert "b.disabled = true" in fn
 
 
+def test_the_progress_bar_tracks_real_stages():
+    """Not an animation on a timer: promote.sh reports each stage, and the bar
+    only moves when one actually changes."""
+    assert "_PROMOTE_STAGES" in ROUTES
+    assert "deploy_stage" in system_routes._HOST_STATUS_SCRIPT
+    fn = ADMIN[ADMIN.index("const _DEPLOY_STAGES = {"):
+               ADMIN.index("function _renderActiveRoundBanner()")]
+    for stage in ("start", "backup", "rebuild", "healthcheck", "done", "failed"):
+        assert f"{stage}:" in fn, f"stage {stage} has no position on the bar"
+    assert "deploy-progress" in fn
+    assert ".deploy-progress-fill" in (ROOT / "static/style.css").read_text(encoding="utf-8")
+
+
+def test_a_failed_promotion_stays_on_screen():
+    """The unit is swept away by --collect; the failure must not vanish with it.
+
+    That is exactly what happened on 2026-08-15: the run died at git, the unit
+    disappeared, and the page said nothing at all.
+    """
+    fn = ADMIN[ADMIN.index("const _DEPLOY_STAGES = {"):
+               ADMIN.index("function _renderActiveRoundBanner()")]
+    assert "stage === 'failed'" in fn
+    assert "running || stage === 'failed'" in fn
+    assert "production was left untouched" in fn
+
+
+def test_promote_records_every_stage_including_the_crash():
+    promote = (ROOT.parent / "odysseus-setup" / "odysseus-entwickler" / "promote.sh")
+    if not promote.exists():
+        pytest.skip("setup repo not checked out next to this one")
+    body = promote.read_text(encoding="utf-8")
+    for stage in ("start", "backup", "rebuild", "healthcheck", "done"):
+        assert f"_stage {stage}" in body, f"promote.sh never reports {stage}"
+    # A crash must be recorded as a crash, not leave the last good stage up.
+    assert "trap _on_exit EXIT" in body
+    assert "_stage failed" in body
+    # `if`, not `&&` — under set -e a false test would swallow the exit code.
+    assert 'if [ "$rc" -ne 0 ]; then _stage failed' in body
+
+
 def test_the_status_probe_stays_one_round_trip():
     """The Developer page polls this every 30 s."""
     script = ROUTES.split('_HOST_STATUS_SCRIPT = f"""', 1)[1].split('"""', 1)[0]
