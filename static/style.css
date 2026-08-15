@@ -15848,6 +15848,17 @@ span[id$="-logo"] svg:not([width]) {
   overflow-y: auto;
 }
 .doclib-lang-chips:empty { display: none; }
+/* Collections sit above the language chips and read as the primary axis: this
+   is how a project is navigated, while language is a technical facet. Same
+   chip component, one step more present. */
+.doclib-collection-chips {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 3px;
+}
+.doclib-collection-chips .memory-cat-chip {
+  font-weight: 600;
+}
 /* Mobile: keep tag chips on ONE row and scroll horizontally instead of wrapping
    into a tall multi-line block (Serve, library — anywhere .doclib-lang-chips is used). */
 @media (max-width: 768px) {

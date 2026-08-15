@@ -35,6 +35,7 @@ class DocumentPatch(BaseModel):
     title: Optional[str] = None
     language: Optional[str] = None
     session_id: Optional[str] = None  # link/unlink document to a session
+    label: Optional[str] = None       # collection; "" removes it from one
 
 
 # ---- Helpers ----
@@ -49,6 +50,9 @@ def _doc_to_dict(doc: Document) -> Dict[str, Any]:
         "version_count": doc.version_count,
         "is_active": doc.is_active,
         "archived": bool(getattr(doc, "archived", False)),
+        # getattr with a default: a row read before the label migration ran
+        # would otherwise blow up serialisation for every consumer.
+        "label": getattr(doc, "label", None) or "",
         "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
         "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
         # Source-email provenance (set when doc was created from an email
