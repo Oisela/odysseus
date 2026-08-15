@@ -29,8 +29,12 @@ def test_get_better_forks_by_stable_message_id_and_never_opens_the_fork():
     assert "ensureDeveloperProject()" in workflow
     assert "_forkAtMessage(sessionId, aiMsgElement)" in workflow
     assert "/api/projects/${builder.id}/sessions/${data.id}" in workflow
-    assert "Get better: ${source?.name" in workflow
-    assert "_runBackgroundAgentTurn(data.id, GET_BETTER_PROMPT)" in workflow
+    # v4.6: the run is named after the focus text when there is one, falling
+    # back to the source chat — several "Get better: Conversation" entries in
+    # the Builder project are indistinguishable a day later.
+    assert "const runLabel = focusText || source?.name || 'Conversation';" in workflow
+    assert "Get better: ${runLabel}" in workflow
+    assert "_runBackgroundAgentTurn(data.id, _getBetterPrompt(focusText))" in workflow
     assert "selectSession(" not in workflow
     assert "version.channel === 'beta'" in workflow
     assert "Beta cannot access or deploy the developer clone" in workflow

@@ -36,6 +36,8 @@ def test_router_exposes_the_expected_surface():
         "/api/system/switch",
         "/api/system/switch-log",
         "/api/system/promote",
+        "/api/system/selfcheck",
+        "/api/system/selfcheck/fix",
     }
 
 
