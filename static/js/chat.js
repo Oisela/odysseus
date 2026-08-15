@@ -3297,18 +3297,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             return;
           }
 
-          if (abortReason === 'recovery') {
-            const recoveryMsg = 'Streaming was interrupted after the tab went inactive. Partial output was preserved.';
-            if (holder && !accumulated) {
-              holder.querySelector('.body').innerHTML =
-                `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${recoveryMsg}]</div>`;
-            } else if (holder && accumulated) {
-              const recoveryNote = document.createElement('div');
-              recoveryNote.className = 'stopped-indicator';
-              recoveryNote.innerHTML =
-                `<span style="color: var(--color-error);">[${recoveryMsg}]</span>`;
-              holder.querySelector('.body').appendChild(recoveryNote);
-            }
+          if (abortReason === 'detach') {
+            // The browser reader was intentionally dropped after tab suspension.
+            // The detached server run remains authoritative and resumeStream()
+            // reattaches to it; do not render a cancellation or auto-continue.
+            if (holder && holder.parentNode) holder.remove();
             currentAbort = null;
             return;
           }
@@ -4171,46 +4164,50 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       pre.dataset.btnPosComputed = '1';
     }, true);
 
-    // Tab suspension recovery: when user tabs back in, check if stream froze
+    // Tab suspension recovery: the server owns ordinary chat/agent runs after
+    // they start, so a sleeping or closed browser must never turn a stale local
+    // SSE reader into an abort/retry that cancels or duplicates that work.
+    // Reattach to the detached server run instead; if it already finished,
+    // resumeStream falls back to the canonical saved history.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible') return;
-      if (!isStreaming) return;
+      if (document.visibilityState !== 'visible' || !isStreaming) return;
 
-      // Stream claims to be running — check if reader is actually alive
       const staleSince = Date.now() - _lastReaderActivity;
-      if (staleSince < 20000) return; // Active recently, probably fine
+      if (staleSince < 20000) return;
+      const sessionId = _streamSessionId ||
+        (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId());
+      if (!sessionId) return;
 
-      // Reader hasn't produced data in 5+ seconds after tab resume.
-      // Give it a short grace period then recover.
-      console.warn('[tab-recovery] Stream appears frozen (no activity for ' + Math.round(staleSince/1000) + 's). Recovering...');
+      console.warn('[tab-recovery] Stream reader is stale; reattaching to detached server run.');
+      setTimeout(async () => {
+        if (!isStreaming || Date.now() - _lastReaderActivity < 5000) return;
+        if (sessionModule.getCurrentSessionId &&
+            sessionModule.getCurrentSessionId() !== sessionId) return;
 
-      setTimeout(() => {
-        // Re-check — maybe the reader woke up during the grace period
-        if (!isStreaming) return;
-        const stillStale = Date.now() - _lastReaderActivity;
-        if (stillStale < 5000) return; // Came back to life
-
-        console.warn('[tab-recovery] Stream confirmed dead. Aborting and reloading session.');
-
-        // Abort the frozen stream, but preserve the visible bubble.
-        if (currentAbort) {
-          currentAbort._reason = 'recovery';
+        if (currentAbort && !currentAbort.signal.aborted) {
+          currentAbort._reason = 'detach';
           currentAbort.abort();
         }
+        currentAbort = null;
         isStreaming = false;
+        _setForegroundChatBusy(false);
+        _sendInFlight = false;
 
-        // Release Web Lock
         if (_webLockRelease) {
           _webLockRelease();
           _webLockRelease = null;
         }
+        const submitBtn = document.getElementById('submit');
+        updateSubmitButton('idle', submitBtn);
+        const messageInput = document.getElementById('message');
+        if (messageInput) messageInput.disabled = false;
 
-        // Reset UI state
-        var _submitBtn = document.getElementById('submit');
-        updateSubmitButton('idle', _submitBtn);
-        var _msgInput = document.getElementById('message');
-        if (_msgInput) _msgInput.disabled = false;
-      }, 2000); // 2 second grace period
+        const attached = await resumeStream(sessionId);
+        if (!attached && sessionModule.getCurrentSessionId &&
+            sessionModule.getCurrentSessionId() === sessionId) {
+          sessionModule.selectSession(sessionId);
+        }
+      }, 2000);
     });
 
     // On mobile, fade out welcome text when keyboard opens to prevent overlap

@@ -33,5 +33,9 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
   zurück; die bestehende Berechtigungsprüfung für rohe URLs bleibt aktiv.
 - Mobile Toasts berücksichtigen die obere und rechte iPhone-Safe-Area, damit
   Statusmeldungen nicht von Dynamic Island oder Systemstatus überdeckt werden.
+- Normale Chat-/Agent-Läufe bleiben serverseitig detached aktiv, wenn Browser
+  oder App geschlossen beziehungsweise suspendiert werden. Beim Zurückkehren
+  hängt sich der Client an denselben Lauf, statt ihn abzubrechen und eine
+  potenziell doppelte Fortsetzung zu starten.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).

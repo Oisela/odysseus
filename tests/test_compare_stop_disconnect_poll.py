@@ -24,6 +24,7 @@ normal completed streams, and non-interference with detached chat/agent
 streams that are meant to keep running server-side after a client disconnect.
 """
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -271,6 +272,25 @@ async def test_cancellation_contract_holds_for_chat_and_agent_shaped_streams(mod
 # (detached, survives client disconnect). This pins the actual branch added to
 # routes/chat_routes.py rather than re-deriving it from source text.
 # --------------------------------------------------------------------------- #
+
+def test_tab_resume_reattaches_instead_of_cancelling_or_continuing():
+    """A suspended browser must reattach to the detached server run.
+
+    Regression guard: the old visibility handler aborted with ``recovery`` and
+    could submit a second continuation while the original server-side agent was
+    still working. Closing/reopening the app must leave one authoritative run.
+    """
+    src = (Path(__file__).parents[1] / "static/js/chat.js").read_text()
+    visibility = src.index("// Tab suspension recovery:")
+    end = src.index("// On mobile, fade out welcome text", visibility)
+    handler = src[visibility:end]
+
+    assert "resumeStream(sessionId)" in handler
+    assert "currentAbort._reason = 'detach'" in handler
+    assert "currentAbort._reason = 'recovery'" not in handler
+    assert "_tryAutoRecover" not in handler
+    assert "sb.click()" not in handler
+
 
 def test_compare_mode_branch_skips_agent_runs_in_source():
     """The compare_mode branch must return the raw generator as the SSE body
