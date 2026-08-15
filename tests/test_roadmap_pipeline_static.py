@@ -40,13 +40,19 @@ def test_build_prompt_routes_bugs_and_features_to_different_tracks():
     assert "function _rmTrackForKind(kind)" in ADMIN
     assert "(kind === 'bug' || kind === 'polish') ? 'bug' : 'feature'" in ADMIN
 
-    start = ADMIN.index("function _buildPrompt(")
+    # Starts at the shared status rule: _buildPrompt and _buildBatchPrompt both
+    # end by appending it, so the assembled prompt only exists across both.
+    start = ADMIN.index("const _RM_STATUS_RULE")
     prompt = ADMIN[start:ADMIN.index("async function _startRoadmapBuild")]
 
-    # Bug track: no beta, one question, verified afterwards.
+    # Bug track: no beta, no question, verified afterwards. The question was
+    # dropped 2026-08-15 (Alessio) — it came before every bugfix and the answer
+    # was always yes, so `dev.sh preflight` inside the command is the check now.
     assert "Track BUG" in prompt
     assert "dev.sh bugfix fix/" in prompt
     assert "ohne Beta" in prompt
+    assert "KEINE Rückfrage" in prompt
+    assert 'direkt auf main?"' not in prompt
     # Feature track: beta, then a hard stop until a go-word arrives.
     assert "Track FEATURE" in prompt
     assert "dev.sh ready feat/" in prompt
@@ -97,8 +103,11 @@ def test_build_prompt_uses_definition_and_selected_workflow():
 
 
 def test_build_is_recorded_before_prompt_send_and_http_errors_are_not_ignored():
+    # Ends at the batch variant, not at the form: _startBatchBuild is the same
+    # sequence for N items and would otherwise be counted as a second copy of
+    # every call this test pins.
     workflow = ADMIN[ADMIN.index("async function _startRoadmapBuild"):
-                     ADMIN.index("function _cardBuildFormHtml")]
+                     ADMIN.index("async function _startBatchBuild")]
     attach = workflow.index("if (!attachRes.ok)")
     record = workflow.index("const recordRes = await fetch('/api/system/roadmap/builds'")
     send = workflow.index("await chatMod.handleChatSubmit")
@@ -109,8 +118,11 @@ def test_build_is_recorded_before_prompt_send_and_http_errors_are_not_ignored():
 
 
 def test_build_marks_item_in_progress_before_creating_the_project_chat():
+    # Ends at the batch variant, not at the form: _startBatchBuild is the same
+    # sequence for N items and would otherwise be counted as a second copy of
+    # every call this test pins.
     workflow = ADMIN[ADMIN.index("async function _startRoadmapBuild"):
-                     ADMIN.index("function _cardBuildFormHtml")]
+                     ADMIN.index("async function _startBatchBuild")]
     mark_wip = workflow.index("await _setItemStatus(it, 'wip')")
     prepare_project = workflow.index("ensureDeveloperProject")
     create_session = workflow.index("fetch('/api/session'")
@@ -118,8 +130,11 @@ def test_build_marks_item_in_progress_before_creating_the_project_chat():
 
 
 def test_failed_build_setup_rolls_back_status_and_persisted_build_link():
+    # Ends at the batch variant, not at the form: _startBatchBuild is the same
+    # sequence for N items and would otherwise be counted as a second copy of
+    # every call this test pins.
     workflow = ADMIN[ADMIN.index("async function _startRoadmapBuild"):
-                     ADMIN.index("function _cardBuildFormHtml")]
+                     ADMIN.index("async function _startBatchBuild")]
     assert "await _setItemStatus(it, 'planned')" in workflow
     assert "method: 'DELETE'" in workflow
     assert "_roadmapBuilds.delete(itemKey)" in workflow
@@ -179,6 +194,17 @@ def test_screenshots_survived_the_list_view_removal():
     assert ADMIN.count("_appendScreenshots(card, details)") >= 2, (
         "board cards and the Done view must both render screenshots"
     )
+
+
+def test_roadmap_screenshot_parser_accepts_cache_busting_query_strings():
+    """Uploaded-image URLs may carry cache-busting query parameters.
+
+    The roadmap parser must keep the complete URL; otherwise the Markdown
+    remains in the card title and no screenshot thumbnail is extracted.
+    """
+    markdown = (ROOT / "static" / "js" / "markdown.js").read_text()
+    source = markdown.split("export const UPLOAD_IMAGE_MD_SOURCE = ", 1)[1].split(";", 1)[0]
+    assert "(?:\\\\?[^\\\\s)]*)?" in source
 
 
 def test_server_metrics_card_has_manual_and_five_second_refresh():

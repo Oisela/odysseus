@@ -4,7 +4,16 @@ import os
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
-APP_VERSION = "4.5.3"
+APP_VERSION = "4.6.0"
+
+# Where a human reaches the beta channel from a browser. NOT the same address
+# the host probes internally (127.0.0.1:7001): `tailscale serve` publishes 7001
+# only under the full MagicDNS name and only over HTTPS, so the short forms that
+# work for prod on :7000 fail here. Until this existed the URL lived nowhere in
+# the code and had to be guessed — which is how a running beta looked broken.
+BETA_PUBLIC_URL = os.getenv(
+    "ODYSSEUS_BETA_PUBLIC_URL", "https://odysseus-server.tailec54cf.ts.net:7001"
+)
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")

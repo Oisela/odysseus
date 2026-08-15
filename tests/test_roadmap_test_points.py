@@ -112,10 +112,20 @@ def test_every_detail_field_of_the_popup_takes_a_pasted_screenshot():
 
 def test_the_build_prompt_hands_the_points_to_the_agent():
     """The agent fills the points when it reaches [!]; without them in the
-    prompt it has no idea they are expected."""
-    prompt = ADMIN.split("function _buildPrompt(")[1].split("\n}\n")[0]
-    assert "section('Testpunkte'" in prompt
-    assert "roadmap-testpoints" in prompt
+    prompt it has no idea they are expected.
+
+    The item fields moved into _itemBrief in v4.6 so the single-item and the
+    batch prompt share one definition — a field added to the roadmap form has
+    to reach both, and a batch prompt quietly missing the test points would
+    only surface once an agent shipped without them.
+    """
+    brief = ADMIN.split("function _itemBrief(item) {")[1].split("\n}\n")[0]
+    assert "section('Testpunkte'" in brief
+
+    for builder in ("function _buildPrompt(", "function _buildBatchPrompt("):
+        body = ADMIN.split(builder)[1].split("\n}\n")[0]
+        assert "_itemBrief(" in body, f"{builder} must carry the item fields"
+        assert "roadmap-testpoints" in body, f"{builder} must ask for the points"
 
 
 def test_card_styling_uses_existing_variables():

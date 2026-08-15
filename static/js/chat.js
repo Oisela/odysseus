@@ -4733,6 +4733,73 @@ Use the pinned odysseus-entwickler skill and the Builder project workflow. Inspe
 
 Do not stop at a generic critique. Trace each important failure to its likely cause, then autonomously implement the highest-value durable improvements in the appropriate Odysseus code or skills. Preserve intentional behavior, avoid tailoring a fix only to this one transcript, add regression tests, run the relevant checks, perform a final bug/duplication/clean-code review, update the roadmap when appropriate, and deliver the result through the normal developer Beta workflow. If a proposed change would materially alter product behavior and the evidence is ambiguous, document the decision instead of guessing.`;
 
+  // Ask what should get better, before spending a full analysis run on a guess.
+  // The prompt above is a standing checklist over the whole transcript; with a
+  // long conversation that means the agent picks what to work on, and Alessio
+  // had no way to say "no, THIS part". Empty input keeps the old behaviour, so
+  // the fast path costs one extra Enter.
+  //
+  // Overlay built the same way as the recurring-delete chooser in calendar.js:
+  // promise in, overlay out, Escape resolves.
+  function _askGetBetterFocus() {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal';
+      overlay.style.display = '';
+      overlay.innerHTML = `
+        <div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="get-better-focus-title">
+          <div class="modal-header"><h4 id="get-better-focus-title">Get better</h4></div>
+          <div class="modal-body">
+            <p style="margin-top:0;">What exactly should improve? Leave empty to review the whole conversation.</p>
+            <textarea id="get-better-focus" rows="4" spellcheck="false"
+              placeholder="e.g. it kept re-reading the same files, or the beta link was wrong"
+              style="width:100%;box-sizing:border-box;"></textarea>
+          </div>
+          <div class="modal-footer" style="gap:8px;flex-wrap:wrap;">
+            <button class="confirm-btn confirm-btn-secondary" data-choice="cancel">Cancel</button>
+            <button class="confirm-btn" data-choice="start">Start</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const field = overlay.querySelector('#get-better-focus');
+      const close = (value) => {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(value);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          close(null);
+        }
+        // Ctrl/Cmd+Enter submits, like the composer.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          close(field.value.trim());
+        }
+      };
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) return close(null);
+        const btn = e.target.closest('[data-choice]');
+        if (!btn) return;
+        close(btn.dataset.choice === 'cancel' ? null : field.value.trim());
+      });
+      document.addEventListener('keydown', onKey);
+      field.focus();
+    });
+  }
+
+  function _getBetterPrompt(focusText) {
+    if (!focusText) return GET_BETTER_PROMPT;
+    return `${GET_BETTER_PROMPT}
+
+**Alessios Fokus für diese Analyse:**
+${focusText}
+
+Priorisiere das. Findest du in der Historie keinen Beleg dafür, sag das ehrlich,
+statt ersatzweise etwas anderes zu bauen.`;
+  }
+
   async function _runBackgroundAgentTurn(sessionId, prompt) {
     const fd = new FormData();
     fd.append('message', prompt);
@@ -4812,9 +4879,26 @@ Do not stop at a generic critique. Trace each important failure to its likely ca
     }
   }
 
+  /**
+   * Send one message into a background chat and let its agent turn run.
+   *
+   * Used by the roadmap board to deliver a go-word into the build chat that is
+   * waiting for it: the agent stopped after `dev.sh ready` and watches this
+   * conversation, so the promotion path stays the SAME tested path a typed
+   * "push to main" takes. Inventing a second, silent promotion route would
+   * bypass every check that lives in the agent's own workflow.
+   */
+  export async function sendToSession(sessionId, text) {
+    if (!sessionId || !text) throw new Error('sendToSession needs a session and a message');
+    await _runBackgroundAgentTurn(sessionId, text);
+  }
+
   export async function getBetterFrom(aiMsgElement) {
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId || aiMsgElement.dataset.getBetterStarting === 'true') return;
+    // Ask BEFORE the flag: a cancelled dialog must leave the button usable.
+    const focusText = await _askGetBetterFocus();
+    if (focusText === null) return;
     aiMsgElement.dataset.getBetterStarting = 'true';
     try {
       const versionRes = await fetch(`${API_BASE}/api/version`, { credentials: 'same-origin' });
@@ -4840,7 +4924,11 @@ Do not stop at a generic critique. Trace each important failure to its likely ca
 
       const source = sessionModule.getSessions().find(s => String(s.id) === String(sessionId));
       const rename = new FormData();
-      rename.append('name', `Get better: ${source?.name || 'Conversation'}`.slice(0, 100));
+      // The focus names the run better than the source chat does — several
+      // "Get better: Conversation" entries in the Builder project are
+      // indistinguishable a day later.
+      const runLabel = focusText || source?.name || 'Conversation';
+      rename.append('name', `Get better: ${runLabel}`.slice(0, 100));
       await fetch(`${API_BASE}/api/session/${data.id}`, {
         method: 'PATCH',
         credentials: 'same-origin',
@@ -4852,7 +4940,7 @@ Do not stop at a generic critique. Trace each important failure to its likely ca
       if (uiModule?.showToast) {
         uiModule.showToast('Get better started in the Builder project — this chat stays open.');
       }
-      void _runBackgroundAgentTurn(data.id, GET_BETTER_PROMPT).catch(err => {
+      void _runBackgroundAgentTurn(data.id, _getBetterPrompt(focusText)).catch(err => {
         console.error('Get better background run failed:', err);
       });
     } catch (err) {
@@ -5626,6 +5714,7 @@ Do not stop at a generic critique. Trace each important failure to its likely ca
     regenerateFrom,
     forkFrom,
     getBetterFrom,
+    sendToSession,
     editUserMessage,
     editAIMessage,
     resendUserMessage,

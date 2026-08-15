@@ -2669,6 +2669,27 @@
         <!-- ═══ DEVELOPER TAB (admin) ═══ -->
         <div data-settings-panel="developer" class="hidden">
 
+          <div class="admin-card" id="settings-dev-queue-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/></svg>Build queue</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Everything in the roadmap's <em>In progress</em> column, built in one agent chat instead of one chat per card. Order follows the board, top to bottom.</div>
+            <div id="dev-queue-list" class="dev-queue-list"><div style="opacity:0.6">loading…</div></div>
+            <div class="rm-buildform" id="dev-queue-form" style="display:none;">
+              <label class="rm-field"><span>Endpoint</span>
+                <select class="settings-select" id="dev-queue-ep"></select></label>
+              <label class="rm-field"><span>Model</span>
+                <select class="settings-select" id="dev-queue-model"></select></label>
+              <label class="rm-field"><span>Workflow</span>
+                <select class="settings-select" id="dev-queue-mode">
+                  <option value="build">Build autonomously up to beta</option>
+                  <option value="plan">Plan and ask first</option>
+                </select></label>
+              <div class="rm-build-msg" id="dev-queue-msg" style="display:none;"></div>
+              <div class="rm-actions">
+                <button type="button" class="memory-toolbar-btn" id="dev-queue-start">Start batch</button>
+              </div>
+            </div>
+          </div>
+
           <div class="admin-card" id="settings-dev-status-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Package status</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">The open package is what dev is currently collecting; releases get promoted to prod via the System card.</div>
@@ -2691,6 +2712,16 @@
             </div>
             <div id="dev-chat-msg" style="margin-top:6px;font-size:12px;"></div>
             <div id="dev-beta-msg" style="margin-top:6px;font-size:12px;"></div>
+          </div>
+
+          <div class="admin-card" id="settings-dev-selfcheck-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 11 13 15 9"/></svg>System check</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Is everything up to date and where it should be? Read-only — each finding that can be repaired offers its own button, so nothing changes without you pressing it.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+              <button class="admin-btn-add" id="dev-selfcheck-run" type="button">Run check</button>
+              <span id="dev-selfcheck-summary" style="font-size:12px;opacity:0.65;"></span>
+            </div>
+            <div id="dev-selfcheck-list" class="dev-check-list"></div>
           </div>
 
           <div class="admin-card" id="developer-direct-main-card">

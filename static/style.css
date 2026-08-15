@@ -15561,6 +15561,42 @@ span[id$="-logo"] svg:not([width]) {
 /* Status messages */
 .admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
 .admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+/* Same look as the inline links in the settings cards, as a class: the beta
+   address is rendered from JS in two places and repeating the inline style
+   would be the third copy. */
+/* System check — traffic-light rows. Same border/radius/padding as
+   .dev-queue-row so the Developer page has one list shape, not three. */
+.dev-check-list { display: flex; flex-direction: column; gap: 4px; }
+.dev-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.dev-check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+  background: var(--color-success);
+}
+.dev-check-warn .dev-check-dot { background: var(--accent, var(--red)); }
+.dev-check-fail .dev-check-dot { background: var(--color-error); }
+.dev-check-fail { border-color: color-mix(in srgb, var(--color-error) 40%, var(--border)); }
+.dev-check-body { flex: 1; min-width: 0; }
+.dev-check-label { font-size: 12px; font-weight: 600; }
+.dev-check-detail { font-size: 11px; opacity: 0.65; line-height: 1.45; }
+.dev-check-fix { flex-shrink: 0; align-self: center; }
+
+.dev-beta-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  font-weight: 600;
+}
 .admin-empty {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
   font-size: 12px;
@@ -42085,6 +42121,27 @@ body.theme-frosted .modal {
 .rm-build-msg { font-size: 10px; color: var(--red); line-height: 1.4; }
 .rm-build-warning { color: var(--fg); opacity: 0.65; }
 .rm-hint { font-size: 10.5px; opacity: 0.6; line-height: 1.45; }
+
+/* Build queue — the In progress column, restated as an ordered run list.
+   Deliberately the same borders/radius/gaps as .rm-card so the queue reads as
+   the same object as the board it mirrors, not a second kind of list. */
+.dev-queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.dev-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  cursor: pointer;
+}
+.dev-queue-row:hover { border-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border)); }
+.dev-queue-row input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+/* Tabular figures so the run order lines up as a column, not a ragged edge. */
+.dev-queue-num { opacity: 0.5; min-width: 18px; font-variant-numeric: tabular-nums; }
+.dev-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1050px) {
   .rm-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
