@@ -3425,6 +3425,66 @@ function _roundBlockReason() {
 
 // A disabled button with only a tooltip is a mystery. The banner says which
 // round holds the clone and what to do about it.
+// "Update running -> v4.9.0", from server state rather than a variable the
+// reload threw away. Also greys the Update buttons while it runs, so a second
+// press cannot even be attempted (the server would 409 it anyway).
+// The stages promote.sh reports, with what each one means in words and where
+// it sits on the bar. Percentages come from measured durations (backup is the
+// long one, ~70 s of tar), so the bar tracks reality between transitions
+// instead of animating on a timer with nothing behind it.
+const _DEPLOY_STAGES = {
+  start:       { pct: 5,   label: 'Starting' },
+  backup:      { pct: 20,  label: 'Backing up your data' },
+  rebuild:     { pct: 70,  label: 'Rebuilding and restarting' },
+  healthcheck: { pct: 92,  label: 'Waiting for production to answer' },
+  done:        { pct: 100, label: 'Done' },
+  failed:      { pct: 100, label: 'Failed' },
+};
+
+function _renderDeployBanner(d) {
+  const box = el('dev-deploy-banner');
+  const stage = (d && d.deploy_stage) || '';
+  const running = !!(d && d.deploy_active);
+  // `failed` must show even after the unit is gone — that is the whole point:
+  // a promotion that died at git used to leave the page saying nothing at all.
+  const show = running || stage === 'failed';
+
+  for (const b of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+    if (running) { b.disabled = true; b.title = 'A deployment is already running'; }
+  }
+  if (!box) return;
+  if (!show) { box.style.display = 'none'; box.textContent = ''; return; }
+
+  const info = _DEPLOY_STAGES[stage] || { pct: 5, label: 'Working' };
+  const failed = stage === 'failed';
+  const target = d.dev_version ? `v${d.dev_version}` : 'the version on dev';
+
+  box.style.display = '';
+  box.className = failed ? 'admin-error' : 'admin-success';
+  box.textContent = '';
+
+  const line = document.createElement('div');
+  line.textContent = failed
+    ? 'Update failed — production was left untouched. Check the Developer chat or ask Claude Code.'
+    : `Update running — rebuilding production to ${target}: ${info.label}…`;
+  box.appendChild(line);
+
+  const track = document.createElement('div');
+  track.className = 'deploy-progress';
+  const fill = document.createElement('div');
+  fill.className = 'deploy-progress-fill' + (failed ? ' deploy-progress-failed' : '');
+  fill.style.width = `${info.pct}%`;
+  track.appendChild(fill);
+  box.appendChild(track);
+
+  if (!failed) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;opacity:0.7;margin-top:3px;';
+    hint.textContent = 'About 90 seconds. Close and REOPEN the app window once it is back.';
+    box.appendChild(hint);
+  }
+}
+
 function _renderActiveRoundBanner() {
   const el_ = el('dev-active-round');
   if (!el_) return;
@@ -4713,6 +4773,11 @@ async function _loadDevStatus() {
         upd.textContent = 'up to date';
       }
     }
+    // A promotion detaches itself, so a reload loses the "Update started"
+    // message the browser was holding. The host still knows, so the state
+    // survives the reload — Alessio pressed Update, reloaded, and could not
+    // tell whether it was still running (2026-08-15).
+    _renderDeployBanner(d);
     // Same gate as the System card: only a live beta whose commit is already
     // in dev may be promoted, because prod builds from dev — anything else
     // would ship a different tree than the one that was tested.
