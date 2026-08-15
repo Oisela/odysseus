@@ -130,10 +130,10 @@ def test_a_failed_promotion_stays_on_screen():
     That is exactly what happened on 2026-08-15: the run died at git, the unit
     disappeared, and the page said nothing at all.
     """
-    fn = ADMIN[ADMIN.index("const _DEPLOY_STAGES = {"):
+    fn = ADMIN[ADMIN.index("function _paintDeployBanner(box, d) {"):
                ADMIN.index("function _renderActiveRoundBanner()")]
     assert "stage === 'failed'" in fn
-    assert "running || stage === 'failed'" in fn
+    assert "d.deploy_active) || stage === 'failed'" in fn
     assert "production was left untouched" in fn
 
 
@@ -149,6 +149,36 @@ def test_promote_records_every_stage_including_the_crash():
     assert "_stage failed" in body
     # `if`, not `&&` — under set -e a false test would swallow the exit code.
     assert 'if [ "$rc" -ne 0 ]; then _stage failed' in body
+
+
+def test_the_banner_appears_on_both_cards():
+    """Update sits on the System card AND the Developer page. Alessio pressed
+    it on the System card and saw no bar there (2026-08-15) — feedback belongs
+    wherever the button is."""
+    assert 'id="sys-deploy-banner"' in INDEX
+    assert 'id="dev-deploy-banner"' in INDEX
+    fn = ADMIN[ADMIN.index("function _renderDeployBanner(d) {"):
+               ADMIN.index("function _paintDeployBanner(box, d) {")]
+    assert "'dev-deploy-banner', 'sys-deploy-banner'" in fn
+    # The System card has its own load path and would otherwise never paint it.
+    load = ADMIN[ADMIN.index("async function _loadSystemStatus()"):]
+    assert "_renderDeployBanner(d)" in load.split("btn.disabled = !d.promotable")[0]
+
+
+def test_the_bar_actually_progresses():
+    """A progress bar that does not progress looks like a hang.
+
+    The status snapshot is cached for 20 s and in the measured run
+    rebuild -> healthcheck took 6, so the poll has to bypass the cache.
+    """
+    fn = ADMIN[ADMIN.index("let _deployPollTimer = null;"):
+               ADMIN.index("function _renderDeployBanner(d) {")]
+    assert "/api/system/status?refresh=1" in fn
+    assert "setInterval" in fn and "clearInterval" in fn
+    # Only while something runs — idle costs nothing.
+    assert "if (running && !_deployPollTimer)" in fn
+    # The rebuild restarts this server; a failed poll is expected, not an error.
+    assert "catch (_)" in fn
 
 
 def test_the_status_probe_stays_one_round_trip():
