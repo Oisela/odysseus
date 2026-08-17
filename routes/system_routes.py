@@ -256,6 +256,7 @@ def _roadmap_freshness(version: str) -> dict:
     # A matching head is any "## v3.9…" — released, open package, whatever the
     # round is called, as long as the version appears.
     out["current"] = any(h.lower().startswith(f"v{want}") for h in heads)
+    out["missing"] = not out["current"]
     return out
 
 
