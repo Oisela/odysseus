@@ -967,4 +967,8 @@ export function attach(ta, opts = {}) {
   };
 }
 
+// Export the pure conversion seam for regression tests. The editor still uses
+// these same functions, so tests exercise the real save round-trip rather than
+// a parallel markdown implementation.
+export { mdToEditorHtml, htmlToMd };
 export default { attach, ensureTurndown };
