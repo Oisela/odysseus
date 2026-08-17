@@ -77,16 +77,42 @@ def test_headers_are_passed_through_to_http_connect():
     mgr = McpManager()
     seen = {}
 
-    async def fake_start(server_id, name, url, headers=None):
+    async def fake_connect(server_id, name, url, headers=None):
         seen["headers"] = headers
         return True
 
-    with patch.object(McpManager, "_start_http_connect", side_effect=fake_start):
+    with patch.object(McpManager, "_connect_http", side_effect=fake_connect):
         asyncio.run(mgr.connect_server(
             "id1", "n", "http", url="https://x/mcp",
             headers={"Authorization": "Bearer t"},
         ))
     assert seen["headers"] == {"Authorization": "Bearer t"}
+
+
+def test_headers_connect_inline_not_via_background_task():
+    """Regression: routing the token path through _start_http_connect opened
+    the transport's cancel scope in one task and closed it in another, which
+    anyio rejects with 'Attempted to exit cancel scope in a different task'.
+    With headers there is no authorization to wait for, so connect inline."""
+    mgr = McpManager()
+    calls = {"inline": 0, "background": 0}
+
+    async def fake_connect(server_id, name, url, headers=None):
+        calls["inline"] += 1
+        return True
+
+    async def fake_start(server_id, name, url, wait=8.0):
+        calls["background"] += 1
+        return True
+
+    with patch.object(McpManager, "_connect_http", side_effect=fake_connect), \
+         patch.object(McpManager, "_start_http_connect", side_effect=fake_start):
+        asyncio.run(mgr.connect_server(
+            "id1", "n", "http", url="https://x/mcp",
+            headers={"Authorization": "Bearer t"},
+        ))
+
+    assert calls == {"inline": 1, "background": 0}
 
 
 def test_sse_transport_receives_headers():
@@ -106,13 +132,20 @@ def test_sse_transport_receives_headers():
 
 
 def test_no_headers_keeps_oauth_path():
+    """Without headers the background/OAuth path must still be used."""
     mgr = McpManager()
-    seen = {}
+    calls = {"inline": 0, "background": 0}
 
-    async def fake_start(server_id, name, url, headers=None):
-        seen["headers"] = headers
+    async def fake_connect(server_id, name, url, headers=None):
+        calls["inline"] += 1
         return True
 
-    with patch.object(McpManager, "_start_http_connect", side_effect=fake_start):
+    async def fake_start(server_id, name, url, wait=8.0):
+        calls["background"] += 1
+        return True
+
+    with patch.object(McpManager, "_connect_http", side_effect=fake_connect), \
+         patch.object(McpManager, "_start_http_connect", side_effect=fake_start):
         asyncio.run(mgr.connect_server("id1", "n", "http", url="https://x/mcp"))
-    assert seen["headers"] is None
+
+    assert calls == {"inline": 0, "background": 1}
