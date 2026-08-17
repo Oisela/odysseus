@@ -114,6 +114,42 @@ def _mcp_oauth_redirect_uri() -> str:
     return REDIRECT_URI
 
 
+def _parse_header_form_field(raw):
+    """Parse the `headers` form field into a plain {str: str} dict, or None.
+
+    Returns None for empty input so callers can distinguish "no headers" (use
+    OAuth) from "headers given". Raises HTTPException(400) on malformed input:
+    a dropped auth header would otherwise show up as an opaque 401 later."""
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "headers must be a JSON object")
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "headers must be a JSON object")
+    cleaned = {}
+    for key, value in parsed.items():
+        name = str(key).strip()
+        if not name:
+            continue
+        if not isinstance(value, (str, int, float)):
+            raise HTTPException(400, f"header '{name}' must be a string value")
+        # Header injection guard: a newline would let a crafted value append
+        # further headers to the outgoing request.
+        text_value = str(value)
+        if "\n" in name or "\r" in name or "\n" in text_value or "\r" in text_value:
+            raise HTTPException(400, f"header '{name}' must not contain line breaks")
+        cleaned[name] = text_value
+    return cleaned or None
+
+
+def _stored_headers(srv):
+    """Decode a server's persisted headers back into a dict, or None."""
+    from src.mcp_manager import decode_server_headers
+    return decode_server_headers(srv)
+
+
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
@@ -150,6 +186,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "auth_url": status.get("auth_url"),
                     "has_oauth": oauth_cfg is not None,
                     "needs_oauth": needs_oauth,
+                    # Flag only — the values carry a bearer token and must never
+                    # travel back to the browser.
+                    "has_headers": _stored_headers(srv) is not None,
                 })
             return result
         finally:
@@ -164,6 +203,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         args: str = Form("[]"),
         env: str = Form("{}"),
         url: str = Form(None),
+        headers: str = Form(None),
         oauth_file: str = Form(None),
         oauth_config: str = Form(None),
     ):
@@ -192,6 +232,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = {}
         if not isinstance(parsed_env, dict):
             parsed_env = {}
+
+        # Static headers for url-based transports. Unlike args/env we fail loudly
+        # on malformed input: silently dropping an auth header would surface as a
+        # confusing 401 from the MCP server instead of a form error.
+        parsed_headers = _parse_header_form_field(headers)
 
         # Parse OAuth config
         parsed_oauth_config = None
@@ -247,6 +292,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 url=url,
                 is_enabled=True,
                 oauth_config=json.dumps(parsed_oauth_config) if parsed_oauth_config else None,
+                headers=json.dumps(parsed_headers) if parsed_headers else None,
             )
             db.add(srv)
             db.commit()
@@ -268,6 +314,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                headers=parsed_headers,
             )
 
         status = mcp_manager.get_server_status(server_id)
@@ -306,6 +353,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=_stored_headers(srv),
             )
 
             status = mcp_manager.get_server_status(server_id)
@@ -345,6 +393,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=_stored_headers(srv),
                 )
             else:
                 await mcp_manager.disconnect_server(server_id)
@@ -581,6 +630,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=_stored_headers(srv),
             )
 
             if connected:
