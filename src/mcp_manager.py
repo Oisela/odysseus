@@ -192,7 +192,14 @@ class McpManager:
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url, headers or None)
             elif transport == "http":
-                res = await self._start_http_connect(server_id, name, url, headers=headers or None)
+                if headers:
+                    # No OAuth means nothing to wait for, so connect inline the
+                    # way stdio/sse do. Going through the background task would
+                    # open the transport's cancel scope in one task and close it
+                    # in another, which anyio rejects at runtime.
+                    res = await self._connect_http(server_id, name, url, headers)
+                else:
+                    res = await self._start_http_connect(server_id, name, url)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -336,14 +343,13 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0,
-                                  headers: Optional[Dict[str, str]] = None) -> bool:
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url, headers))
+        task = asyncio.create_task(self._connect_http(server_id, name, url))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
@@ -352,13 +358,6 @@ class McpManager:
             except Exception as e:
                 self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
                 return False
-        # Static headers mean no OAuth is involved, so a slow connect is just
-        # slow (or the server is down) — never "needs authorization".
-        if headers:
-            self._connections[server_id] = {
-                "status": "connecting", "name": name, "transport": "http",
-            }
-            return False
         # Still running → either awaiting authorization, or discovery/DCR is
         # still in flight. If _on_redirect already published needs_auth+auth_url,
         # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
