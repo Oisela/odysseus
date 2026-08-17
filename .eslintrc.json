@@ -1,0 +1,27 @@
+{
+  "env": {
+    "browser": true,
+    "es6": true
+  },
+  "globals": {
+    "globalThis": "readonly",
+    "katex": "readonly"
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "rules": {
+    "no-undef": "error"
+  },
+  "ignorePatterns": [
+    "static/js/chat.js",
+    "static/js/document.js",
+    "static/js/emailLibrary.js",
+    "static/js/galleryEditor.js",
+    "static/js/init.js",
+    "static/js/keyboard-shortcuts.js",
+    "static/js/research/panel.js",
+    "static/js/slashCommands.js"
+  ]
+}
