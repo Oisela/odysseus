@@ -3466,9 +3466,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           _researchBtn.classList.remove('active');
           _researchBtn.style.display = 'none';
         }
-        // Also sync overflow and tool sidebar buttons
-        const _overflowRes = _el('overflow-research-btn');
-        if (_overflowRes) _overflowRes.classList.remove('active');
+        // Also sync the tool sidebar button
         const _toolRes = _el('tool-research-btn');
         if (_toolRes) _toolRes.classList.remove('active');
 
