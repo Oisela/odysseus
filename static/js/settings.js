@@ -5274,6 +5274,7 @@ async function initUnifiedIntegrations() {
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label">Headers</label><input id="uf-mcp-headers" class="settings-input" placeholder='{"Authorization": "Bearer ..."}'></div>
             </div>
             <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -5305,6 +5306,11 @@ async function initUnifiedIntegrations() {
           fd.append('env', env);
         } else {
           fd.append('url', el('uf-mcp-url').value);
+          // Sent raw on purpose: the server validates and reports a 400 for
+          // malformed JSON. Silently coercing to {} here would drop an auth
+          // header and surface later as an opaque 401 from the MCP server.
+          const hdrs = (el('uf-mcp-headers').value || '').trim();
+          if (hdrs) fd.append('headers', hdrs);
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;
@@ -5321,7 +5327,11 @@ async function initUnifiedIntegrations() {
           } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
-            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+            // Surface the server's reason (e.g. malformed headers JSON) —
+            // a bare status code leaves the user guessing what to fix.
+            el('uf-mcp-msg').textContent = data.detail
+              ? `Failed: ${data.detail}`
+              : `Failed (${r.status})`;
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
         finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
