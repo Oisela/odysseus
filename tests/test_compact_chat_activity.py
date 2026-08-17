@@ -2,9 +2,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHAT_JS = (ROOT / "static/js/chat.js").read_text()
-CHAT_RENDERER_JS = (ROOT / "static/js/chatRenderer.js").read_text()
-STYLE_CSS = (ROOT / "static/style.css").read_text()
+CHAT_JS = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+CHAT_RENDERER_JS = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+STYLE_CSS = (ROOT / "static/style.css").read_text(encoding="utf-8")
 
 
 def test_completed_tool_runs_are_compacted_in_live_chat():
