@@ -1324,6 +1324,41 @@ def _anthropic_rejects_temperature(model: str) -> bool:
 # ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
 _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
 
+# Reasoning effort per Gemini model on Google's OpenAI-compat shim. Gemini 3
+# thinks at level "high" unless told otherwise; the shim maps reasoning_effort
+# ("none"/"low"/"medium"/"high") onto Gemini's native thinking_level. The Flash
+# preview is the cheap/fast model here, so it runs on "low" (verified against
+# the live API: all four levels are accepted, "low" spends fewer thinking
+# tokens than the default on the same prompt). Every other Gemini model keeps
+# Google's own default. ODYSSEUS_GEMINI_REASONING_EFFORT overrides the level
+# for ALL Gemini models; set it to "auto" to send nothing at all.
+_GEMINI_REASONING_EFFORT_DEFAULTS = {"gemini-3-flash-preview": "low"}
+_GEMINI_REASONING_EFFORT_ENV = os.getenv("ODYSSEUS_GEMINI_REASONING_EFFORT", "").strip().lower()
+
+
+def _gemini_reasoning_effort(url: str, model: str) -> str:
+    """Effort level to send for a Gemini model; "" means "let Google decide"."""
+    if not _host_match(url, "generativelanguage.googleapis.com"):
+        return ""
+    name = (model or "").strip().lower().removeprefix("models/")
+    # Gemma and the TTS/image models on the same endpoint have no thinking_level.
+    if not name.startswith("gemini"):
+        return ""
+    if _GEMINI_REASONING_EFFORT_ENV:
+        return "" if _GEMINI_REASONING_EFFORT_ENV == "auto" else _GEMINI_REASONING_EFFORT_ENV
+    return _GEMINI_REASONING_EFFORT_DEFAULTS.get(name, "")
+
+
+def _apply_gemini_reasoning_effort(payload: Dict, url: str, model: str) -> None:
+    """Set the Gemini thinking level on an outgoing payload, in place.
+
+    setdefault, so a level the caller already picked for another reason (the
+    reasoning_effort="none" that some models need alongside tools) wins.
+    """
+    effort = _gemini_reasoning_effort(url, model)
+    if effort:
+        payload.setdefault("reasoning_effort", effort)
+
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
     "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
@@ -2017,6 +2052,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         _apply_local_generation_stability(payload, target_url, model)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_gemini_reasoning_effort(payload, url, model)
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -2227,6 +2263,7 @@ async def llm_call_async(
             payload["think"] = False
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_gemini_reasoning_effort(payload, url, model)
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
 
@@ -2397,6 +2434,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        _apply_gemini_reasoning_effort(payload, url, model)
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         h = _provider_headers(provider, headers)
