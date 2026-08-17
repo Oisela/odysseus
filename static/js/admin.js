@@ -3177,6 +3177,19 @@ function _roadmapItemBlock(mark, title, details, images = []) {
   return block;
 }
 
+async function _deleteRoadmapItem(item) {
+  const title = _rmCardText(item);
+  if (!window.confirm(`Delete “${title}” from the roadmap? This cannot be undone.`)) return false;
+  const lines = _roadmapText.split('\n');
+  lines.splice(item.line, item.endLine - item.line + 1);
+  const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
+  if (ok) {
+    _closeRoadmapItemModal();
+    _renderRoadmap();
+  }
+  return ok;
+}
+
 async function _saveItemEdit(item, newTitle, details) {
   const lines = _roadmapText.split('\n');
   // Look the mark up rather than re-deriving it: the old ternary chain had no
@@ -4309,6 +4322,18 @@ function _renderRoadmapBoard(list, sections) {
         editBtn.textContent = 'Edit';
         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
         meta.appendChild(editBtn);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'rm-move-btn admin-btn-delete';
+        deleteBtn.title = 'Delete this roadmap item';
+        deleteBtn.setAttribute('aria-label', 'Delete roadmap item');
+        deleteBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6M9 6V4h6v2"></path></svg>';
+        deleteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          deleteBtn.disabled = true;
+          if (!await _deleteRoadmapItem(it)) deleteBtn.disabled = false;
+        });
+        meta.appendChild(deleteBtn);
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
