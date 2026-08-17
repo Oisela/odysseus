@@ -880,29 +880,20 @@ function initializeEventListeners() {
     // Close document panel if open
     if (documentModule && documentModule.closePanel) documentModule.closePanel();
     if (researchPanelModule && researchPanelModule.isOpen()) researchPanelModule.closePanel();
-    // Reset research overflow dot (but don't touch research state — caller manages that)
-    const _overflowRes = el('overflow-research-btn');
-    if (_overflowRes) _overflowRes.classList.remove('active');
     if (typeof updatePlusDot === 'function') updatePlusDot();
     // Reset agent mode to Chat
     const modeToggle = el('agent-mode-toggle');
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
   }
 
-  /** Sync Research indicator button + overflow + tool sidebar active state. */
+  /** Sync Research indicator button + tool sidebar active state. */
   function _syncResearchIndicator(active) {
     const btn = el('research-toggle-btn');
-    const overflow = el('overflow-research-btn');
     const toolBtn = el('tool-research-btn');
     const chk = el('research-toggle');
     if (btn) {
       btn.style.display = active ? '' : 'none';
       btn.classList.toggle('active', active);
-    }
-    // Hide from overflow menu when showing in chatbox (avoid duplicate)
-    if (overflow) {
-      overflow.classList.toggle('active', active);
-      overflow.style.display = active ? 'none' : '';
     }
     if (toolBtn) toolBtn.classList.toggle('active', active);
     if (chk) chk.checked = active;
@@ -1475,8 +1466,6 @@ function initializeEventListeners() {
         if (!p.can_use_research) {
           const resBtn = document.getElementById('research-toggle-btn');
           if (resBtn) resBtn.style.display = 'none';
-          const resOverflow = document.getElementById('overflow-research-btn');
-          if (resOverflow) resOverflow.style.display = 'none';
         }
 
       }
@@ -1621,7 +1610,7 @@ function initializeEventListeners() {
   ).then(features => {
       const map = {
         web_search:      ['web-toggle-btn'],
-        deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
+        deep_research:   ['research-toggle-btn', 'tool-research-btn', 'rail-research'],
         document_editor: ['overflow-doc-btn', 'rail-documents'],
         gallery:         ['tool-gallery-btn', 'rail-gallery'],
       };
@@ -2851,7 +2840,6 @@ function initializeEventListeners() {
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
     'attach-btn':          '#overflow-attach-btn',
-    'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
 
@@ -2888,7 +2876,7 @@ function initializeEventListeners() {
     'tool-pomodoro', 'tool-remnote', 'tool-compare', 'tool-cookbook', 'tool-research',
     'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks',
     'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
-    'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
+    'preset-mini-btn', 'mode-toggle', 'incognito-btn',
   ];
   function uiSimpleState() {
     const s = {};
