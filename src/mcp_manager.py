@@ -132,6 +132,26 @@ def mcp_tool_is_readonly(tool: Dict) -> bool:
     return name.startswith(_MCP_READONLY_VERBS)
 
 
+def decode_server_headers(srv) -> Optional[Dict[str, str]]:
+    """Decode an McpServer row's persisted static headers into a dict.
+
+    Returns None when absent or malformed, so callers fall back to the OAuth
+    path instead of connecting with a half-built header set. Shared by the
+    startup reconnect, the admin routes and the agent tool so a stored token
+    survives every path that re-establishes a connection."""
+    raw = getattr(srv, "headers", None)
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Ignoring malformed headers for MCP server %s", getattr(srv, "name", "?"))
+        return None
+    if not isinstance(decoded, dict) or not decoded:
+        return None
+    return {str(k): str(v) for k, v in decoded.items()}
+
+
 class McpManager:
     """Manages MCP server connections and tool routing."""
 
@@ -158,15 +178,21 @@ class McpManager:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport.
+
+        `headers` holds static HTTP headers (typically an API token) for the
+        url-based transports. When set, the server is treated as pre-authorized
+        and the OAuth flow is skipped entirely — many local/self-hosted MCP
+        servers authenticate with a fixed bearer token and speak no OAuth."""
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                res = await self._connect_sse(server_id, name, url)
+                res = await self._connect_sse(server_id, name, url, headers or None)
             elif transport == "http":
-                res = await self._start_http_connect(server_id, name, url)
+                res = await self._start_http_connect(server_id, name, url, headers=headers or None)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -255,7 +281,8 @@ class McpManager:
             }
             return False
 
-    async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
+    async def _connect_sse(self, server_id: str, name: str, url: str,
+                           headers: Optional[Dict[str, str]] = None) -> bool:
         """Connect to an MCP server via SSE transport."""
         try:
             from mcp import ClientSession
@@ -266,7 +293,7 @@ class McpManager:
             registered = False
 
             try:
-                transport = await stack.enter_async_context(sse_client(url))
+                transport = await stack.enter_async_context(sse_client(url, headers=headers))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
@@ -309,13 +336,14 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0,
+                                  headers: Optional[Dict[str, str]] = None) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        task = asyncio.create_task(self._connect_http(server_id, name, url, headers))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
@@ -324,6 +352,13 @@ class McpManager:
             except Exception as e:
                 self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
                 return False
+        # Static headers mean no OAuth is involved, so a slow connect is just
+        # slow (or the server is down) — never "needs authorization".
+        if headers:
+            self._connections[server_id] = {
+                "status": "connecting", "name": name, "transport": "http",
+            }
+            return False
         # Still running → either awaiting authorization, or discovery/DCR is
         # still in flight. If _on_redirect already published needs_auth+auth_url,
         # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
@@ -336,8 +371,10 @@ class McpManager:
             }
         return False
 
-    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+    async def _connect_http(self, server_id: str, name: str, url: str,
+                            headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to a Streamable HTTP MCP server (with automatic OAuth, or
+        with static headers when the server authenticates by fixed token)."""
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
@@ -352,9 +389,17 @@ class McpManager:
                     "auth_url": auth_url,
                 }
 
-            provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            if headers:
+                # Pre-authorized by a static token: skip OAuth discovery/DCR
+                # entirely, otherwise the client would probe for an authorization
+                # server that these deployments do not run.
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=headers))
+            else:
+                provider = build_provider(server_id, url, on_redirect=_on_redirect)
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, auth=provider))
             read_stream, write_stream, _get_session_id = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
@@ -442,6 +487,7 @@ class McpManager:
     async def _connect_with_timeout(self, srv):
         args = json.loads(srv.args) if srv.args else []
         env = json.loads(srv.env) if srv.env else {}
+        headers = decode_server_headers(srv)
 
         try:
             await asyncio.wait_for(
@@ -453,6 +499,7 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 ),
                 timeout=20,
             )
