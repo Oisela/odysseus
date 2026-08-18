@@ -172,7 +172,7 @@ _SELFCHECK_FIXES = {
     "branches-prune": (
         f"git -C {_CLONE_DIR} fetch --prune origin >/dev/null "
         f"&& for b in $(git -C {_CLONE_DIR} branch -r --merged origin/dev "
-        "| sed 's/^ *origin\///' | grep -v -e '^dev$' -e '^main$' -e '^HEAD'); "
+        "| sed 's|^ *origin/||' | grep -v -e '^dev$' -e '^main$' -e '^HEAD'); "
         f"do git -C {_CLONE_DIR} push origin --delete \"$b\" >/dev/null || exit 1; done; "
         "echo branches-pruned"
     ),
