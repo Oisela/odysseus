@@ -2956,6 +2956,18 @@ async function _initVersionSwitcher(prefix = 'sys-') {
 // reaches for most — and it sat only in Settings → System, one panel away from
 // the Developer page where he decides that a round is done. The Package status
 // card even told him to go there.
+function _setPromoteButtons(d) {
+  const current = String(d?.prod_version || '').replace(/^v/, '');
+  const target = String(d?.dev_version || '').replace(/^v/, '');
+  const available = !!target && target !== current;
+  for (const btn of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+    if (d?.deploy_active) continue;
+    btn.disabled = !available;
+    btn.textContent = available ? `Update to v${target}` : 'Up to date';
+    btn.title = available ? `Rebuild production from dev at v${target}` : `Production is already v${current || target || '?'}`;
+  }
+}
+
 function _initPromoteButton(prefix = 'sys-', msgId = null) {
   const btn = el(prefix + 'promoteBtn');
   if (!btn || btn._promoteWired) return;
@@ -2974,7 +2986,7 @@ function _initPromoteButton(prefix = 'sys-', msgId = null) {
       const res = await fetch(`/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
-        say('Update started. Prod will rebuild and restart shortly — close and REOPEN the app window once it is back.', true);
+        say(`Update to v${d.version || d.target_version || 'next'} started. Progress appears below; repeated clicks are blocked.`, true);
         // Both copies, not just the one that was pressed. Otherwise you press
         // here, switch panels, and press the still-enabled twin — two
         // promote.sh units rebuilding prod over each other. The server rejects
@@ -3486,6 +3498,7 @@ function _syncDeployPoll(running) {
 }
 
 function _renderDeployBanner(d) {
+  _setPromoteButtons(d);
   // Both cards: Update sits on the System card AND on the Developer page, and
   // Alessio pressed it on the System card — where the progress bar was not
   // (2026-08-15). Feedback belongs wherever the button is.
