@@ -59,6 +59,7 @@ function formatTime(seconds) {
  */
 function _resetRecordingUI() {
   isRecording = false;
+  window.dispatchEvent(new CustomEvent('odysseus:recording-state', { detail: { recording: false } }));
   if (recordingInterval) {
     clearInterval(recordingInterval);
     recordingInterval = null;
@@ -258,6 +259,7 @@ export function startRecording(onFileCreated, showToast, showError) {
 
       mediaRecorder.start();
       isRecording = true;
+      window.dispatchEvent(new CustomEvent('odysseus:recording-state', { detail: { recording: true } }));
       recordingStartTime = new Date();
 
       // Start browser STT if that's the provider

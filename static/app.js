@@ -4023,6 +4023,7 @@ function startOdysseusApp() {
 
   // ── Dual-purpose send/mic button ──
   const sendBtn = document.querySelector('.send-btn');
+  const micBtn = el('composer-mic-btn');
   const messageInput = el('message');
   const modelPickerWrap = document.getElementById('model-picker-wrap');
 
@@ -4061,6 +4062,7 @@ function startOdysseusApp() {
 
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
+    if (micBtn) micBtn.hidden = !_isSttEnabled();
     if (sendBtn.dataset.mode === 'streaming') {
       _updateStreamingSubmitButton();
       return;
@@ -4071,14 +4073,7 @@ function startOdysseusApp() {
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();
     let newMode;
-    if (!hasText && !hasFiles && _isSttEnabled()) {
-      clearTimeout(sendBtn._collapseTimer);
-      sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
-      newMode = 'mic';
-      sendBtn.classList.add('mic-mode');
-      sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
-    } else if (!hasText && !hasFiles && !_isSttEnabled()) {
+    if (!hasText && !hasFiles) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
@@ -4148,6 +4143,31 @@ function startOdysseusApp() {
     }
     sendBtn.dataset.mode = newMode;
   }
+
+  if (micBtn) {
+    micBtn.addEventListener('click', () => {
+      if (voiceRecorderModule.getIsRecording()) {
+        voiceRecorderModule.stopRecording();
+        return;
+      }
+      micBtn.classList.add('recording');
+      micBtn.title = 'Stop dictation';
+      micBtn.setAttribute('aria-label', 'Stop dictation');
+      voiceRecorderModule.startRecording(
+        (audioFile) => fileHandlerModule.addFiles([audioFile]),
+        uiModule.showToast,
+        uiModule.showError,
+      );
+    });
+  }
+
+  window.addEventListener('odysseus:recording-state', (event) => {
+    if (!micBtn) return;
+    const recording = event.detail?.recording === true;
+    micBtn.classList.toggle('recording', recording);
+    micBtn.title = recording ? 'Stop dictation' : 'Start dictation';
+    micBtn.setAttribute('aria-label', micBtn.title);
+  });
 
   if (sendBtn) {
     sendBtn.addEventListener('click', (e) => {
