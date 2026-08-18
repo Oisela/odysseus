@@ -49,5 +49,12 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
   oder App geschlossen beziehungsweise suspendiert werden. Beim Zurückkehren
   hängt sich der Client an denselben Lauf, statt ihn abzubrechen und eine
   potenziell doppelte Fortsetzung zu starten.
+- Der `remnote-edit-later`-Workflow darf `list_tagged_rems: 0` bei RemNotes
+  eingebautem Edit-Later-Powerup nicht als leere Inbox werten: Die normale
+  Tag-Relation kann trotz sichtbarer offener Rems leer sein. Ohne explizite
+  Built-in-Powerup-Abfrage muss er den Widerspruch melden und darf weder eine
+  Zahl erfinden noch Rems verändern. Dauerhafter Vertrag:
+  `config/skills/remnote-edit-later.md`; Regressionstest:
+  `tests/test_remnote_edit_later_skill_contract.py`.
 - Diese Datei bei Architektur-Änderungen mitpflegen (sie wird in jeden
   Builder-Chat injiziert).
