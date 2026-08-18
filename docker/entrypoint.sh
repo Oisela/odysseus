@@ -135,6 +135,18 @@ export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 # vLLM and helper scripts land here because /app is the non-root user's HOME.
 export PATH="/app/.local/bin:$PATH"
 
+# The persistent Cookbook user-site may contain an older NumPy than the image.
+# Python prepends that directory to sys.path, so a stale copy can silently
+# shadow the tested image dependency and break the whole app. NumPy is an app
+# dependency, not a Cookbook-owned serve engine: remove only its user-site
+# distribution files on startup and leave every other installed package alone.
+for site in /app/.local/lib/python*/site-packages; do
+    [ -d "$site" ] || continue
+    find "$site" -maxdepth 1 \
+        \( -name 'numpy' -o -name 'numpy-*.dist-info' -o -name 'numpy.libs' \) \
+        -exec rm -rf -- {} +
+done
+
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.
 # || true so a setup failure never prevents the container from starting.
