@@ -28,6 +28,13 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
   oder noch als Feature klassifizierte Karten.
 - Der Chat-Composer behandelt die iPhone-Return-Taste bei nichtleerem Text als
   Senden; während eines laufenden Streams wird der Text wie bisher eingereiht.
+- Das Roadmap-Item „Real speech to text“ wurde am 2026-08-18 gegen den
+  vorhandenen Code und Alessios Praxistest geprüft und als bereits erfüllt
+  geschlossen; dafür ist kein weiterer Build nötig.
+- Text-to-Speech ist ebenfalls bereits vorhanden: aktivierbar in den
+  Einstellungen, mit „Read aloud“-Knopf an KI-Antworten sowie optionalem
+  automatischem Vorlesen. Vor einer neuen TTS-Karte zuerst klären, welche
+  konkrete Erweiterung gegenüber diesem Bestand fehlt.
 - Mobile Browser dürfen eine veraltete Modell-Endpoint-ID behalten: Beim
   Erstellen einer Session fällt Odysseus kontrolliert auf die übermittelte URL
   zurück; die bestehende Berechtigungsprüfung für rohe URLs bleibt aktiv.
