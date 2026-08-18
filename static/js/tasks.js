@@ -2718,7 +2718,8 @@ export function openTasks(focusId, opts) {
   _setTaskFailurePending(false);
   if (_open) {
     // Already open — just focus the requested task / apply filter.
-    if (openActivityForFailure) _switchTab('activity');
+    if (o.template) _showForm(o.template, o.template.task_type, o.template.trigger_type);
+    else if (openActivityForFailure) _switchTab('activity');
     if (o.filter !== undefined) { _taskFilter = o.filter; _renderList(); }
     if (focusId) _focusTask(focusId);
     return;
@@ -2825,7 +2826,8 @@ export function openTasks(focusId, opts) {
   // of an empty modal-body that fills in after the fetch resolves — that delay
   // was visible as a "flicker" right after opening.
   _activeTab = 'tasks';
-  _switchTab(openActivityForFailure ? 'activity' : 'tasks');
+  if (o.template) _showForm(o.template, o.template.task_type, o.template.trigger_type);
+  else _switchTab(openActivityForFailure ? 'activity' : 'tasks');
   _fetchTasks().then(() => {
     // Re-render so the list swaps the Loading row for real cards.
     _renderList();

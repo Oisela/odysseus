@@ -3648,7 +3648,7 @@ function _buildPrompt(item, buildMode) {
   const directBugfix = buildMode === 'direct-bugfix';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
-    : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+    : `Prüfe vor dem Bauen, ob Ziel, erwartetes Verhalten und Abnahmekriterium eindeutig sind. Stelle fehlende Konkretisierungsfragen gebündelt, bevor du Dateien änderst. Sind sie eindeutig, arbeite autonom bis zur Gate-Frage deines Tracks; frage danach nur bei wesentlichen Produktentscheidungen oder echter Blockade nach.`;
   const workflow = directBugfix
     ? `**Track BUG — bewusst einzeln direkt auf dev, ohne Beta.**\n`
       + `1. \`dev.sh start fix/<slug>\`\n`
@@ -3689,8 +3689,10 @@ function _buildBatchPrompt(items, buildMode) {
   const approach = buildMode === 'plan'
     ? `Erstelle pro Item zuerst einen kurzen Umsetzungsplan und warte auf meine `
       + `Freigabe, bevor du für dieses Item Dateien änderst.`
-    : `Arbeite autonom. Frage nur nach, wenn eine Entscheidung das `
-      + `Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+    : `Prüfe vor jedem Item, ob Ziel, erwartetes Verhalten und Abnahmekriterium `
+      + `eindeutig sind. Stelle fehlende Konkretisierungsfragen gebündelt, bevor `
+      + `du Dateien änderst. Sind sie eindeutig, arbeite autonom; frage danach `
+      + `nur bei wesentlichen Produktentscheidungen oder echter Blockade nach.`;
   const bundleName = `beta-batch-${new Date().toISOString().slice(0, 10)}`;
   const briefs = items
     .map((it, i) => `### Item ${i + 1} von ${items.length}\n\n${_itemBrief(it)}`)
