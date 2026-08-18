@@ -129,6 +129,9 @@ function _statusHtml() {
       <div class="remnote-actions">
         <button type="button" class="memory-toolbar-btn" id="remnote-test">Test connection</button>
         <button type="button" class="memory-toolbar-btn" id="remnote-send-all"${canSendAll ? '' : ' disabled'} title="${canSendAll ? 'Send every waiting card to RemNote' : 'Nothing to send, or the bridge is offline'}">Send all to RemNote</button>
+        <button type="button" class="memory-toolbar-btn" id="remnote-create-flush-task" title="Open a prefilled scheduled task that retries the buffer automatically">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3L2 6"/></svg>Create flush task
+        </button>
       </div>
       ${!b.configured ? `<div class="remnote-hint">Add the <code>remnote</code> MCP server with <code>REMNOTE_BRIDGE_URL</code> in Settings → Integrations.</div>` : ''}
       ${b.configured && !ok ? `<div class="remnote-hint">Cards you create while offline are parked below and can be sent once the PC is up.</div>` : ''}
@@ -221,6 +224,7 @@ function _wireBody() {
     const id = wrap && wrap.dataset.id;
 
     if (btn.id === 'remnote-test') return _test();
+    if (btn.id === 'remnote-create-flush-task') return _createFlushTask();
     if (btn.id === 'remnote-send-all') return _sendAll();
     if (btn.classList.contains('rn-send')) return _send(id);
     if (btn.classList.contains('rn-del')) return _del(id);
@@ -231,6 +235,21 @@ function _wireBody() {
 }
 
 // ── Actions ──
+
+async function _createFlushTask() {
+  const tasksModule = await import('./tasks.js');
+  closeRemnote();
+  tasksModule.openTasks(null, {
+    template: {
+      name: 'Flush RemNote buffer',
+      task_type: 'llm',
+      trigger_type: 'schedule',
+      prompt: 'Check the RemNote offline buffer. If the bridge is connected, send all pending or failed entries. If it is offline, leave the entries buffered and report the connection state without deleting anything.',
+      output_target: 'session',
+      notifications_enabled: false,
+    },
+  });
+}
 
 async function _reload(showToast) {
   try {
