@@ -152,6 +152,74 @@ def decode_server_headers(srv) -> Optional[Dict[str, str]]:
     return {str(k): str(v) for k, v in decoded.items()}
 
 
+# Words that identify a server's flavour, not the service it talks to. A
+# name like "RemNote Local" must key off "remnote"; keying off "local" would
+# drag the whole server in on any unrelated mention.
+_GENERIC_MCP_NAME_TOKENS = frozenset({
+    "local", "fork", "http", "https", "sse", "server", "servers", "edition",
+    "mcp", "api", "bridge", "connector", "official", "remote", "client",
+    "prod", "beta", "test", "main", "self", "hosted",
+})
+
+
+def _one_typo_apart(a: str, b: str) -> bool:
+    """True if `a` and `b` are the same word with at most one typo in it.
+
+    Same-length edits only — an adjacent transposition or a single wrong
+    character. Insertions and deletions are deliberately NOT accepted: they
+    make "remote" a neighbour of "remnote", and Alessio talks about remote
+    servers constantly. The real misspellings this exists for ("rmenote",
+    "remntoe") are both transpositions, so nothing is lost by the stricter
+    rule.
+    """
+    if len(a) != len(b):
+        return False
+    if a == b:
+        return True
+    diff = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    if len(diff) == 1:
+        return True
+    if len(diff) == 2 and diff[1] == diff[0] + 1:
+        i, j = diff
+        return a[i] == b[j] and a[j] == b[i]
+    return False
+
+
+def query_names_mcp_server(query: str, server_name: str) -> bool:
+    """Did the user name this MCP server, one typo allowed?
+
+    Alessio types fast: the session that prompted this wrote "rmenote" and
+    "remntoe", never once "remnote", so exact matching found nothing and the
+    server's tools stayed out of reach for the whole conversation. Only
+    tokens of six characters or more get the fuzzy treatment, where a
+    same-length one-typo neighbour is far more likely to be the same word
+    than a different one.
+    """
+    tokens = mcp_server_name_tokens(server_name)
+    if not tokens:
+        return bool(server_name) and server_name.lower() in (query or "").lower()
+    q = (query or "").lower()
+    if any(t in q for t in tokens):
+        return True
+    words = set(re.findall(r"[a-z0-9]+", q))
+    return any(
+        len(t) >= 6 and any(_one_typo_apart(t, w) for w in words)
+        for t in tokens
+    )
+
+
+def mcp_server_name_tokens(server_name: str) -> Set[str]:
+    """Distinctive lowercase tokens of an MCP server name.
+
+    Used to spot a server the user named in plain prose. Matching the full
+    name as a substring only fires for single-word servers — nobody writes
+    "RemNote Local" mid-sentence — so the multi-word servers silently never
+    matched.
+    """
+    tokens = re.findall(r"[a-z0-9]+", (server_name or "").lower())
+    return {t for t in tokens if len(t) >= 4 and t not in _GENERIC_MCP_NAME_TOKENS}
+
+
 class McpManager:
     """Manages MCP server connections and tool routing."""
 
@@ -663,6 +731,28 @@ class McpManager:
                     "is_disabled": tool["name"] in disabled,
                 })
         return result
+
+    def resolve_qualified_names(
+        self, bare_names, disabled_map: Optional[Dict[str, set]] = None
+    ) -> Set[str]:
+        """Map bare MCP tool names onto the qualified names actually connected.
+
+        Skills declare the tools they need by bare name (`remnote_call`)
+        because the server id is a per-instance hex string: the same tool is
+        `mcp__1b08d10e__remnote_call` on one install and something else on the
+        next. Only the running manager knows the mapping, so resolve it here
+        rather than making every caller guess a prefix.
+        """
+        wanted = {n for n in (bare_names or []) if n}
+        if not wanted:
+            return set()
+        resolved: Set[str] = set()
+        for tool in self.get_all_tools(disabled_map or {}):
+            if tool.get("is_disabled"):
+                continue
+            if tool.get("name") in wanted:
+                resolved.add(tool["qualified_name"])
+        return resolved
 
     def plan_mode_blocked_mcp(self) -> Tuple[Dict[str, Set[str]], Set[str]]:
         """Plan mode: block every MCP tool that isn't clearly read-only.
