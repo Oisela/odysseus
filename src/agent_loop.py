@@ -45,13 +45,19 @@ logger = logging.getLogger(__name__)
 
 
 def _looks_like_notes_list_request(text: str) -> bool:
-    """Whether the user is asking to see existing notes, not create one."""
-    t = (text or "").lower()
-    return bool(
-        re.search(r"\b(what|show|list|see|current|existing|all|my)\b.{0,60}\bnotes?\b", t)
-        or re.search(r"\bnotes?\b.{0,60}\b(what|show|list|see|current|existing|all|my)\b", t)
-    )
+    """Whether the user is asking to SEE existing notes, not create one.
 
+    German included: Alessio writes only German, so an English-only pattern
+    answers "no" to every real request he makes.
+    """
+    t = (text or "").lower()
+    verbs = (r"what|which|show|list|see|current|existing|all|my|"
+             r"was|welche|zeig|zeige|liste|auflisten|nenne|alle|meine|offene|vorhandene")
+    noun = r"notes?|notiz|notizen|merkzettel"
+    return bool(
+        re.search(rf"\b({verbs})\b.{{0,60}}\b({noun})\b", t)
+        or re.search(rf"\b({noun})\b.{{0,60}}\b({verbs})\b", t)
+    )
 
 def _note_list_summary_from_tool_output(raw: str, max_items: int = 20) -> str:
     """Format manage_notes list/search output for chat without an LLM pass."""
@@ -4501,9 +4507,16 @@ async def stream_agent_loop(
                 _notes_text = ""
                 if not result.get("error"):
                     if _notes_action in {"list", "search", "find", "view", "lis"}:
-                        _notes_text = _note_list_summary_from_tool_output(
-                            result.get("output") or result.get("results") or result.get("content") or ""
-                        )
+                        # Only when the user actually asked to SEE their notes.
+                        # `_looks_like_notes_list_request` was written for exactly
+                        # this and then never called anywhere, so every background
+                        # lookup — a coach checking the study plan, say — dumped the
+                        # whole note list into the answer, once per tool call
+                        # (Alessio, 2026-08-19: three dumps ahead of one reply).
+                        if _looks_like_notes_list_request(_last_user):
+                            _notes_text = _note_list_summary_from_tool_output(
+                                result.get("output") or result.get("results") or result.get("content") or ""
+                            )
                     elif _notes_action in {"add", "update", "delete", "toggle_item"}:
                         _notes_text = str(
                             result.get("response")

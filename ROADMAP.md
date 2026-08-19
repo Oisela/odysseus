@@ -34,6 +34,13 @@ im Setup-Repo (README 6a–6l) und in der Git-Historie. Sicherung der alten Fass
       Vertipper gleicher Länge. Einfügen/Löschen bleibt abgelehnt, sonst würde
       „remote" auf „remnote" matchen.
       **Version:** v4.17
+- [!] Notizliste wurde ungefragt in jede Antwort gekippt
+      **Beschreibung:** `_looks_like_notes_list_request` existiert, um "zeig mir
+      meine Notizen" von einem Hintergrund-Lookup zu unterscheiden — und wurde
+      nirgends aufgerufen. Jeder `manage_notes list` haengte damit die komplette
+      Notizliste an die Antwort, einmal pro Tool-Aufruf. Der Waechter war
+      ausserdem nur englisch. Beides behoben.
+      **Version:** v4.17.1
 - [!] Skill-Extraktor: Duplikat-Check war toter Code
       **Beschreibung:** Verglichen wurde `skill["title"]` — ein Feld, das das Schema
       nicht mehr ausgibt. Also immer Vergleich gegen "" und nie ein Treffer: jede
