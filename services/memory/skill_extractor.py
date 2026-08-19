@@ -8,7 +8,10 @@ we ask the LLM to distill the approach into a reusable skill.
 
 import json
 import logging
+import re
 from typing import Optional
+
+from .skill_format import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +57,60 @@ def _skill_dicts(skills):
             yield skill
 
 
+# Words too generic to make two skill titles "about the same thing".
+_TITLE_STOPWORDS = frozenset({
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem",
+    "und", "oder", "mit", "von", "fuer", "für", "in", "im", "zu", "zum", "zur",
+    "auf", "an", "als", "wie", "the", "a", "an", "and", "or", "with", "for",
+    "to", "in", "on", "of", "how", "skill", "workflow", "ablauf",
+})
+
+
+def _title_tokens(text: str) -> set:
+    return {
+        t for t in re.findall(r"[a-z0-9äöüß]+", (text or "").lower())
+        if len(t) > 2 and t not in _TITLE_STOPWORDS
+    }
+
+
 def _has_duplicate_title(skills, title: str) -> bool:
-    wanted = title.lower()
+    """Does a skill covering this already exist?
+
+    Compares against `name` and `description` — the fields skills actually
+    have — plus the legacy `title`. The previous version read ONLY
+    `skill["title"]`, a key the current schema does not emit, so it always
+    compared against "" and never fired once. Every extraction was written,
+    which is why six near-identical RemNote skills accumulated and then
+    crowded each other out of the top-3 relevance slots (Alessio,
+    2026-08-19).
+
+    Near-duplicates count too: the extractor rewords the same procedure
+    every time it sees it, so exact string equality would still let the pile
+    grow. Two titles whose significant words overlap by 80% are the same
+    skill wearing a different sentence.
+    """
+    wanted = (title or "").strip().lower()
+    if not wanted:
+        return False
+    wanted_slug = slugify(title, fallback="")
+    wanted_tokens = _title_tokens(title)
+
     for skill in _skill_dicts(skills):
-        existing = skill.get("title", "")
-        if isinstance(existing, str) and existing.lower() == wanted:
-            return True
+        # "title" is the legacy key: gone from the current schema, but rows
+        # from older callers and importers still carry it.
+        for field in ("name", "description", "title"):
+            existing = skill.get(field) or ""
+            if not isinstance(existing, str) or not existing.strip():
+                continue
+            if existing.strip().lower() == wanted:
+                return True
+            if wanted_slug and slugify(existing, fallback="") == wanted_slug:
+                return True
+            other = _title_tokens(existing)
+            if wanted_tokens and other:
+                overlap = len(wanted_tokens & other) / len(wanted_tokens | other)
+                if overlap >= 0.8:
+                    return True
     return False
 
 
