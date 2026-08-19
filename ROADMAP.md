@@ -11,6 +11,38 @@ Aufgeräumt am 2026-07-31: ausgelieferte Runden stehen unten als je eine Zeile; 
 im Setup-Repo (README 6a–6l) und in der Git-Historie. Sicherung der alten Fassung:
 `data/backups/ROADMAP-2026-07-31-vor-aufraeumen.md`.
 
+## v4.17 (Runde 2026-08-19 — Skills erreichen das Modell wieder)
+
+- [!] Skill-Auswahl: deutsche Anfragen verloren Skills und Werkzeuge
+      **Beschreibung:** Der Absichts-Erkenner kennt nur englische Muster, also galt
+      JEDE deutsche Nachricht als `low_signal`. Daran hingen zwei Riegel: Skills
+      wurden komplett aus dem Prompt gestrichen (`suppress_skills`), und der
+      skill-eigene Werkzeug-Include lief nie. Beides gated jetzt auf
+      `_casual_low_signal_turn` statt `low_signal`.
+      **Version:** v4.17
+- [!] Skills können MCP-Werkzeuge anfordern (`unlocks_toolsets`)
+      **Beschreibung:** `requires_toolsets` ist ein GATE — es versteckt die Skill,
+      wenn ein Name fehlt, und geprüft wird nur gegen native Tools. Eine Skill, die
+      dort ein MCP-Tool eintrug, löschte sich damit selbst aus dem Index. Neues Feld
+      `unlocks_toolsets` fügt nur hinzu und versteckt nie; MCP-Namen werden über den
+      MCP-Manager auf die laufende Server-ID aufgelöst.
+      **Version:** v4.17
+- [!] MCP-Server-Erkennung: Tippfehler und mehrwortige Namen
+      **Beschreibung:** Verglichen wurde der volle Servername als Teilstring. In der
+      Session vom 19.08. stand nie „remnote", sondern „rmenote"/„remntoe" — die
+      Erkennung löste kein einziges Mal aus. Jetzt zusätzlich Namens-Token und ein
+      Vertipper gleicher Länge. Einfügen/Löschen bleibt abgelehnt, sonst würde
+      „remote" auf „remnote" matchen.
+      **Version:** v4.17
+- [!] Skill-Extraktor: Duplikat-Check war toter Code
+      **Beschreibung:** Verglichen wurde `skill["title"]` — ein Feld, das das Schema
+      nicht mehr ausgibt. Also immer Vergleich gegen "" und nie ein Treffer: jede
+      Extraktion wurde geschrieben. Ergebnis waren 23 RemNote-Skills, die sich
+      gegenseitig aus den drei Relevanz-Plätzen verdrängten. Jetzt Vergleich gegen
+      name/description (title bleibt für Altlasten) plus Erkennung umformulierter
+      Duplikate.
+      **Version:** v4.17
+
 ## v4.1 (offenes Paket)
 - [?] Bug (Altbestand): chat.js und chatRenderer.js werden DOPPELT
       <!-- ody:id=rm-e7e7df2e-efc -->
