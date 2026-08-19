@@ -436,6 +436,7 @@ class SkillsManager:
         platforms: Optional[List[str]] = None,
         requires_toolsets: Optional[List[str]] = None,
         fallback_for_toolsets: Optional[List[str]] = None,
+        unlocks_toolsets: Optional[List[str]] = None,
         status: str = "draft",
         version: str = "1.0.0",
     ) -> Dict:
@@ -489,6 +490,7 @@ class SkillsManager:
             platforms=list(platforms or []),
             requires_toolsets=list(requires_toolsets or []),
             fallback_for_toolsets=list(fallback_for_toolsets or []),
+            unlocks_toolsets=list(unlocks_toolsets or []),
             status=status or "draft",
             confidence=float(confidence),
             source=source,
@@ -593,7 +595,8 @@ class SkillsManager:
                 if k in updates:
                     setattr(sk, k, updates[k])
             list_keys = ("tags", "procedure", "pitfalls", "verification",
-                         "platforms", "requires_toolsets", "fallback_for_toolsets")
+                         "platforms", "requires_toolsets", "fallback_for_toolsets",
+                         "unlocks_toolsets")
             for k in list_keys:
                 if k in updates:
                     setattr(sk, k, list(updates[k] or []))

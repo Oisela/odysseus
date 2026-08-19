@@ -3008,7 +3008,14 @@ async def stream_agent_loop(
                         _retrieval_query, skills=_owner_skills,
                         threshold=0.25, max_items=3,
                     ):
+                        # Both directions: requires_toolsets (a gate the skill
+                        # already passed) and unlocks_toolsets (tools the
+                        # procedure calls). Only the latter may name MCP tools —
+                        # the gate is evaluated against native names only, so a
+                        # skill declaring an MCP tool THERE erases itself from
+                        # the index instead of gaining the tool.
                         _declared.update(_sk.get("requires_toolsets") or [])
+                        _declared.update(_sk.get("unlocks_toolsets") or [])
                     _relevant_tools.update(t for t in _declared if t in _known)
                     # A declared name that isn't native is an MCP tool: skills
                     # name it bare (`remnote_call`) because the qualified name

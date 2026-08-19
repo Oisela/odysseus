@@ -189,3 +189,42 @@ def test_one_typo_helper_shapes():
     assert not d("remnote", "remote")   # length differs - the 'remote' trap
     assert not d("remnote", "remnot")
     assert not d("remnote", "notizen")
+
+
+# --- unlocks_toolsets must NOT behave like requires_toolsets ----------------
+
+def test_unlocks_does_not_hide_the_skill(tmp_path):
+    """The trap this field exists to avoid: index_for() gates on
+    requires_toolsets against NATIVE tool names only, so a skill that named an
+    MCP tool there vanished from the skill index entirely — the opposite of
+    what the author wanted. unlocks_toolsets must never gate."""
+    from services.memory.skills import SkillsManager
+
+    sm = SkillsManager(str(tmp_path))
+    sm.add_skill(
+        name="remnote-ish",
+        description="operates remnote",
+        unlocks_toolsets=["remnote_call"],
+        status="published",
+    )
+    listed = [e["name"] for e in sm.index_for(active_toolsets=["grep", "read_file"])]
+    assert "remnote-ish" in listed, (
+        "a skill must stay visible even though its unlocked MCP tool is not a "
+        "native toolset"
+    )
+
+
+def test_unlocks_survives_a_write_read_roundtrip(tmp_path):
+    from services.memory.skills import SkillsManager
+
+    sm = SkillsManager(str(tmp_path))
+    sm.add_skill(
+        name="roundtrip",
+        description="x",
+        unlocks_toolsets=["remnote_call", "read_open_documents"],
+        status="published",
+    )
+    again = SkillsManager(str(tmp_path))
+    got = [s for s in again.load() if s["name"] == "roundtrip"]
+    assert got, "skill did not persist"
+    assert got[0].get("unlocks_toolsets") == ["remnote_call", "read_open_documents"]
