@@ -8,6 +8,10 @@
  *   "browser"        — use Web Speech API for real-time transcription
  *   "local"          — send recording to server /api/stt/transcribe (Whisper)
  *   "endpoint:<id>"  — send recording to server /api/stt/transcribe (API)
+ *
+ * Dictation prefers text. When browser recognition returns no result or a
+ * server transcription fails, keep the audio only in memory and offer an
+ * explicit attachment fallback instead of silently adding a voice file.
  */
 
 let mediaRecorder = null;
@@ -59,6 +63,7 @@ function formatTime(seconds) {
  */
 function _resetRecordingUI() {
   isRecording = false;
+  window.dispatchEvent(new CustomEvent('odysseus:recording-state', { detail: { recording: false } }));
   if (recordingInterval) {
     clearInterval(recordingInterval);
     recordingInterval = null;
@@ -180,6 +185,20 @@ function insertTranscription(text, showToast) {
 }
 
 /**
+ * Dictation should not unexpectedly turn into a file attachment. Preserve the
+ * recording as an explicit fallback, but let the user decide whether to add it.
+ */
+function offerAudioFallback(audioBlob, onFileCreated, showToast, reason) {
+  const attach = window.confirm(`${reason}\n\nAttach the voice recording instead?`);
+  if (!attach) {
+    if (showToast) showToast('Voice recording discarded');
+    return;
+  }
+  const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
+  if (onFileCreated) onFileCreated(audioFile);
+}
+
+/**
  * Start voice recording
  */
 export function startRecording(onFileCreated, showToast, showError) {
@@ -224,11 +243,10 @@ export function startRecording(onFileCreated, showToast, showError) {
             if (input) input.focus();
             if (showToast) showToast('Transcribed');
           } else {
-            // Nothing recognized — restore the pre-dictation input.
+            // Nothing recognized — restore the pre-dictation input and make
+            // the audio-file fallback explicit rather than attaching it.
             _renderLiveTranscript('');
-            if (showToast) showToast('No speech detected');
-            const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
-            if (onFileCreated) onFileCreated(audioFile);
+            offerAudioFallback(audioBlob, onFileCreated, showToast, 'No speech was transcribed.');
           }
         } else if (provider === 'local' || provider.startsWith('endpoint:')) {
           // Show "Transcribing..." feedback
@@ -242,10 +260,12 @@ export function startRecording(onFileCreated, showToast, showError) {
             }
           } catch (e) {
             console.error('STT transcription error:', e);
-            if (showError) showError('Transcription failed: ' + e.message);
-            // Fallback: attach as file
-            const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
-            if (onFileCreated) onFileCreated(audioFile);
+            offerAudioFallback(
+              audioBlob,
+              onFileCreated,
+              showToast,
+              'Transcription failed: ' + e.message,
+            );
           }
         } else {
           // STT disabled — attach audio file
@@ -258,6 +278,7 @@ export function startRecording(onFileCreated, showToast, showError) {
 
       mediaRecorder.start();
       isRecording = true;
+      window.dispatchEvent(new CustomEvent('odysseus:recording-state', { detail: { recording: true } }));
       recordingStartTime = new Date();
 
       // Start browser STT if that's the provider

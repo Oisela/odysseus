@@ -2956,6 +2956,18 @@ async function _initVersionSwitcher(prefix = 'sys-') {
 // reaches for most — and it sat only in Settings → System, one panel away from
 // the Developer page where he decides that a round is done. The Package status
 // card even told him to go there.
+function _setPromoteButtons(d) {
+  const current = String(d?.prod_version || '').replace(/^v/, '');
+  const target = String(d?.dev_version || '').replace(/^v/, '');
+  const available = !!target && target !== current;
+  for (const btn of document.querySelectorAll('#sys-promoteBtn, #dev-promoteBtn')) {
+    if (d?.deploy_active) continue;
+    btn.disabled = !available;
+    btn.textContent = available ? `Update to v${target}` : 'Up to date';
+    btn.title = available ? `Rebuild production from dev at v${target}` : `Production is already v${current || target || '?'}`;
+  }
+}
+
 function _initPromoteButton(prefix = 'sys-', msgId = null) {
   const btn = el(prefix + 'promoteBtn');
   if (!btn || btn._promoteWired) return;
@@ -2974,7 +2986,7 @@ function _initPromoteButton(prefix = 'sys-', msgId = null) {
       const res = await fetch(`/api/system/promote`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json().catch(() => null);
       if (res.ok && d && d.status === 'promotion_started') {
-        say('Update started. Prod will rebuild and restart shortly — close and REOPEN the app window once it is back.', true);
+        say(`Update to v${d.version || d.target_version || 'next'} started. Progress appears below; repeated clicks are blocked.`, true);
         // Both copies, not just the one that was pressed. Otherwise you press
         // here, switch panels, and press the still-enabled twin — two
         // promote.sh units rebuilding prod over each other. The server rejects
@@ -3175,6 +3187,19 @@ function _roadmapItemBlock(mark, title, details, images = []) {
   addText('Notizen', details.notes);
   for (const url of images) block.push(`      ![screenshot](${url})`);
   return block;
+}
+
+async function _deleteRoadmapItem(item) {
+  const title = _rmCardText(item);
+  if (!window.confirm(`Delete “${title}” from the roadmap? This cannot be undone.`)) return false;
+  const lines = _roadmapText.split('\n');
+  lines.splice(item.line, item.endLine - item.line + 1);
+  const ok = await _saveRoadmap(lines.join('\n'), el('dev-roadmap-msg'));
+  if (ok) {
+    _closeRoadmapItemModal();
+    _renderRoadmap();
+  }
+  return ok;
 }
 
 async function _saveItemEdit(item, newTitle, details) {
@@ -3473,6 +3498,7 @@ function _syncDeployPoll(running) {
 }
 
 function _renderDeployBanner(d) {
+  _setPromoteButtons(d);
   // Both cards: Update sits on the System card AND on the Developer page, and
   // Alessio pressed it on the System card — where the progress bar was not
   // (2026-08-15). Feedback belongs wherever the button is.
@@ -3584,10 +3610,11 @@ function _rmItemKind(item) {
   return m ? m[1].toLowerCase() : 'feature';
 }
 
-// Bugs and polish go straight to main so Alessio can keep debugging live;
-// features get a short beta pass and then wait for an explicit go-word.
-function _rmTrackForKind(kind) {
-  return (kind === 'bug' || kind === 'polish') ? 'bug' : 'feature';
+// A single bug can still use the explicit direct-bugfix action below. Normal
+// roadmap work, including bugs and polish, stays on the feature/batch track so
+// Alessio gets one beta hand-off and one production update for the whole set.
+function _rmTrackForKind(_kind) {
+  return 'feature';
 }
 
 // Everything the agent needs to know about ONE card. Shared by the single-item
@@ -3621,17 +3648,17 @@ function _buildPrompt(item, buildMode) {
   const directBugfix = buildMode === 'direct-bugfix';
   const approach = buildMode === 'plan'
     ? `Erstelle zuerst einen konkreten Umsetzungsplan, prüfe offene Fragen und warte auf meine Freigabe, bevor du Dateien änderst.`
-    : `Arbeite autonom bis zur Gate-Frage deines Tracks. Frage nur nach, wenn eine Entscheidung das Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
-  const workflow = (directBugfix || track === 'bug')
-    ? `**Track BUG — direkt auf main, ohne Beta.**\n`
+    : `Prüfe vor dem Bauen, ob Ziel, erwartetes Verhalten und Abnahmekriterium eindeutig sind. Stelle fehlende Konkretisierungsfragen gebündelt, bevor du Dateien änderst. Sind sie eindeutig, arbeite autonom bis zur Gate-Frage deines Tracks; frage danach nur bei wesentlichen Produktentscheidungen oder echter Blockade nach.`;
+  const workflow = directBugfix
+    ? `**Track BUG — bewusst einzeln direkt auf dev, ohne Beta.**\n`
       + `1. \`dev.sh start fix/<slug>\`\n`
       + `2. Fix bauen, \`dev.sh check\`, relevante pytest.\n`
-      + `3. \`dev.sh bugfix fix/<slug>\` (Patch-Bump + Prod-Rebuild, kein Beta).\n`
-      + `   KEINE Rückfrage vorher — Alessios Entscheidung 2026-08-15. Die\n`
-      + `   Prüfung ist \`dev.sh preflight\`, das im Befehl mitläuft.\n`
-      + `4. \`dev.sh verify prod <version>\` — erst wenn das OK sagt, ist es fertig.\n`
-      + `5. \`dev.sh roadmap-status ${_itemKey(item)} x\`\n`
-    : `**Track FEATURE — kurz auf Beta, dann warten.**\n`
+      + `3. \`dev.sh bugfix fix/<slug>\` (Patch-Bump nach dev, kein Beta).\n`
+      + `4. Melde, dass der Fix auf dev liegt, und STOPP. Alessio entscheidet,\n`
+      + `   wann der laufende Container über Update neu gebaut wird.\n`
+      + `5. Erst nachdem Prod die neue Version ausliefert: \`dev.sh finish\`\n`
+      + `   und \`dev.sh roadmap-status ${_itemKey(item)} x\`.\n`
+    : `**Track FEATURE/BATCH — kurz auf Beta, dann warten.**\n`
       + `1. \`dev.sh start feat/<slug>\`\n`
       + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
       + `3. \`dev.sh ready feat/<slug>\` (pusht auf Beta und hält an).\n`
@@ -3662,8 +3689,10 @@ function _buildBatchPrompt(items, buildMode) {
   const approach = buildMode === 'plan'
     ? `Erstelle pro Item zuerst einen kurzen Umsetzungsplan und warte auf meine `
       + `Freigabe, bevor du für dieses Item Dateien änderst.`
-    : `Arbeite autonom. Frage nur nach, wenn eine Entscheidung das `
-      + `Produktverhalten wesentlich verändert oder du wirklich blockiert bist.`;
+    : `Prüfe vor jedem Item, ob Ziel, erwartetes Verhalten und Abnahmekriterium `
+      + `eindeutig sind. Stelle fehlende Konkretisierungsfragen gebündelt, bevor `
+      + `du Dateien änderst. Sind sie eindeutig, arbeite autonom; frage danach `
+      + `nur bei wesentlichen Produktentscheidungen oder echter Blockade nach.`;
   const bundleName = `beta-batch-${new Date().toISOString().slice(0, 10)}`;
   const briefs = items
     .map((it, i) => `### Item ${i + 1} von ${items.length}\n\n${_itemBrief(it)}`)
@@ -3673,7 +3702,9 @@ function _buildBatchPrompt(items, buildMode) {
     + `${briefs}\n---\n\n`
     + `${approach}\n\n`
     + `**Ablauf pro Item:**\n`
-    + `1. \`dev.sh start feat/<slug>\` (bzw. \`fix/<slug>\`, wenn Typ = Bug)\n`
+    + `1. \`dev.sh start feat/<slug>\` — auch für Bugs und Polish in diesem\n`
+    + `   Stapel. \`dev.sh bugfix\` ist hier verboten, weil es einen einzelnen\n`
+    + `   Zwischenstand nach dev legt und Alessio zu einem Extra-Update zwingt.\n`
     + `2. Bauen, \`dev.sh check\`, relevante pytest.\n`
     + `3. \`dev.sh roadmap-status <rm-id> '!'\` und\n`
     + `   \`dev.sh roadmap-testpoints <rm-id> "..." "..."\` — die Testpunkte\n`
@@ -3860,8 +3891,8 @@ function _cardBuildFormHtml() {
         <select class="settings-select rm-build-model"></select></label>
       <label class="rm-field"><span>Workflow</span>
         <select class="settings-select rm-build-mode">
-          <option value="build">Build autonomously up to beta</option>
-          <option value="direct-bugfix">Fix bug directly on main</option>
+          <option value="build">Add to the next bundled beta</option>
+          <option value="direct-bugfix">Urgent single bugfix to dev</option>
           <option value="plan">Plan and ask first</option>
         </select></label>
       <div class="rm-build-msg" style="display:none;"></div>
@@ -4309,6 +4340,18 @@ function _renderRoadmapBoard(list, sections) {
         editBtn.textContent = 'Edit';
         editBtn.addEventListener('click', (e) => { e.stopPropagation(); renderEdit(); });
         meta.appendChild(editBtn);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'rm-move-btn admin-btn-delete';
+        deleteBtn.title = 'Delete this roadmap item';
+        deleteBtn.setAttribute('aria-label', 'Delete roadmap item');
+        deleteBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6M9 6V4h6v2"></path></svg>';
+        deleteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          deleteBtn.disabled = true;
+          if (!await _deleteRoadmapItem(it)) deleteBtn.disabled = false;
+        });
+        meta.appendChild(deleteBtn);
         const buildBtn = document.createElement('button');
         buildBtn.type = 'button';
         buildBtn.className = 'rm-move-btn rm-build-btn';
@@ -5307,10 +5350,11 @@ function _initDirectMainButton() {
         throw new Error('Developer mode controls are not ready');
       }
       window.__odysseusPrepareDeveloperMode();
-      const prompt = `Behebe diesen Bug an Odysseus und rolle ihn über den BUG-Track direkt auf main aus: ${summary}\n\n`
-        + `Arbeite autonom bis zur Gate-Frage. Nutze fix/<slug>, dev.sh check und relevante pytest. `
-        + `Frage mich dann genau einmal: "Bugfix <slug> direkt auf main?" Erst nach meinem Ja `
-        + `dev.sh bugfix fix/<slug>, danach dev.sh finish und den Roadmap-Status aktualisieren. Keine Beta.`;
+      const prompt = `Behebe diesen dringenden Einzel-Bug an Odysseus über den BUG-Track: ${summary}\n\n`
+        + `Nutze fix/<slug>, dev.sh check und relevante pytest. Führe danach ohne Beta `
+        + `dev.sh bugfix fix/<slug> aus und STOPPE, sobald der Fix auf dev liegt. Ich drücke `
+        + `Update, wenn es zeitlich passt. Erst wenn Prod die neue Version ausliefert, führst du `
+        + `dev.sh finish aus und aktualisierst den Roadmap-Status. Kein eigener Prod-Rebuild.`;
       const chatMod = await import('./chat.js');
       const textarea = el('message-input');
       if (!textarea || !chatMod.handleChatSubmit) throw new Error('Chat composer is unavailable');

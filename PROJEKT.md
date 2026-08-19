@@ -20,14 +20,23 @@ Token-Disziplin) — bei Sessionstart zuerst per bash lesen:
 ## Stand
 
 - Versionierung: APP_VERSION auf dev = offenes Paket; Alessio zählt 3.1, 3.2, …
-- Developer → Direct bugfix erstellt einen vorbereiteten Builder-Chat, der
-  den bestehenden Bug-Track (`fix/*` → `dev.sh bugfix` → `finish`) ohne Beta
-  nutzt; die Gate-Frage bleibt im Chat sichtbar.
-- Roadmap → Build bietet denselben direkten Bugfix als dritte Workflow-Option
-  „Fix bug directly on main“ an; sie erzwingt den Bug-Track auch für falsch
-  oder noch als Feature klassifizierte Karten.
+- Roadmap-Arbeit wird standardmäßig gebündelt: Auch Bugs und Polish laufen in
+  einem Stapel über eigene `feat/*`-Branches, einen gemeinsamen Beta-Build und
+  anschließend genau ein Prod-Update. Ein einzelner Bug darf den Batch nicht
+  mehr mit `dev.sh bugfix` unterbrechen und ein Zwischen-Update erzwingen.
+- Developer → „Urgent single bugfix“ und Roadmap → „Urgent single bugfix to
+  dev“ bleiben als ausdrücklich gewählte Ausnahme für wirklich dringende
+  Einzel-Fixes erhalten. Der Bug-Track endet zunächst auf `dev`; den Zeitpunkt
+  des Produktions-Neustarts bestimmt Alessio mit dem Update-Knopf.
 - Der Chat-Composer behandelt die iPhone-Return-Taste bei nichtleerem Text als
   Senden; während eines laufenden Streams wird der Text wie bisher eingereiht.
+- Das Roadmap-Item „Real speech to text“ wurde am 2026-08-18 gegen den
+  vorhandenen Code und Alessios Praxistest geprüft und als bereits erfüllt
+  geschlossen; dafür ist kein weiterer Build nötig.
+- Text-to-Speech ist ebenfalls bereits vorhanden: aktivierbar in den
+  Einstellungen, mit „Read aloud“-Knopf an KI-Antworten sowie optionalem
+  automatischem Vorlesen. Vor einer neuen TTS-Karte zuerst klären, welche
+  konkrete Erweiterung gegenüber diesem Bestand fehlt.
 - Mobile Browser dürfen eine veraltete Modell-Endpoint-ID behalten: Beim
   Erstellen einer Session fällt Odysseus kontrolliert auf die übermittelte URL
   zurück; die bestehende Berechtigungsprüfung für rohe URLs bleibt aktiv.

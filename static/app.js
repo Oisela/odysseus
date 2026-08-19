@@ -880,29 +880,20 @@ function initializeEventListeners() {
     // Close document panel if open
     if (documentModule && documentModule.closePanel) documentModule.closePanel();
     if (researchPanelModule && researchPanelModule.isOpen()) researchPanelModule.closePanel();
-    // Reset research overflow dot (but don't touch research state — caller manages that)
-    const _overflowRes = el('overflow-research-btn');
-    if (_overflowRes) _overflowRes.classList.remove('active');
     if (typeof updatePlusDot === 'function') updatePlusDot();
     // Reset agent mode to Chat
     const modeToggle = el('agent-mode-toggle');
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
   }
 
-  /** Sync Research indicator button + overflow + tool sidebar active state. */
+  /** Sync Research indicator button + tool sidebar active state. */
   function _syncResearchIndicator(active) {
     const btn = el('research-toggle-btn');
-    const overflow = el('overflow-research-btn');
     const toolBtn = el('tool-research-btn');
     const chk = el('research-toggle');
     if (btn) {
       btn.style.display = active ? '' : 'none';
       btn.classList.toggle('active', active);
-    }
-    // Hide from overflow menu when showing in chatbox (avoid duplicate)
-    if (overflow) {
-      overflow.classList.toggle('active', active);
-      overflow.style.display = active ? 'none' : '';
     }
     if (toolBtn) toolBtn.classList.toggle('active', active);
     if (chk) chk.checked = active;
@@ -1475,8 +1466,6 @@ function initializeEventListeners() {
         if (!p.can_use_research) {
           const resBtn = document.getElementById('research-toggle-btn');
           if (resBtn) resBtn.style.display = 'none';
-          const resOverflow = document.getElementById('overflow-research-btn');
-          if (resOverflow) resOverflow.style.display = 'none';
         }
 
       }
@@ -1621,7 +1610,7 @@ function initializeEventListeners() {
   ).then(features => {
       const map = {
         web_search:      ['web-toggle-btn'],
-        deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
+        deep_research:   ['research-toggle-btn', 'tool-research-btn', 'rail-research'],
         document_editor: ['overflow-doc-btn', 'rail-documents'],
         gallery:         ['tool-gallery-btn', 'rail-gallery'],
       };
@@ -2851,7 +2840,6 @@ function initializeEventListeners() {
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
     'attach-btn':          '#overflow-attach-btn',
-    'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
 
@@ -2888,7 +2876,7 @@ function initializeEventListeners() {
     'tool-pomodoro', 'tool-remnote', 'tool-compare', 'tool-cookbook', 'tool-research',
     'tool-gallery', 'tool-library', 'tool-memory', 'tool-tasks',
     'web-toggle-btn', 'doc-toggle-btn', 'rag-toggle-btn', 'bash-toggle-btn',
-    'research-btn', 'preset-mini-btn', 'mode-toggle', 'incognito-btn',
+    'preset-mini-btn', 'mode-toggle', 'incognito-btn',
   ];
   function uiSimpleState() {
     const s = {};
@@ -4035,6 +4023,7 @@ function startOdysseusApp() {
 
   // ── Dual-purpose send/mic button ──
   const sendBtn = document.querySelector('.send-btn');
+  const micBtn = el('composer-mic-btn');
   const messageInput = el('message');
   const modelPickerWrap = document.getElementById('model-picker-wrap');
 
@@ -4073,6 +4062,7 @@ function startOdysseusApp() {
 
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
+    if (micBtn) micBtn.hidden = !_isSttEnabled();
     if (sendBtn.dataset.mode === 'streaming') {
       _updateStreamingSubmitButton();
       return;
@@ -4083,14 +4073,7 @@ function startOdysseusApp() {
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();
     let newMode;
-    if (!hasText && !hasFiles && _isSttEnabled()) {
-      clearTimeout(sendBtn._collapseTimer);
-      sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
-      newMode = 'mic';
-      sendBtn.classList.add('mic-mode');
-      sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
-    } else if (!hasText && !hasFiles && !_isSttEnabled()) {
+    if (!hasText && !hasFiles) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
@@ -4160,6 +4143,31 @@ function startOdysseusApp() {
     }
     sendBtn.dataset.mode = newMode;
   }
+
+  if (micBtn) {
+    micBtn.addEventListener('click', () => {
+      if (voiceRecorderModule.getIsRecording()) {
+        voiceRecorderModule.stopRecording();
+        return;
+      }
+      micBtn.classList.add('recording');
+      micBtn.title = 'Stop dictation';
+      micBtn.setAttribute('aria-label', 'Stop dictation');
+      voiceRecorderModule.startRecording(
+        (audioFile) => fileHandlerModule.addFiles([audioFile]),
+        uiModule.showToast,
+        uiModule.showError,
+      );
+    });
+  }
+
+  window.addEventListener('odysseus:recording-state', (event) => {
+    if (!micBtn) return;
+    const recording = event.detail?.recording === true;
+    micBtn.classList.toggle('recording', recording);
+    micBtn.title = recording ? 'Stop dictation' : 'Start dictation';
+    micBtn.setAttribute('aria-label', micBtn.title);
+  });
 
   if (sendBtn) {
     sendBtn.addEventListener('click', (e) => {

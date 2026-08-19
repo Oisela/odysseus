@@ -165,6 +165,17 @@ _SELFCHECK_FIXES = {
         f"{_SKILL_DIR}/downgrade-roundtrip.sh {_HOST_SCRIPT_DIR}/ "
         f"&& chmod +x {_HOST_SCRIPT_DIR}/*.sh"
     ),
+    "clone-reset": (
+        f"git -C {_CLONE_DIR} reset --hard HEAD >/dev/null "
+        f"&& git -C {_CLONE_DIR} clean -fd >/dev/null && echo clone-clean"
+    ),
+    "branches-prune": (
+        f"git -C {_CLONE_DIR} fetch --prune origin >/dev/null "
+        f"&& for b in $(git -C {_CLONE_DIR} branch -r --merged origin/dev "
+        "| sed 's|^ *origin/||' | grep -v -e '^dev$' -e '^main$' -e '^HEAD'); "
+        f"do git -C {_CLONE_DIR} push origin --delete \"$b\" >/dev/null || exit 1; done; "
+        "echo branches-pruned"
+    ),
     "disk-prune": (
         # Deliberately NOT `docker system prune -a`: that drops the images prod
         # and beta were built from, and then the downgrade button — the one
@@ -256,6 +267,7 @@ def _roadmap_freshness(version: str) -> dict:
     # A matching head is any "## v3.9…" — released, open package, whatever the
     # round is called, as long as the version appears.
     out["current"] = any(h.lower().startswith(f"v{want}") for h in heads)
+    out["missing"] = not out["current"]
     return out
 
 
@@ -601,7 +613,8 @@ def _selfcheck_findings(force: bool = False) -> list:
     if dirty.isdigit() and int(dirty) > 0:
         add("clone-dirty", "Developer clone", "warn",
             f"{dirty} uncommitted change(s) on '{values.get('clone_branch') or '?'}'. "
-            "A deploy would not include them.")
+            "A deploy would not include them. Fix discards those uncommitted files.",
+            fix="clone-reset")
     elif "clone_dirty" in values:
         add("clone-dirty", "Developer clone", "ok",
             f"Clean on '{values.get('clone_branch') or '?'}'.")
@@ -610,7 +623,7 @@ def _selfcheck_findings(force: bool = False) -> list:
     if stale:
         add("stale-branches", "Merged branches", "warn",
             "Already merged into dev and still on the remote: " + ", ".join(stale[:8])
-            + ("…" if len(stale) > 8 else ""))
+            + ("…" if len(stale) > 8 else ""), fix="branches-prune")
 
     # ── Disk ────────────────────────────────────────────────────────────────
     avail = values.get("disk_avail_kb") or ""
