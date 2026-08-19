@@ -2977,7 +2977,13 @@ async def stream_agent_loop(
     # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
     # in lockstep: manage_skills is callable whenever any skill is indexed,
     # and a matched skill's declared requires_toolsets ride along with it.
-    if not guide_only and _relevant_tools is not None and not _low_signal_turn:
+    # Gate on CASUAL low-signal, not low-signal generally. `low_signal` is
+    # set whenever no English domain pattern matched, so every German turn
+    # (Alessio writes only German) landed here as low-signal and skipped the
+    # block entirely — a skill could never unlock its tools. A casual opener
+    # still matches no skill at threshold 0.25, so the narrower gate keeps
+    # 'hi' cheap without silencing real requests.
+    if not guide_only and _relevant_tools is not None and not _casual_low_signal_turn:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -2997,14 +3003,39 @@ async def stream_agent_loop(
                     # schemas without a prompt-prose section.
                     from src.tool_policy import known_tool_names
                     _known = known_tool_names()
+                    _declared: Set[str] = set()
                     for _sk in _sm.get_relevant_skills(
                         _retrieval_query, skills=_owner_skills,
                         threshold=0.25, max_items=3,
                     ):
-                        _relevant_tools.update(
-                            t for t in (_sk.get("requires_toolsets") or [])
-                            if t in _known
-                        )
+                        # Both directions: requires_toolsets (a gate the skill
+                        # already passed) and unlocks_toolsets (tools the
+                        # procedure calls). Only the latter may name MCP tools —
+                        # the gate is evaluated against native names only, so a
+                        # skill declaring an MCP tool THERE erases itself from
+                        # the index instead of gaining the tool.
+                        _declared.update(_sk.get("requires_toolsets") or [])
+                        _declared.update(_sk.get("unlocks_toolsets") or [])
+                    _relevant_tools.update(t for t in _declared if t in _known)
+                    # A declared name that isn't native is an MCP tool: skills
+                    # name it bare (`remnote_call`) because the qualified name
+                    # carries a per-instance server id. Without this the whole
+                    # declaration was dropped on the floor and the model was
+                    # handed a procedure citing tools it had no schema for —
+                    # it then looped on the one RemNote tool RAG happened to
+                    # retrieve (Alessio, 2026-08-19).
+                    _unresolved = _declared - _known
+                    if _unresolved and mcp_mgr:
+                        try:
+                            _relevant_tools.update(
+                                mcp_mgr.resolve_qualified_names(
+                                    _unresolved, _mcp_disabled_map
+                                )
+                            )
+                        except Exception as _me:
+                            logger.debug(
+                                f"[tool-rag] MCP toolset resolution skipped: {_me}"
+                            )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
 
@@ -3035,13 +3066,21 @@ async def stream_agent_loop(
     # name-match — no similarity threshold to lose.
     if _relevant_tools is not None and mcp_mgr:
         try:
+            from src.mcp_manager import query_names_mcp_server
             _q = f"{_retrieval_query or ''}\n{_last_user or ''}".lower()
             _mcp_added = set()
             for _mt in mcp_mgr.get_all_tools(_mcp_disabled_map or {}):
                 if _mt.get("is_disabled"):
                     continue
                 _sname = (_mt.get("server_name") or "").strip().lower()
-                if _sname and _sname in _q:
+                # Name match tolerates one typo and multi-word server names.
+                # The exact-substring test this replaces never fired once in
+                # the 2026-08-19 session: the servers are "remnote" and
+                # "remnote-http", and every message spelled it "rmenote" or
+                # "remntoe". Note _q holds the user's own words only — skill
+                # text is injected elsewhere, so a /remnote invocation does
+                # NOT put the word into this haystack.
+                if _sname and query_names_mcp_server(_q, _sname):
                     _qn = _mt.get("qualified_name")
                     if _qn and _qn not in _relevant_tools and _qn not in (disabled_tools or set()):
                         _mcp_added.add(_qn)
@@ -3198,7 +3237,13 @@ async def stream_agent_loop(
         compact=_compact_agent_prompt,
         owner=owner,
         suppress_local_context=guide_only,
-        suppress_skills=_low_signal_turn,
+        # Same English-only trap as the skill-aware tool include: a German
+        # request matches no domain pattern, is therefore 'low signal', and
+        # had its skills suppressed from the prompt entirely — which reads
+        # exactly like the model ignoring a skill it was handed. Suppress
+        # only on genuinely casual turns; relevance is already gated by the
+        # 0.25 match threshold (Alessio, 2026-08-19).
+        suppress_skills=_casual_low_signal_turn,
         active_email=active_email,
     )
     if _ody_doc_finetune_mode and not plan_mode and not approved_plan and not guide_only:
